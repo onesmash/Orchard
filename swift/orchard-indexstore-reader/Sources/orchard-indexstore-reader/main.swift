@@ -6,10 +6,14 @@
 //
 // Usage:
 //   orchard-indexstore-reader <index-store-path> [--libindexstore <dylib>]
+//                             [--source-root <dir>]
 //
 // Output (one JSON object per line):
 //   {"kind":"occurrence","usr":...,"file":...,"line":N,"column":N,"role":"definition"}
 //   {"kind":"relation","from_usr":...,"to_usr":...,"role":"calledBy"}
+//
+// --source-root limits emission to files under that directory (avoids dumping
+// the entire SDK). Omit to emit everything.
 //
 // Relation direction contract (verified against real Swift index data):
 //   A `calledBy` relation row has from_usr = the symbol that is *called*
@@ -26,6 +30,7 @@ import Foundation
 let args = CommandLine.arguments
 var storePath: String?
 var libIndexStore: String?
+var sourceRoot: String?
 
 var i = 1
 while i < args.count {
@@ -36,8 +41,14 @@ while i < args.count {
   if a.hasPrefix("--libindexstore=") {
     libIndexStore = String(a.dropFirst("--libindexstore=".count)); i += 1; continue
   }
+  if a == "--source-root", i + 1 < args.count {
+    sourceRoot = args[i + 1]; i += 2; continue
+  }
+  if a.hasPrefix("--source-root=") {
+    sourceRoot = String(a.dropFirst("--source-root=".count)); i += 1; continue
+  }
   if a == "--help" || a == "-h" {
-    print("usage: orchard-indexstore-reader <index-store-path> [--libindexstore <dylib>]")
+    print("usage: orchard-indexstore-reader <index-store-path> [--libindexstore <dylib>] [--source-root <dir>]")
     exit(0)
   }
   if storePath == nil { storePath = a }
@@ -146,48 +157,92 @@ func js(_ s: String) -> String {
 }
 
 // MARK: - Emit JSONL
+//
+// indexstore-db is USR/name-keyed; enumerating every occurrence via per-USR
+// queries is O(symbols) and far too slow on real Xcode builds (hundreds of
+// thousands of symbols). Instead we fetch all occurrences per FILE via
+// symbolOccurrences(inFilePath:), which returns definitions + call sites +
+// their relations in one call — O(files), ~seconds for thousands of files.
+//
+// File discovery:
+//   - with --source-root: filesystem-scan that directory for source files
+//     (fast, and naturally limits output to the project, not the SDK).
+//   - without --source-root: fall back to allSymbolNames + canonical lookups
+//     (slow on large stores; emits SDK symbols too).
 
 let out = FileHandle.standardOutput
 func writeLine(_ s: String) {
   out.write((s + "\n").data(using: .utf8)!)
 }
 
-var seenUsr = Set<String>()
+func underRoot(_ p: String) -> Bool {
+  if let prefix = sourceRoot {
+    return p == prefix || p.hasPrefix(prefix + "/")
+  }
+  return true
+}
+
+// Note: URL.pathExtension returns the extension WITHOUT a leading dot.
+let sourceExtensions: Set<String> = [
+  "swift", "m", "mm", "c", "cc", "cpp", "cxx", "c++",
+  "h", "hh", "hpp", "hxx",
+]
+
+var filePaths: [String] = []
+
+if let root = sourceRoot {
+  let fm = FileManager.default
+  let baseURL = URL(fileURLWithPath: root)
+  if let enumerator = fm.enumerator(at: baseURL, includingPropertiesForKeys: nil) {
+    while let url = enumerator.nextObject() as? URL {
+      if sourceExtensions.contains(url.pathExtension) {
+        let p = url.path
+        if underRoot(p) { filePaths.append(p) }
+      }
+    }
+  }
+} else {
+  FileHandle.standardError.write(
+    "warning: no --source-root given; falling back to slow allSymbolNames discovery\n".data(using: .utf8)!
+  )
+  var seen = Set<String>()
+  for name in db.allSymbolNames() {
+    for occ in db.canonicalOccurrences(ofName: name) {
+      let p = occ.location.path
+      if !p.isEmpty { seen.insert(p) }
+    }
+  }
+  filePaths = Array(seen)
+}
+
+// 2. Emit per file.
 var emittedRels = Set<String>()
 
-for name in db.allSymbolNames() {
-  for canon in db.canonicalOccurrences(ofName: name) {
-    let usr = canon.symbol.usr
-    if !seenUsr.insert(usr).inserted { continue }
+for file in filePaths {
+  for occ in db.symbolOccurrences(inFilePath: file) {
+    let roles = occ.roles
+    let path = occ.location.path
+    let line = occ.location.line
+    let col = occ.location.utf8Column
 
-    // Enumerate every occurrence of this symbol (definitions, references,
-    // and call sites) so we capture `calledBy` relations on call sites.
-    for occ in db.occurrences(ofUSR: usr, roles: .all) {
-      let roles = occ.roles
-      let path = occ.location.path
-      let line = occ.location.line
-      let col = occ.location.utf8Column
+    // Occurrence rows are symbol-definition records. Emit only
+    // definitions/declarations to keep the stream lean.
+    if roles.contains(.definition) || roles.contains(.declaration) {
+      writeLine(
+        "{\"kind\":\"occurrence\",\"usr\":\(js(occ.symbol.usr)),"
+        + "\"file\":\(js(path)),\"line\":\(line),\"column\":\(col),"
+        + "\"role\":\(js(occurrenceRoleName(roles)))}"
+      )
+    }
 
-      // Occurrence rows are symbol-definition records (what the Python side
-      // stores as OccurrenceRecord). Emit only definitions/declarations to
-      // keep the stream lean; relations carry the rest.
-      if roles.contains(.definition) || roles.contains(.declaration) {
-        writeLine(
-          "{\"kind\":\"occurrence\",\"usr\":\(js(occ.symbol.usr)),"
-          + "\"file\":\(js(path)),\"line\":\(line),\"column\":\(col),"
-          + "\"role\":\(js(occurrenceRoleName(roles)))}"
-        )
-      }
-
-      for rel in occ.relations {
-        for roleName in relationRoleNames(rel.roles) {
-          let key = "\(usr)\u{1}\(rel.symbol.usr)\u{1}\(roleName)"
-          if emittedRels.insert(key).inserted {
-            writeLine(
-              "{\"kind\":\"relation\",\"from_usr\":\(js(occ.symbol.usr)),"
-              + "\"to_usr\":\(js(rel.symbol.usr)),\"role\":\(js(roleName))}"
-            )
-          }
+    for rel in occ.relations {
+      for roleName in relationRoleNames(rel.roles) {
+        let key = "\(occ.symbol.usr)\u{1}\(rel.symbol.usr)\u{1}\(roleName)"
+        if emittedRels.insert(key).inserted {
+          writeLine(
+            "{\"kind\":\"relation\",\"from_usr\":\(js(occ.symbol.usr)),"
+            + "\"to_usr\":\(js(rel.symbol.usr)),\"role\":\(js(roleName))}"
+          )
         }
       }
     }
