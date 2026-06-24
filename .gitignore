@@ -16,3 +16,8 @@ build/
 AGENTS.md
 CLAUDE.md
 apple-semantic-grapgh.md
+
+# Swift CLI build artifacts and installed binary (build via swift/build-cli.sh)
+swift/orchard-indexstore-reader/.build/
+swift/orchard-indexstore-reader/.swiftpm/
+bin/orchard-indexstore-reader
