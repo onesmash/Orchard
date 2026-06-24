@@ -37,16 +37,18 @@ def _cli_path() -> str:
     raise FileNotFoundError("orchard-indexstore-reader not found; build the Swift CLI first")
 
 
-def _run_cli(index_store_path: str) -> str:
-    proc = subprocess.run(
-        [_cli_path(), index_store_path],
-        capture_output=True, text=True, check=True,
-    )
+def _run_cli(index_store_path: str, source_root: str | None = None) -> str:
+    cmd = [_cli_path(), index_store_path]
+    if source_root:
+        cmd += ["--source-root", source_root]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return proc.stdout
 
 
-def read_index_store(index_store_path: str, target_id: str) -> IndexStoreResult:
-    raw = _run_cli(index_store_path)
+def read_index_store(
+    index_store_path: str, target_id: str, source_root: str | None = None
+) -> IndexStoreResult:
+    raw = _run_cli(index_store_path, source_root=source_root)
     result = IndexStoreResult()
     for line in raw.splitlines():
         line = line.strip()

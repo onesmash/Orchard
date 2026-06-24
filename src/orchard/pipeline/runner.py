@@ -34,7 +34,8 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     # indexstore_ingest
     is_result = None
     if ctx.index_store_path:
-        is_result = read_index_store(ctx.index_store_path, ctx.target)
+        is_result = read_index_store(ctx.index_store_path, ctx.target,
+                                      source_root=ctx.workspace_root)
         results.append(PhaseResult(
             phase="indexstore_ingest", build_id=ctx.build_id, data=is_result,
             stats={"occurrences": len(is_result.occurrences), "relations": len(is_result.relations)},
