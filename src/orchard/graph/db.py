@@ -11,6 +11,8 @@ reference to the Database so neither object is garbage-collected early.
 
 from __future__ import annotations
 
+import os
+
 import ladybug
 
 from orchard.graph.schema import SCHEMA_STATEMENTS
@@ -20,6 +22,11 @@ class _ConnectionWithDB:
     """Thin wrapper that keeps the Database alive alongside its Connection."""
 
     def __init__(self, db_path: str) -> None:
+        # Ladybug cannot open a database whose parent directory does not exist,
+        # so ensure it is present (e.g. the default ~/.orchard/graph.db on a
+        # fresh install). Existing directories are a no-op.
+        parent = os.path.dirname(os.path.abspath(db_path))
+        os.makedirs(parent, exist_ok=True)
         self._db = ladybug.Database(db_path)
         self._conn = ladybug.Connection(self._db)
 

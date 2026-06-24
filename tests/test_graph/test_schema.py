@@ -2,6 +2,16 @@ import pytest
 from orchard.graph.db import get_connection, init_schema
 
 
+def test_get_connection_creates_missing_parent_dir(tmp_path):
+    """get_connection must create the DB parent directory if absent (fresh install)."""
+    nested = tmp_path / "deep" / "nested" / "dir" / "graph.db"
+    assert not nested.parent.exists()
+    conn = get_connection(str(nested))
+    init_schema(conn)
+    assert nested.parent.exists()
+    conn.close()
+
+
 def test_init_schema_creates_tables(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
