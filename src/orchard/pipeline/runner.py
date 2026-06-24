@@ -1,0 +1,64 @@
+import asyncio
+from dataclasses import dataclass, field
+from typing import Any
+
+from orchard.build.context import BuildContext
+from orchard.build.discovery import discover_symbolgraph_paths
+from orchard.graph.db import get_connection, init_schema
+from orchard.ingest.indexstore import read_index_store
+from orchard.ingest.symbolgraph import parse_symbolgraph
+from orchard.normalize.identity import upsert_build_snapshot, upsert_symbols, upsert_symbol_rels
+
+
+@dataclass
+class PhaseResult:
+    phase: str
+    build_id: str
+    data: Any
+    stats: dict[str, int] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+
+async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResult]:
+    results: list[PhaseResult] = []
+    conn = get_connection(db_path)
+    init_schema(conn)
+    upsert_build_snapshot(conn, ctx)
+
+    # indexstore_ingest
+    occ_count = 0
+    if ctx.index_store_path:
+        is_result = read_index_store(ctx.index_store_path, ctx.target)
+        occ_count = len(is_result.occurrences)
+        results.append(PhaseResult(
+            phase="indexstore_ingest", build_id=ctx.build_id, data=is_result,
+            stats={"occurrences": occ_count, "relations": len(is_result.relations)},
+        ))
+    else:
+        results.append(PhaseResult(
+            phase="indexstore_ingest", build_id=ctx.build_id, data=None,
+            warnings=["index_store_path not set; skipped"],
+        ))
+
+    # swift_symbolgraph_ingest
+    sg_paths = discover_symbolgraph_paths(ctx.derived_data_path or "")
+    all_symbols = []
+    all_rels = []
+    for path in sg_paths:
+        sg = parse_symbolgraph(path, ctx.target)
+        all_symbols.extend(sg.symbols)
+        all_rels.extend(sg.relationships)
+    results.append(PhaseResult(
+        phase="swift_symbolgraph_ingest", build_id=ctx.build_id,
+        data=None, stats={"symbols": len(all_symbols), "relationships": len(all_rels)},
+    ))
+
+    # identity_normalization
+    inserted = upsert_symbols(conn, all_symbols, ctx.target)
+    upsert_symbol_rels(conn, all_rels, ctx.target, source="swift_symbolgraph")
+    results.append(PhaseResult(
+        phase="identity_normalization", build_id=ctx.build_id, data=None,
+        stats={"symbols_upserted": inserted},
+    ))
+    conn.close()
+    return results
