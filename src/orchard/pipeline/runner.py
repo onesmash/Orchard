@@ -26,13 +26,11 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     upsert_build_snapshot(conn, ctx)
 
     # indexstore_ingest
-    occ_count = 0
     if ctx.index_store_path:
         is_result = read_index_store(ctx.index_store_path, ctx.target)
-        occ_count = len(is_result.occurrences)
         results.append(PhaseResult(
             phase="indexstore_ingest", build_id=ctx.build_id, data=is_result,
-            stats={"occurrences": occ_count, "relations": len(is_result.relations)},
+            stats={"occurrences": len(is_result.occurrences), "relations": len(is_result.relations)},
         ))
     else:
         results.append(PhaseResult(
