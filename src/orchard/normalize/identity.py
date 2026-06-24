@@ -8,6 +8,7 @@ for symbols, relationships, and build snapshots.
 from __future__ import annotations
 
 from orchard.ingest.symbolgraph import SymbolRecord, SymbolRelRecord
+from orchard.ingest.indexstore import RelationRecord
 from orchard.build.context import BuildContext
 
 
@@ -110,6 +111,68 @@ def upsert_symbol_rels(
         conn.execute(
             f"MATCH (a:Symbol {{id: $src}}), (b:Symbol {{id: $tgt}}) "
             f"MERGE (a)-[:{table} {{source: $source}}]->(b)",
+            {"src": src_id, "tgt": tgt_id, "source": source},
+        )
+        count += 1
+    return count
+
+
+def upsert_calls(
+    conn,
+    relations: list[RelationRecord],
+    target_id: str,
+    source: str,
+    build_id: str,
+) -> int:
+    """Upsert Calls edges from IndexStore relations.
+
+    IndexStore role 'calledBy': ``from_usr`` is called by ``to_usr``, i.e.
+    ``to_usr`` calls ``from_usr``. The CALLER is therefore ``to_usr`` and the
+    CALLEE is ``from_usr``. Edge written: ``Calls(caller=to_usr, callee=from_usr)``.
+
+    Roles other than ``calledBy`` are silently skipped. Only edges whose
+    endpoints already exist as Symbol nodes are written (MATCH-then-MERGE);
+    missing endpoints are silently dropped, consistent with ``upsert_symbol_rels``.
+    """
+    count = 0
+    for rel in relations:
+        if rel.role != "calledBy":
+            continue
+        caller_id = make_symbol_id(target_id, rel.to_usr)
+        callee_id = make_symbol_id(target_id, rel.from_usr)
+        conn.execute(
+            "MATCH (caller:Symbol {id: $caller}), (callee:Symbol {id: $callee}) "
+            "MERGE (caller)-[:Calls {source: $source, build_id: $build_id}]->(callee)",
+            {"caller": caller_id, "callee": callee_id,
+             "source": source, "build_id": build_id},
+        )
+        count += 1
+    return count
+
+
+def upsert_references(
+    conn,
+    relations: list[RelationRecord],
+    target_id: str,
+    source: str,
+) -> int:
+    """Upsert References edges from IndexStore relations.
+
+    IndexStore role 'references': ``from_usr`` references ``to_usr``, so the
+    edge is ``References(from_usr -> to_usr)``.
+
+    Roles other than ``references`` are silently skipped. Only edges whose
+    endpoints already exist as Symbol nodes are written (MATCH-then-MERGE).
+    """
+    count = 0
+    for rel in relations:
+        if rel.role != "references":
+            continue
+        src_id = make_symbol_id(target_id, rel.from_usr)
+        tgt_id = make_symbol_id(target_id, rel.to_usr)
+        conn.execute(
+            "MATCH (a:Symbol {id: $src}), (b:Symbol {id: $tgt}) "
+            "MERGE (a)-[:References {source: $source}]->(b)",
             {"src": src_id, "tgt": tgt_id, "source": source},
         )
         count += 1

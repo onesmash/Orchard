@@ -7,7 +7,13 @@ from orchard.build.discovery import discover_symbolgraph_paths
 from orchard.graph.db import get_connection, init_schema
 from orchard.ingest.indexstore import read_index_store
 from orchard.ingest.symbolgraph import parse_symbolgraph
-from orchard.normalize.identity import upsert_build_snapshot, upsert_symbols, upsert_symbol_rels
+from orchard.normalize.identity import (
+    upsert_build_snapshot,
+    upsert_symbols,
+    upsert_symbol_rels,
+    upsert_calls,
+    upsert_references,
+)
 
 
 @dataclass
@@ -26,6 +32,7 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     upsert_build_snapshot(conn, ctx)
 
     # indexstore_ingest
+    is_result = None
     if ctx.index_store_path:
         is_result = read_index_store(ctx.index_store_path, ctx.target)
         results.append(PhaseResult(
@@ -57,6 +64,22 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     results.append(PhaseResult(
         phase="identity_normalization", build_id=ctx.build_id, data=None,
         stats={"symbols_upserted": inserted},
+    ))
+
+    # call_graph_derivation — persist Calls + References edges from IndexStore
+    calls_written = 0
+    refs_written = 0
+    if is_result is not None:
+        calls_written = upsert_calls(
+            conn, is_result.relations, ctx.target,
+            source="indexstore", build_id=ctx.build_id,
+        )
+        refs_written = upsert_references(
+            conn, is_result.relations, ctx.target, source="indexstore",
+        )
+    results.append(PhaseResult(
+        phase="call_graph_derivation", build_id=ctx.build_id, data=None,
+        stats={"calls_written": calls_written, "references_written": refs_written},
     ))
     conn.close()
     return results
