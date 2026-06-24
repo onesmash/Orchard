@@ -1,0 +1,29 @@
+{
+  "metadata": {"generator": "Swift version 5.10"},
+  "module": {"name": "MyModule"},
+  "symbols": [
+    {
+      "identifier": {"precise": "s:8MyModule6MyFuncyyF", "interfaceLanguage": "swift"},
+      "kind": {"identifier": "swift.func"},
+      "names": {"title": "MyFunc()"},
+      "declarationFragments": [{"spelling": "func MyFunc()"}],
+      "accessLevel": "internal",
+      "location": {"uri": "file:///src/MyFile.swift"}
+    },
+    {
+      "identifier": {"precise": "s:8MyModule7MyClassC", "interfaceLanguage": "swift"},
+      "kind": {"identifier": "swift.class"},
+      "names": {"title": "MyClass"},
+      "declarationFragments": [{"spelling": "class MyClass"}],
+      "accessLevel": "public",
+      "location": {"uri": "file:///src/MyFile.swift"}
+    }
+  ],
+  "relationships": [
+    {
+      "kind": "memberOf",
+      "source": "s:8MyModule6MyFuncyyF",
+      "target": "s:8MyModule7MyClassC"
+    }
+  ]
+}
