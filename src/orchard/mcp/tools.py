@@ -12,7 +12,7 @@ from orchard.mcp.handlers.callers import CallerRequest, find_callers
 from orchard.mcp.handlers.symbol_context import SymbolContextRequest, get_symbol_context
 from orchard.mcp.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
 
-DEFAULT_DB = os.path.expanduser("~/.orchard/graph.db")
+DEFAULT_DB = os.environ.get("ORCHARD_DB_PATH", os.path.expanduser("~/.orchard/graph.db"))
 
 # Module-level connection — keeps the underlying ladybug.Database alive.
 _conn = None

@@ -39,6 +39,7 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
         results.append(PhaseResult(
             phase="indexstore_ingest", build_id=ctx.build_id, data=is_result,
             stats={"occurrences": len(is_result.occurrences), "relations": len(is_result.relations)},
+            warnings=is_result.warnings,
         ))
     else:
         results.append(PhaseResult(

@@ -25,6 +25,7 @@ class RelationRecord:
 class IndexStoreResult:
     occurrences: list[OccurrenceRecord] = field(default_factory=list)
     relations: list[RelationRecord] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 def _cli_path() -> str:
@@ -54,19 +55,23 @@ def read_index_store(
         line = line.strip()
         if not line:
             continue
-        obj = json.loads(line)
-        if obj["kind"] == "occurrence":
-            result.occurrences.append(OccurrenceRecord(
-                usr=obj["usr"],
-                file_path=obj["file"],
-                line=obj["line"],
-                col=obj["column"],
-                role=obj["role"],
-            ))
-        elif obj["kind"] == "relation":
-            result.relations.append(RelationRecord(
-                from_usr=obj["from_usr"],
-                to_usr=obj["to_usr"],
-                role=obj["role"],
-            ))
+        try:
+            obj = json.loads(line)
+            if obj["kind"] == "occurrence":
+                result.occurrences.append(OccurrenceRecord(
+                    usr=obj["usr"],
+                    file_path=obj["file"],
+                    line=obj["line"],
+                    col=obj["column"],
+                    role=obj["role"],
+                ))
+            elif obj["kind"] == "relation":
+                result.relations.append(RelationRecord(
+                    from_usr=obj["from_usr"],
+                    to_usr=obj["to_usr"],
+                    role=obj["role"],
+                ))
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            snippet = line[:80] + ("..." if len(line) > 80 else "")
+            result.warnings.append(f"invalid JSONL line ({exc}): {snippet}")
     return result

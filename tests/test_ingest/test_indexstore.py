@@ -35,3 +35,22 @@ def test_read_index_store_empty_store():
         result = read_index_store("/fake/store", target_id="MyTarget")
     assert result.occurrences == []
     assert result.relations == []
+
+
+def test_read_index_store_tolerates_malformed_lines():
+    output = '{"kind":"occurrence","usr":"s:A","file":"f.swift","line":1,"column":1,"role":"definition"}\nNOT VALID JSON\n'
+    with patch("orchard.ingest.indexstore._run_cli", return_value=output):
+        result = read_index_store("/fake/store", target_id="T")
+    assert len(result.occurrences) == 1
+    assert len(result.warnings) == 1
+    assert "NOT VALID" in result.warnings[0]
+
+
+def test_read_index_store_tolerates_missing_keys():
+    output = '{"kind":"occurrence","usr":"s:A","file":"f.swift","line":1,"column":1}\n{"kind":"relation","from_usr":"a","to_usr":"b"}\n'
+    with patch("orchard.ingest.indexstore._run_cli", return_value=output):
+        result = read_index_store("/fake/store", target_id="T")
+    # Both lines should be skipped (missing required keys): 2 warnings.
+    assert len(result.occurrences) == 0
+    assert len(result.relations) == 0
+    assert len(result.warnings) == 2

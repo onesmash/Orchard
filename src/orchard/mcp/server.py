@@ -13,7 +13,13 @@ from orchard.mcp.tools import register_tools
 
 
 def main() -> None:
-    """Create the FastMCP server, register all tools, and serve over stdio."""
+    """Create the FastMCP server, register all tools, and serve over stdio.
+
+    The database path defaults to ``$ORCHARD_DB_PATH`` or ``~/.orchard/graph.db``.
+    Override by setting the environment variable::
+
+        ORCHARD_DB_PATH=/custom/path/graph.db orchard-mcp
+    """
     server = FastMCP("orchard")
     register_tools(server)
     server.run(transport="stdio")
