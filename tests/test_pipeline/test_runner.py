@@ -93,3 +93,18 @@ async def test_pipeline_writes_calls_then_handlers_return_data(ctx, tmp_db_path)
         usr="c:caller()", target_id="MyLib", build_id=ctx.build_id))
     assert any(d["usr"] == "c:callee()" for d in callees.data)
     conn.close()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_includes_bridge_recovery_phase(ctx, tmp_db_path):
+    from unittest.mock import patch
+    from orchard.ingest.indexstore import IndexStoreResult
+    from orchard.ingest.symbolgraph import SymbolGraphResult
+    with (
+        patch("orchard.pipeline.runner.read_index_store", return_value=IndexStoreResult()),
+        patch("orchard.pipeline.runner.parse_symbolgraph", return_value=SymbolGraphResult()),
+        patch("orchard.pipeline.runner.discover_symbolgraph_paths", return_value=[]),
+    ):
+        results = await run_ingest_pipeline(ctx, db_path=tmp_db_path)
+    phases = [r.phase for r in results]
+    assert "cross_language_bridge_recovery" in phases

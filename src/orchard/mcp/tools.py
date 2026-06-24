@@ -7,8 +7,10 @@ import os
 from mcp.server import FastMCP
 
 from orchard.graph.db import get_connection, init_schema
+from orchard.mcp.handlers.bridges import BridgesRequest, get_cross_language_bridges
 from orchard.mcp.handlers.callees import CalleeRequest, find_callees
 from orchard.mcp.handlers.callers import CallerRequest, find_callers
+from orchard.mcp.handlers.impact import ImpactRequest, impact_analysis
 from orchard.mcp.handlers.symbol_context import SymbolContextRequest, get_symbol_context
 from orchard.mcp.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
 
@@ -79,3 +81,29 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             build_id=build_id or None,
         )
         return get_type_hierarchy(_conn, req).__dict__
+
+    @server.tool()
+    def get_cross_language_bridges_tool(
+        usr: str,
+        target_id: str = "",
+        build_id: str = "",
+    ) -> dict:
+        """Return cross-language BridgesTo edges for a symbol."""
+        req = BridgesRequest(
+            usr=usr, target_id=target_id or None, build_id=build_id or None,
+        )
+        return get_cross_language_bridges(_conn, req).__dict__
+
+    @server.tool()
+    def impact_analysis_tool(
+        usr: str,
+        target_id: str = "",
+        build_id: str = "",
+        max_depth: int = 5,
+    ) -> dict:
+        """Traverse call graph and return dependents by depth with risk score."""
+        req = ImpactRequest(
+            usr=usr, target_id=target_id or None, build_id=build_id or None,
+            max_depth=max_depth,
+        )
+        return impact_analysis(_conn, req).__dict__

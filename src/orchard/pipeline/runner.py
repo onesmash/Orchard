@@ -4,6 +4,7 @@ from typing import Any
 
 from orchard.build.context import BuildContext
 from orchard.build.discovery import discover_symbolgraph_paths
+from orchard.derive.bridge import run_bridge_recovery
 from orchard.graph.db import get_connection, init_schema
 from orchard.ingest.indexstore import read_index_store
 from orchard.ingest.symbolgraph import parse_symbolgraph
@@ -66,6 +67,13 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     results.append(PhaseResult(
         phase="identity_normalization", build_id=ctx.build_id, data=None,
         stats={"symbols_upserted": inserted},
+    ))
+
+    # cross_language_bridge_recovery
+    bridge_stats = run_bridge_recovery(conn, ctx.target, ctx.build_id)
+    results.append(PhaseResult(
+        phase="cross_language_bridge_recovery", build_id=ctx.build_id, data=None,
+        stats=bridge_stats,
     ))
 
     # call_graph_derivation — persist Calls + References edges from IndexStore
