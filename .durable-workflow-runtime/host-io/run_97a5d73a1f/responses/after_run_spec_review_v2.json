@@ -1,6 +1,0 @@
-{
-  "kind": "error",
-  "error_type": "execution_error",
-  "message": "verifier execution failed: name '_meaningful_entries' is not defined",
-  "details": {}
-}

@@ -7,3 +7,12 @@ dist/
 build/
 .venv/
 .gitnexus
+
+# Project-level config and tooling (not part of orchard package)
+.claude/
+.codex/
+.durable-workflow-runtime/
+.superpowers/
+AGENTS.md
+CLAUDE.md
+apple-semantic-grapgh.md

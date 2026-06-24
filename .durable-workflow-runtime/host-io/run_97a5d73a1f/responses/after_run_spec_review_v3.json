@@ -1,6 +1,0 @@
-{
-  "kind": "error",
-  "error_type": "execution_error",
-  "message": "verifier execution failed: name '_path_has_prefix' is not defined",
-  "details": {}
-}
