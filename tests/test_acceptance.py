@@ -1,6 +1,9 @@
 """Acceptance tests for M0-M2 per spec §12.
 
-Validates acceptance scenarios A, D, F, G, H (scenarios B/C/E need M3+).
+Validates acceptance scenarios A, D, and H. Scenarios B, C, E, F, and G
+are deferred to M3-M5 (they require bridge filtering, multi-target merge,
+or other later-milestone capabilities).
+
 Uses an in-process Ladybug graph populated directly with SymbolRecord /
 edge data, so the real ``orchard-indexstore-reader`` Swift CLI and Xcode
 are not required to run these tests.
@@ -96,8 +99,18 @@ def test_d_toolchain_mismatch_detected(tmp_db_path):
 
 # Scenario H: confidence < 0.70 gate (structure check — bridge filtering in M3)
 def test_h_symbol_context_has_open_gaps_field(populated_db):
+    """Baseline: with only a high-confidence Calls edge (1.0) and no
+    low-confidence bridges present, open_gaps is empty on the normal path.
+
+    Bridge filtering itself is M3 and out of scope here; this just pins the
+    baseline that, absent low-confidence (< 0.70) bridges, nothing is
+    recorded in open_gaps.
+    """
     conn, ctx = populated_db
+    # populated_db seeds a single Calls edge with confidence=1.0 (high).
     req = SymbolContextRequest(usr="s:MyClass", target_id="MyLib", build_id=ctx.build_id)
     resp = get_symbol_context(conn, req)
     assert hasattr(resp, "open_gaps")
     assert isinstance(resp.open_gaps, list)
+    # No low-confidence bridges present -> nothing recorded as an open gap.
+    assert resp.open_gaps == []
