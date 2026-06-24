@@ -72,7 +72,7 @@ def freshness_for(
     rows = conn.execute(
         "MATCH (b:BuildSnapshot {id: $id}) "
         "RETURN b.toolchain_id, b.build_config_hash, b.commit_sha, "
-        "b.created_at, b.index_store_path",
+        "b.created_at, b.index_store_path, b.sdk, b.configuration",
         {"id": build_id},
     ).get_all()
 
@@ -95,8 +95,8 @@ def freshness_for(
         created_at=row[3] or "",
         commit_sha=row[2],
         toolchain_id=row[0] or "",
-        sdk="",
-        configuration="",
+        sdk=row[5] or "",
+        configuration=row[6] or "",
         build_config_hash=row[1] or "",
         index_store_path=row[4] or "",
     )

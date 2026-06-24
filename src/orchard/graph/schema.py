@@ -14,7 +14,9 @@ NODE_TABLES: list[str] = [
         toolchain_id STRING,
         commit_sha STRING,
         created_at STRING,
-        build_config_hash STRING
+        build_config_hash STRING,
+        sdk STRING,
+        configuration STRING
     )""",
     """CREATE NODE TABLE IF NOT EXISTS Module(
         name STRING PRIMARY KEY,

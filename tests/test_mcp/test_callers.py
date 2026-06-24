@@ -1,7 +1,7 @@
 import pytest
 from orchard.graph.db import get_connection, init_schema
 from orchard.mcp.handlers.callers import find_callers, CallerRequest
-from orchard.mcp.handlers.callees import find_callees
+from orchard.mcp.handlers.callees import find_callees, CalleeRequest
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def test_find_callers_returns_callers(conn_with_calls):
 
 
 def test_find_callees_returns_callees(conn_with_calls):
-    req = CallerRequest(usr="s:A", target_id="T1", build_id="b1")
+    req = CalleeRequest(usr="s:A", target_id="T1", build_id="b1")
     resp = find_callees(conn_with_calls, req)
     names = {item["name"] for item in resp.data}
     assert "B" in names

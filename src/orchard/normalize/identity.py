@@ -7,6 +7,8 @@ for symbols, relationships, and build snapshots.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from orchard.ingest.symbolgraph import SymbolRecord, SymbolRelRecord
 from orchard.ingest.indexstore import RelationRecord
 from orchard.build.context import BuildContext
@@ -189,13 +191,16 @@ def upsert_build_snapshot(conn, ctx: BuildContext) -> None:
     ctx:
         The BuildContext describing this build.
     """
+    created_at = datetime.now(timezone.utc).isoformat()
     conn.execute(
         "MERGE (b:BuildSnapshot {id: $id}) "
         "SET b.build_system = $build_system, b.workspace_root = $workspace_root, "
         "b.derived_data_path = $derived_data_path, "
         "b.index_store_path = $index_store_path, "
         "b.toolchain_id = $toolchain_id, b.commit_sha = $commit_sha, "
-        "b.build_config_hash = $build_config_hash",
+        "b.build_config_hash = $build_config_hash, "
+        "b.sdk = $sdk, b.configuration = $configuration, "
+        "b.created_at = $created_at",
         {
             "id": ctx.build_id,
             "build_system": ctx.build_system,
@@ -205,5 +210,8 @@ def upsert_build_snapshot(conn, ctx: BuildContext) -> None:
             "toolchain_id": ctx.toolchain_id,
             "commit_sha": ctx.commit_sha or "",
             "build_config_hash": ctx.build_config_hash,
+            "sdk": ctx.sdk,
+            "configuration": ctx.configuration,
+            "created_at": created_at,
         },
     )
