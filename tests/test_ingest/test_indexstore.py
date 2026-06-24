@@ -7,7 +7,7 @@ SAMPLE_OUTPUT = "\n".join([
     json.dumps({"kind": "occurrence", "usr": "s:MyFunc", "file": "/src/f.swift",
                 "line": 10, "column": 5, "role": "definition"}),
     json.dumps({"kind": "relation", "from_usr": "s:MyFunc", "to_usr": "s:OtherFunc",
-                "role": "call"}),
+                "role": "calledBy"}),
 ])
 
 def test_read_index_store_parses_occurrences():
@@ -28,7 +28,7 @@ def test_read_index_store_parses_relations():
     rel = result.relations[0]
     assert rel.from_usr == "s:MyFunc"
     assert rel.to_usr == "s:OtherFunc"
-    assert rel.role == "call"
+    assert rel.role == "calledBy"
 
 def test_read_index_store_empty_store():
     with patch("orchard.ingest.indexstore._run_cli", return_value=""):
