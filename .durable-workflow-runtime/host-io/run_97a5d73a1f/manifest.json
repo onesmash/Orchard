@@ -1,0 +1,13 @@
+{
+  "layout_version": 1,
+  "run_id": "run_97a5d73a1f",
+  "workflow_id": null,
+  "paths": {
+    "run_dir": "/Users/hui.xu/SourceCode/orchard2/.durable-workflow-runtime/host-io/run_97a5d73a1f",
+    "start_request": "/Users/hui.xu/SourceCode/orchard2/.durable-workflow-runtime/host-io/run_97a5d73a1f/start-request.json",
+    "latest_response": "/Users/hui.xu/SourceCode/orchard2/.durable-workflow-runtime/host-io/run_97a5d73a1f/latest-response.json",
+    "responses_dir": "/Users/hui.xu/SourceCode/orchard2/.durable-workflow-runtime/host-io/run_97a5d73a1f/responses",
+    "observations_dir": "/Users/hui.xu/SourceCode/orchard2/.durable-workflow-runtime/host-io/run_97a5d73a1f/observations",
+    "artifacts_dir": "/Users/hui.xu/SourceCode/orchard2/.durable-workflow-runtime/host-io/run_97a5d73a1f/artifacts"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "kind": "yield",
+  "run_id": "run_97a5d73a1f",
+  "step_id": "approve_subagent_review",
+  "prompt_envelope": {
+    "run_id": "run_97a5d73a1f",
+    "step_id": "approve_subagent_review",
+    "prompt": "## Checklist\n\nYou MUST create a task for each of these items and complete them in order:\n1. Current stage (`approve_subagent_review`)\n2. durable-workflow-runtime run_id（`run_97a5d73a1f`）\n\n/brainstorming ask the user whether they approve launching independent development, design, and testing subagent reviews for docs/superpowers/specs/2026-06-24-orchard-python-implementation.md before implementation planning continues.\n\nStage Context:\n\n- Approved design path: docs/superpowers/specs/2026-06-24-orchard-python-implementation.md\n- Approved design summary: Orchard Python 系统：Ladybug 图数据库（Cypher + vector index + FTS + ACID）+ swift-index-store + subprocess（symbol graph / AST）+ qwen3-embedding:0.6b（Ollama 本地）+ mcp Python SDK。Phase DAG：build_artifacts → indexstore_ingest / swift_symbolgraph_ingest / clang_extractapi_ingest / ast_enrichment → identity_normalization → cross_language_bridge_recovery → call_graph_derivation / architecture_derivation / swiftui_derivation / embedding_projection。MCP 工具：11 个（get_symbol_context, find_callers, find_callees, impact_analysis, get_cross_language_bridges, semantic_search, get_type_hierarchy, get_module_graph, find_layer_violations, get_view_tree, find_navigation_flow）。\n- Repository root: /Users/hui.xu/SourceCode/orchard2\n\nStage Boundaries:\n\n- Do not launch any review subagents in this stage.\n- Do not write the implementation plan in this stage.\n- Wait for an explicit yes-or-no authorization decision from the user.\n- If the user declines subagent review, summarize the decision clearly and do not continue into spec review or implementation planning.\n\nBlocked Conditions:\n\n- Block if the user has not provided an explicit yes-or-no authorization decision yet.\n- Block if the approved design package is missing.\n\n本阶段 skill routing：\n- 主技能：当 操作命中 `user approval gate` / `subagent review authorization request` 或 目标文件命中 `docs/superpowers/specs/*.md` 时，优先使用 `brainstorming`\n  - 使用说明：Primary owner for asking whether the required review subagents may be launched.\n\n本阶段 structured_output 返回契约：\n\n当 `status = \"succeeded\"` 时，`structured_output` 必须符合：\n- `subagent_review_approved`: `boolean`\n- `authorization_summary`: `string`\n- `ready_for_spec_review`: `boolean`\n\n当 `status` 为 `failed` / `blocked` / `partial` 时，`structured_output` 必须符合：\n- `blocked_reason`: `string?`\n- `error_message`: `string?`\n- `missing_inputs`: `string[]?`\n\n`?` 表示该字段可选。",
+    "intent": "authorize_subagent_spec_review",
+    "expected_artifact": "an explicit user authorization decision for the required subagent design review",
+    "done_when": [
+      "The user has explicitly approved or declined the required subagent design review pass.",
+      "The authorization decision is summarized for the next stage or workflow closeout."
+    ],
+    "output_schema": {
+      "subagent_review_approved": "boolean",
+      "authorization_summary": "string",
+      "ready_for_spec_review": "boolean"
+    },
+    "failure_schema": {
+      "blocked_reason": "string?",
+      "error_message": "string?",
+      "missing_inputs": "string[]?"
+    },
+    "resume_instructions": "Return an Observation preserving run_id and step_id.",
+    "metadata": {
+      "workflow_id": "ios_ai_assisted_development_flow",
+      "workflow_version": "v1"
+    }
+  },
+  "retry_context": {
+    "category": "verifier_failed",
+    "summary": "visual_spec_detail_summary must be a string; design_comparison_source must be a string; runtime_visual_comparison_scope must be a string",
+    "requirements": [
+      "visual_spec_detail_summary must be a string; design_comparison_source must be a string; runtime_visual_comparison_scope must be a string"
+    ]
+  }
+}

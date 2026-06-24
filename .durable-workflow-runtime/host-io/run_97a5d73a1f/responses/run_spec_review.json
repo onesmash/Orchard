@@ -1,0 +1,6 @@
+{
+  "kind": "error",
+  "error_type": "protocol_error",
+  "message": "observation step_id does not match current node",
+  "details": {}
+}

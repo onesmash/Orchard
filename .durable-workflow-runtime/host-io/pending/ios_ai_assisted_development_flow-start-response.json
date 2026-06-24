@@ -1,0 +1,44 @@
+{
+  "kind": "yield",
+  "run_id": "run_97a5d73a1f",
+  "step_id": "run_brainstorming",
+  "prompt_envelope": {
+    "run_id": "run_97a5d73a1f",
+    "step_id": "run_brainstorming",
+    "prompt": "## Checklist\n\nYou MUST create a task for each of these items and complete them in order:\n1. Current stage (`run_brainstorming`)\n2. durable-workflow-runtime run_id（`run_97a5d73a1f`）\n\n/brainstorming 使用 Python 实现 Orchard Apple Semantic Graph 系统，根据 apple-semantic-grapgh.md 中的设计文档，构建一个支持 Swift/ObjC/C/C++ 的 Apple 平台代码知识图谱（Code Intelligence System），包括：IndexStore 摄取、Symbol Graph 解析、跨语言 bridge 恢复、统一语义图谱存储（Ladybug/图数据库）、以及 MCP 工具接口（find_callers、find_callees、impact_analysis、semantic_search、get_symbol_context 等）。 in /Users/hui.xu/SourceCode/orchard2; use knowledge-base as supporting context and produce an approved design package under docs/superpowers/specs/ before any implementation planning begins.\n\nStage Context:\n\n- Repository root: /Users/hui.xu/SourceCode/orchard2\n- Source process doc: \n- Brainstorming source: \n\nStage Boundaries:\n\n- Do not implement code in this stage.\n- Do not write the implementation plan until the design direction is approved.\n- Keep knowledge-base usage as context lookup, not as separate user-visible stages.\n- Follow the normal design-approval flow before writing or finalizing the approved spec document.\n- Write the approved brainstorming design as a Markdown document under docs/superpowers/specs/.\n- Do not use implementation plan documents as the brainstorming design document.\n- If the approved request affects a user-visible UI surface, the spec must include implementation-ready visual detail: view hierarchy, per-element properties, typography, colors, spacing, padding, alignment, sizing, constraints, states, assets, interaction behavior, layout relationships, and measurable expectations detailed enough to support code generation and visual verification without guessing.\n- If the approved request affects a user-visible UI surface, the spec must name the design-comparison source for visual QA, such as a Figma frame, approved mock, or reference screenshot, and describe the expected app screenshot/view scope to capture for runtime visual comparison.\n- Do not launch subagent review in this stage; the workflow will ask for explicit authorization in the next stage.\n\nBlocked Conditions:\n\n- Block if no clarification question has been asked and answered.\n- Block if the user has not approved the design direction.\n- Block if the requested change cannot be scoped to a concrete iOS Client objective.\n- Block if the approved spec document is written or finalized before the normal design-approval flow completes.\n- Block if a user-visible UI change lacks implementation-ready visual detail, a design-comparison source, or runtime screenshot/view scope.\n\n本阶段 skill routing：\n- 主技能：当 操作命中 `requirements clarification` / `design approval gate` / `design artifact preparation` 或 目标文件命中 `docs/superpowers/specs/*.md` 时，优先使用 `brainstorming`\n  - 使用说明：Primary owner for the pre-implementation design clarification and approval gate.\n  - 使用说明：Owns the approved design package that will later be handed into the review-authorization and subagent-review stages.\n- 辅助技能：当 操作命中 `knowledge-base context lookup` / `llms.txt discovery` 或 目标文件命中 `knowledge-base/llms.txt` / `knowledge-base/**/*.md` 时，按需补充使用 `code-kb-workflow`\n  - 使用说明：Supporting context layer only; do not write KB pages during brainstorming.\n\n本阶段 structured_output 返回契约：\n\n当 `status = \"succeeded\"` 时，`structured_output` 必须符合：\n- `clarification_questions`: `string[]`\n- `clarification_answers_summary`: `string`\n- `design_presented`: `boolean`\n- `user_approved_design`: `boolean`\n- `design_approved`: `boolean`\n- `approved_design_summary`: `string`\n- `approved_design_path`: `string`\n- `ui_surface_affected`: `boolean`\n- `visual_spec_detail_summary`: `string?`\n- `design_comparison_source`: `string?`\n- `runtime_visual_comparison_scope`: `string?`\n- `open_questions`: `string[]`\n- `ready_for_subagent_review`: `boolean`\n\n当 `status` 为 `failed` / `blocked` / `partial` 时，`structured_output` 必须符合：\n- `blocked_reason`: `string?`\n- `error_message`: `string?`\n- `missing_inputs`: `string[]?`\n\n`?` 表示该字段可选。",
+    "intent": "clarify_and_approve_design",
+    "expected_artifact": "an approved design package with a written design document path that is ready for subagent review authorization",
+    "done_when": [
+      "Clarification questions and answer summary are recorded.",
+      "The user-approved design direction is recorded.",
+      "The approved brainstorming design document exists under docs/superpowers/specs/ and its path is included.",
+      "UI-impacting requests include implementation-ready visual detail and visual QA comparison inputs in the approved design document.",
+      "The approved design package is ready for an explicit subagent review authorization decision."
+    ],
+    "output_schema": {
+      "clarification_questions": "string[]",
+      "clarification_answers_summary": "string",
+      "design_presented": "boolean",
+      "user_approved_design": "boolean",
+      "design_approved": "boolean",
+      "approved_design_summary": "string",
+      "approved_design_path": "string",
+      "ui_surface_affected": "boolean",
+      "visual_spec_detail_summary": "string?",
+      "design_comparison_source": "string?",
+      "runtime_visual_comparison_scope": "string?",
+      "open_questions": "string[]",
+      "ready_for_subagent_review": "boolean"
+    },
+    "failure_schema": {
+      "blocked_reason": "string?",
+      "error_message": "string?",
+      "missing_inputs": "string[]?"
+    },
+    "resume_instructions": "Return an Observation preserving run_id and step_id.",
+    "metadata": {
+      "workflow_id": "ios_ai_assisted_development_flow",
+      "workflow_version": "v1"
+    }
+  }
+}

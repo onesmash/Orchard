@@ -18,6 +18,7 @@ def test_read_index_store_parses_occurrences():
     assert occ.usr == "s:MyFunc"
     assert occ.file_path == "/src/f.swift"
     assert occ.line == 10
+    assert occ.col == 5
     assert occ.role == "definition"
 
 def test_read_index_store_parses_relations():

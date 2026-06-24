@@ -1,0 +1,43 @@
+{
+  "kind": "yield",
+  "run_id": "run_97a5d73a1f",
+  "step_id": "run_spec_review",
+  "prompt_envelope": {
+    "run_id": "run_97a5d73a1f",
+    "step_id": "run_spec_review",
+    "prompt": "## Checklist\n\nYou MUST create a task for each of these items and complete them in order:\n1. Current stage (`run_spec_review`)\n2. durable-workflow-runtime run_id（`run_97a5d73a1f`）\n\n/brainstorming review the approved design package at docs/superpowers/specs/2026-06-24-orchard-python-implementation.md through independent development, design, and testing subagent reviews; hand in the concrete review artifacts and confirm whether the design is ready for implementation planning.\n\nStage Context:\n\n- Approved design path: docs/superpowers/specs/2026-06-24-orchard-python-implementation.md\n- Approved design summary: Orchard Python 系统：Ladybug 图数据库（Cypher + vector index + FTS + ACID）+ swift-index-store + subprocess（symbol graph / AST）+ qwen3-embedding:0.6b（Ollama 本地）+ mcp Python SDK。Phase DAG：build_artifacts → indexstore_ingest / swift_symbolgraph_ingest / clang_extractapi_ingest / ast_enrichment → identity_normalization → cross_language_bridge_recovery → call_graph_derivation / architecture_derivation / swiftui_derivation / embedding_projection。MCP 工具：11 个（get_symbol_context, find_callers, find_callees, impact_analysis, get_cross_language_bridges, semantic_search, get_type_hierarchy, get_module_graph, find_layer_violations, get_view_tree, find_navigation_flow）。\n- Subagent review authorization: 用户授权对 docs/superpowers/specs/2026-06-24-orchard-python-implementation.md 启动独立开发/设计/测试三维度 subagent review，完成后进入实现规划阶段。\n- Repository root: /Users/hui.xu/SourceCode/orchard2\n- UI surface affected: False\n- Design comparison source: \n- Runtime visual comparison scope: \n\nStage Boundaries:\n\n- Use independent development, design, and testing subagent reviews; do not replace them with a single-thread summary.\n- Hand in the concrete subagent review outputs, not just a combined summary, so the workflow can verify that development, design, and testing reviews really happened.\n- Do not write the implementation plan in this stage.\n- If the approved request affects a user-visible UI surface, preserve the implementation-ready visual detail and visual QA comparison inputs in the reviewed design package.\n- If the design is not ready for implementation planning, return the concrete design gaps and open questions so the workflow can route back to brainstorming for revision.\n\nBlocked Conditions:\n\n- Block if the user has not approved subagent review.\n- Block if the subagent review outputs cannot be handed in as concrete review artifacts for later inspection.\n- Block if the three-perspective spec review loop has not completed or did not include development, design, and testing perspectives.\n\n本阶段 skill routing：\n- 主技能：当 操作命中 `multi-perspective spec review orchestration` / `subagent review artifact handoff` / `implementation readiness confirmation` 或 目标文件命中 `docs/superpowers/specs/*.md` 时，优先使用 `brainstorming`\n  - 使用说明：Primary owner for orchestrating the independent review loop and collecting the concrete review artifacts.\n- 辅助技能：当 操作命中 `development perspective spec review` / `design decision review` / `impact scope review` / `implementation readiness review` 或 目标文件命中 `docs/superpowers/specs/*.md` 时，按需补充使用 `software-design-philosophy`\n  - 使用说明：Supporting review lens for the development-oriented portion of the independent spec review loop.\n\n本阶段 structured_output 返回契约：\n\n当 `status = \"succeeded\"` 时，`structured_output` 必须符合：\n- `spec_review_loop_completed`: `boolean`\n- `spec_review_perspectives`: `string[]`\n- `spec_review_findings_summary`: `string`\n- `spec_review_subagent_summaries`: `string[]`\n- `spec_review_artifact_paths`: `string[]`\n- `open_questions`: `string[]`\n- `ready_for_planning`: `boolean`\n\n当 `status` 为 `failed` / `blocked` / `partial` 时，`structured_output` 必须符合：\n- `blocked_reason`: `string?`\n- `error_message`: `string?`\n- `missing_inputs`: `string[]?`\n\n`?` 表示该字段可选。",
+    "intent": "complete_subagent_spec_review_loop",
+    "expected_artifact": "a review-complete design package with concrete subagent review artifacts and implementation-planning readiness",
+    "done_when": [
+      "Concrete review artifacts from the development, design, and testing subagent reviews are handed in.",
+      "The spec review loop has completed with independent development, design, and testing perspective reviews.",
+      "Implementation-planning readiness or required design rework is recorded."
+    ],
+    "output_schema": {
+      "spec_review_loop_completed": "boolean",
+      "spec_review_perspectives": "string[]",
+      "spec_review_findings_summary": "string",
+      "spec_review_subagent_summaries": "string[]",
+      "spec_review_artifact_paths": "string[]",
+      "open_questions": "string[]",
+      "ready_for_planning": "boolean"
+    },
+    "failure_schema": {
+      "blocked_reason": "string?",
+      "error_message": "string?",
+      "missing_inputs": "string[]?"
+    },
+    "resume_instructions": "Return an Observation preserving run_id and step_id.",
+    "metadata": {
+      "workflow_id": "ios_ai_assisted_development_flow",
+      "workflow_version": "v1"
+    }
+  },
+  "retry_context": {
+    "category": "verifier_failed",
+    "summary": "visual_spec_detail_summary must be a string; design_comparison_source must be a string; runtime_visual_comparison_scope must be a string",
+    "requirements": [
+      "visual_spec_detail_summary must be a string; design_comparison_source must be a string; runtime_visual_comparison_scope must be a string"
+    ]
+  }
+}

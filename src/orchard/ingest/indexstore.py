@@ -10,7 +10,7 @@ class OccurrenceRecord:
     usr: str
     file_path: str
     line: int
-    column: int
+    col: int
     role: str
 
 
@@ -58,7 +58,7 @@ def read_index_store(index_store_path: str, target_id: str) -> IndexStoreResult:
                 usr=obj["usr"],
                 file_path=obj["file"],
                 line=obj["line"],
-                column=obj["column"],
+                col=obj["column"],
                 role=obj["role"],
             ))
         elif obj["kind"] == "relation":

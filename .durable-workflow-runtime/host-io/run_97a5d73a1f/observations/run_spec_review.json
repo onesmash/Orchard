@@ -1,0 +1,51 @@
+{
+  "run_id": "run_97a5d73a1f",
+  "step_id": "run_spec_review",
+  "status": "succeeded",
+  "summary": "三个独立视角（开发、架构设计、测试）的 subagent review 已完成。发现并解决了关键设计问题：Symbol 主键改为 target-scoped composite key、IndexStore 摄取改为 Swift CLI wrapper 策略、新增 ConformsTo 关系表、补充 3 个验收场景。Spec 文档已更新。设计已准备好进入实现规划阶段。",
+  "structured_output": {
+    "spec_review_loop_completed": true,
+    "spec_review_perspectives": ["development", "design", "testing"],
+    "spec_review_findings_summary": "1. Ladybug 包名冲突风险已核实排除（pip install ladybug v0.17.1 = LadybugDB 图数据库）。2. swift-index-store 无现成 Python bindings，方案改为薄 Swift CLI wrapper（orchard-indexstore-reader）。3. Symbol 主键改为 target-scoped composite key（{target_id}:{usr}）避免多 target 冲突。4. 新增 ConformsTo Relation Table。5. 补充 partially_stale、toolchain_mismatch、confidence < 0.70 gate 三个验收场景。总体设计质量 4/5，准备进入规划阶段。",
+    "spec_review_subagent_summaries": [
+      "开发视角（3/5）：Ladybug 包名已确认无冲突。IndexStore 摄取无现成 Python bindings，采用 Swift CLI wrapper 方案。Phase DAG 调度器选 asyncio + 手写 DAG。ObjC↔Swift bridge recovery 依赖 .swiftinterface 存在性需在 M0 做 spike。",
+      "架构设计视角（4/5）：派生层/事实层分离优秀。Symbol 主键 USR-only 有多 target 冲突风险，已更新为 target-scoped composite key。补充 ConformsTo 关系。normalize/bridge.py 与 derive/bridge.py 命名需区分（规划阶段处理）。",
+      "测试视角（3/5）：PhaseResult stats/warnings 基础良好。缺少 partially_stale、toolchain_mismatch、confidence gate 验收场景（已补充）。subprocess 隔离和 fixture 策略待 M0 确定。建议确认 Ladybug in-memory 模式支持。"
+    ],
+    "spec_review_artifact_paths": [
+      "docs/superpowers/specs/reviews/review-development.md",
+      "docs/superpowers/specs/reviews/review-design.md",
+      "docs/superpowers/specs/reviews/review-testing.md"
+    ],
+    "open_questions": [],
+    "ready_for_planning": true,
+    "visual_spec_detail_summary": "",
+    "design_comparison_source": "",
+    "runtime_visual_comparison_scope": ""
+  },
+  "artifacts": [
+    {
+      "path": "docs/superpowers/specs/reviews/review-development.md",
+      "kind": "review_artifact",
+      "description": "Development perspective subagent review"
+    },
+    {
+      "path": "docs/superpowers/specs/reviews/review-design.md",
+      "kind": "review_artifact",
+      "description": "Architecture design perspective subagent review"
+    },
+    {
+      "path": "docs/superpowers/specs/reviews/review-testing.md",
+      "kind": "review_artifact",
+      "description": "Testing perspective subagent review"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-24-orchard-python-implementation.md",
+      "kind": "spec_document",
+      "description": "Updated spec document after review"
+    }
+  ],
+  "error": null,
+  "tool_trace": [],
+  "raw_output": ""
+}
