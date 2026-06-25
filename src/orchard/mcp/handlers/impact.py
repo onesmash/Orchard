@@ -88,35 +88,36 @@ def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
 
     for depth in range(1, max_depth + 1):
         next_ids: set[str] = set()
+        ids_list = list(current_ids)
         for rel_type in policy.effective_relation_types():
-            # Build optional confidence filter for BridgesTo edges.
             if rel_type == "BridgesTo" and not policy.include_low_confidence:
                 conf_filter = " AND r.confidence >= 0.70"
             else:
                 conf_filter = ""
 
-            for cid in current_ids:
-                rows = conn.execute(
-                    f"MATCH (next:Symbol)-[r:{rel_type}]->(current:Symbol {{id: $id}}) "
-                    f"WHERE next.id <> $id{conf_filter} "
-                    "RETURN next.id, next.usr, next.name, next.module, "
-                    "next.language, next.kind",
-                    {"id": cid},
-                ).get_all()
-                for row in rows:
-                    next_id = row[0]
-                    next_usr = row[1]
-                    if next_id not in visited_ids:
-                        visited_ids.add(next_id)
-                        next_ids.add(next_id)
-                        depths.setdefault(f"d{depth}", []).append({
-                            "usr": next_usr,
-                            "name": row[2],
-                            "module": row[3],
-                            "language": row[4],
-                            "kind": row[5],
-                            "reached_via": rel_type,
-                        })
+            # UNWIND batch: one query per rel_type, not per cid.
+            rows = conn.execute(
+                f"UNWIND $ids AS cid "
+                f"MATCH (next:Symbol)-[r:{rel_type}]->(current:Symbol {{id: cid}}) "
+                f"WHERE next.id <> cid{conf_filter} "
+                "RETURN next.id, next.usr, next.name, next.module, "
+                "next.language, next.kind",
+                {"ids": ids_list},
+            ).get_all()
+            for row in rows:
+                next_id = row[0]
+                next_usr = row[1]
+                if next_id not in visited_ids:
+                    visited_ids.add(next_id)
+                    next_ids.add(next_id)
+                    depths.setdefault(f"d{depth}", []).append({
+                        "usr": next_usr,
+                        "name": row[2],
+                        "module": row[3],
+                        "language": row[4],
+                        "kind": row[5],
+                        "reached_via": rel_type,
+                    })
         if not next_ids:
             break
         current_ids = next_ids
