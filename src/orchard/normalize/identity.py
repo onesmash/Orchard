@@ -157,15 +157,13 @@ def upsert_indexstore_rels(
     source: str,
     build_id: str,
 ) -> int:
-    """Upsert IndexStore structural relation edges — batched via UNWIND.
+    """Upsert IndexStore structural relation edges via COPY FROM CSV.
 
     Maps IndexStore relation roles to Ladybug table names (see
-    ``_INDEXSTORE_REL_TO_TABLE``).  Roles without a mapping are silently
-    skipped.  Batched per role type for efficient UNWIND queries.
+    ``_INDEXSTORE_REL_TO_TABLE``).  Each table gets a separate CSV import.
     """
     t0 = time.monotonic()
-    count = 0
-    # Group by target table to emit one UNWIND query per role.
+    # Group by target table.
     by_table: dict[str, list[tuple[str, str]]] = {}
     for rel in rels:
         table = _INDEXSTORE_REL_TO_TABLE.get(rel.role)
@@ -175,21 +173,21 @@ def upsert_indexstore_rels(
             (make_symbol_id(target_id, rel.from_usr),
              make_symbol_id(target_id, rel.to_usr))
         )
+    import csv, tempfile, os
+    count = 0
     for table, pairs in by_table.items():
-        for i in range(0, len(pairs), _EDGE_BATCH_SIZE):
-            batch = pairs[i : i + _EDGE_BATCH_SIZE]
-            rows = [{"s": s, "t": t} for s, t in batch]
-            conn.execute(
-                f"UNWIND $rows AS r "
-                f"MATCH (a:Symbol {{id: r.s}}), (b:Symbol {{id: r.t}}) "
-                f"MERGE (a)-[:{table} {{source: $src}}]->(b)",
-                {"rows": rows, "src": source},
-            )
-            count += len(batch)
+        csv_path = os.path.join(tempfile.mkdtemp(), f"{table}.csv")
+        with open(csv_path, "w", newline="") as fh:
+            w = csv.writer(fh)
+            for s, t in pairs:
+                w.writerow([s, t, source])
+        if _progress:
+            sys.stdout.write(f"  importing {len(pairs):,} {table} edges...")
+            sys.stdout.flush()
+        conn.execute(f"COPY {table} FROM '{csv_path}' (HEADER=false, DELIM=',')")
+        os.unlink(csv_path)
+        count += len(pairs)
     conn.execute("CHECKPOINT")
-    if _progress:
-        sys.stdout.write(f"\r  struct: {count} edges")
-        sys.stdout.flush()
     t = round(time.monotonic() - t0, 3)
     _perf_probes["upsert_struct_s"] = t
     _perf_probes["upsert_struct_n"] = count
@@ -203,33 +201,41 @@ def upsert_calls(
     source: str,
     build_id: str,
 ) -> int:
-    """Upsert Calls edges from IndexStore relations — batched via UNWIND.
+    """Upsert Calls edges via COPY FROM CSV.
 
     IndexStore role 'calledBy': ``from_usr`` is called by ``to_usr``, i.e.
-    ``to_usr`` calls ``from_usr``. The CALLER is therefore ``to_usr`` and the
-    CALLEE is ``from_usr``. Edge written: ``Calls(caller=to_usr, callee=from_usr)``.
+    ``to_usr`` calls ``from_usr``. The CALLER is ``to_usr``, the CALLEE is
+    ``from_usr``.  Edge written: ``Calls(caller=to_usr, callee=from_usr)``.
+
+    Uses Ladybug's ``COPY FROM`` bulk importer — orders of magnitude faster
+    than UNWIND + CREATE for large edge sets (596k edges import in seconds).
     """
     t0 = time.monotonic()
     called = [(r.to_usr, r.from_usr) for r in relations if r.role == "calledBy"]
-    count = 0
-    for i in range(0, len(called), _EDGE_BATCH_SIZE):
-        batch = called[i : i + _EDGE_BATCH_SIZE]
-        rows = [
-            {"c": make_symbol_id(target_id, to_u),
-             "d": make_symbol_id(target_id, fm_u)}
-            for to_u, fm_u in batch
-        ]
-        conn.execute(
-            "UNWIND $rows AS r "
-            "MATCH (a:Symbol {id: r.c}), (b:Symbol {id: r.d}) "
-            "CREATE (a)-[:Calls {source: $src, confidence: 1.0, "
-            "provenance: 'indexstore', build_id: $bid}]->(b)",
-            {"rows": rows, "src": source, "bid": build_id},
-        )
-        count += len(batch)
-        if _progress:
-            sys.stdout.write(f"\r  calls: {count}/{len(called)} ({count*100//len(called)}%)")
-            sys.stdout.flush()
+    if not called:
+        _perf_probes["upsert_calls_s"] = 0
+        _perf_probes["upsert_calls_n"] = 0
+        return 0
+
+    import csv, tempfile, os
+    # Build CSV: two columns are FROM/TO primary keys, the rest are edge props.
+    csv_path = os.path.join(tempfile.mkdtemp(), "calls.csv")
+    with open(csv_path, "w", newline="") as fh:
+        w = csv.writer(fh)
+        for to_u, fm_u in called:
+            w.writerow([
+                make_symbol_id(target_id, to_u),
+                make_symbol_id(target_id, fm_u),
+                source, "1.0", "indexstore", build_id,
+            ])
+    if _progress:
+        sys.stdout.write(f"  csv {os.path.getsize(csv_path)/1024/1024:.0f}MB, importing...")
+        sys.stdout.flush()
+    conn.execute(
+        f"COPY Calls FROM '{csv_path}' (HEADER=false, DELIM=',')"
+    )
+    os.unlink(csv_path)
+    count = len(called)
     conn.execute("CHECKPOINT")
     t = round(time.monotonic() - t0, 3)
     _perf_probes["upsert_calls_s"] = t
