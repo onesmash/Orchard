@@ -163,16 +163,23 @@ def upsert_indexstore_rels(
     ``_INDEXSTORE_REL_TO_TABLE``).  Each table gets a separate CSV import.
     """
     t0 = time.monotonic()
-    # Group by target table.
+    # Pre-fetch the set of existing Symbol IDs so we only write edges whose
+    # both endpoints exist (COPY FROM rejects missing primary keys).
+    id_rows = conn.execute(
+        "MATCH (s:Symbol {target_id: $tid}) RETURN s.id",
+        {"tid": target_id},
+    ).get_all()
+    existing_ids = {r[0] for r in id_rows}
+    # Group by target table, filtering to valid pairs.
     by_table: dict[str, list[tuple[str, str]]] = {}
     for rel in rels:
         table = _INDEXSTORE_REL_TO_TABLE.get(rel.role)
         if table is None:
             continue
-        by_table.setdefault(table, []).append(
-            (make_symbol_id(target_id, rel.from_usr),
-             make_symbol_id(target_id, rel.to_usr))
-        )
+        s_id = make_symbol_id(target_id, rel.from_usr)
+        t_id = make_symbol_id(target_id, rel.to_usr)
+        if s_id in existing_ids and t_id in existing_ids:
+            by_table.setdefault(table, []).append((s_id, t_id))
     import csv, tempfile, os
     count = 0
     for table, pairs in by_table.items():
