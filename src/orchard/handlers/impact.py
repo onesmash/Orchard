@@ -66,7 +66,7 @@ def _subtype_closure(conn, usr: str, max_depth: int = 20) -> set[str]:
             break
         next_frontier: set[str] = set()
         f_list = list(frontier)
-        for rel_type in ("Inherits", "ConformsTo", "Extends"):
+        for rel_type in ("Inherits", "ConformsTo", "Extends", "Implements"):
             rows = conn.execute(
                 f"UNWIND $ids AS uid "
                 f"MATCH (child:Symbol)-[:{rel_type}]->(parent:Symbol {{usr: uid}}) "
@@ -112,9 +112,32 @@ def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
     # Build per-depth result dict.
     depths: dict[str, list[dict]] = {}
 
+    # Seed subtype closure BEFORE BFS so conformers reached via both closure
+    # and Calls edges are not double-counted.
+    subtype_usrs = _subtype_closure(conn, req.usr, max_depth=policy.max_depth)
+    # Look up symbol metadata for subtypes and add to d1.
+    d1_subtypes: list[dict] = []
+    for sub_usr in subtype_usrs:
+        s_rows = conn.execute(
+            "MATCH (s:Symbol {usr: $usr}) "
+            "RETURN s.id, s.usr, s.name, s.module, s.language, s.kind LIMIT 1",
+            {"usr": sub_usr},
+        ).get_all()
+        for row in s_rows:
+            d1_subtypes.append({
+                "usr": row[1], "name": row[2], "module": row[3],
+                "language": row[4], "kind": row[5],
+                "reached_via": "subtype_closure",
+            })
+
     # BFS: start from the queried symbol, expand via incoming edges.
     current_ids = {sym_id}
     visited_ids = {sym_id}
+    # Seed visited with subtype symbol IDs so BFS doesn't re-add them.
+    for entry in d1_subtypes:
+        visited_ids.add(make_symbol_id(target_id, entry["usr"]))
+    if d1_subtypes:
+        depths.setdefault("d1", []).extend(d1_subtypes)
 
     for depth in range(1, max_depth + 1):
         next_ids: set[str] = set()
@@ -164,6 +187,42 @@ def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
     open_gaps: list[str] = []
     if not depths:
         open_gaps.append("no dependents found")
+
+    # Freshness annotation: check d1 dependents' file_path mtime against the
+    # build snapshot's created_at.  Annotate via open_gaps (do NOT filter —
+    # filtering would shrink d1_count and misleadingly lower risk).
+    # Empty file_path or no build snapshot → default up-to-date.
+    from orchard.validation.freshness import IndexOutOfDateChecker, IndexCheckLevel, SymbolLocation
+    from datetime import datetime
+    index_ts: float | None = None
+    if req.build_id:
+        snap_rows = conn.execute(
+            "MATCH (b:BuildSnapshot {id: $id}) RETURN b.created_at LIMIT 1",
+            {"id": req.build_id},
+        ).get_all()
+        if snap_rows and snap_rows[0][0]:
+            try:
+                index_ts = datetime.fromisoformat(snap_rows[0][0]).timestamp()
+            except (ValueError, OSError):
+                index_ts = None
+    if index_ts is not None:
+        checker = IndexOutOfDateChecker(IndexCheckLevel.MODIFIED_FILES)
+        d1_usrs = [d["usr"] for d in d1]
+        if d1_usrs:
+            fp_rows = conn.execute(
+                "UNWIND $usrs AS u MATCH (s:Symbol {usr: u}) RETURN s.usr, s.file_path",
+                {"usrs": d1_usrs},
+            ).get_all()
+            for row in fp_rows:
+                usr, fp = row[0], row[1]
+                if not fp:
+                    continue
+                try:
+                    loc = SymbolLocation(path=fp, timestamp=index_ts)
+                    if not checker.is_up_to_date(loc):
+                        open_gaps.append(f"dependent '{usr}' in file '{fp}' may be stale")
+                except OSError:
+                    open_gaps.append(f"dependent '{usr}' references missing file '{fp}'")
 
     return BaseToolResponse(
         data={"by_depth": depths, "risk": risk},

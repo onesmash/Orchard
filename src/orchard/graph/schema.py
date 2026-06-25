@@ -121,7 +121,10 @@ REL_TABLES: list[str] = [
         provenance STRING,
         confidence DOUBLE,
         build_id STRING,
-        reason STRING
+        reason STRING,
+        clang_name STRING,
+        swift_name STRING,
+        definition_language STRING
     )""",
     "CREATE REL TABLE IF NOT EXISTS ProducedDiagnostic(FROM BuildSnapshot TO Diagnostic)",
     """CREATE REL TABLE IF NOT EXISTS DependsOn(

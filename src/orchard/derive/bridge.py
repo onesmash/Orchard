@@ -96,6 +96,8 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
     # Write bidirectional BridgesTo edges via MERGE.
     counts: dict[str, int] = {"bridges_by_name": 0, "bridges_by_usr": 0, "total": 0}
 
+    # Cache symbol language/name per USR to build CrossLanguageName.
+    sym_cache: dict[str, dict] = {}
     for (usr_a, usr_b), (kind, conf) in pairs.items():
         if kind == "usr_correlate":
             counts["bridges_by_usr"] += 2  # bidirectional
@@ -103,10 +105,32 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
             counts["bridges_by_name"] += 2
         counts["total"] += 2
         for src_usr, tgt_usr in [(usr_a, usr_b), (usr_b, usr_a)]:
+            # Resolve cross-language names for the source symbol.
+            for u in (src_usr, tgt_usr):
+                if u not in sym_cache:
+                    sr = conn.execute(
+                        "MATCH (s:Symbol {usr: $usr}) "
+                        "RETURN s.language, s.name, s.kind LIMIT 1",
+                        {"usr": u},
+                    ).get_all()
+                    if sr:
+                        sym_cache[u] = {"language": sr[0][0], "name": sr[0][1], "kind": sr[0][2]}
+                    else:
+                        sym_cache[u] = {}
+            src_meta = sym_cache.get(src_usr, {})
+            tgt_meta = sym_cache.get(tgt_usr, {})
+            src_lang = src_meta.get("language", "")
+            tgt_lang = tgt_meta.get("language", "")
+            # CrossLanguageName: clang_name if objc, swift_name if swift.
+            clang_name = src_meta.get("name") if src_lang == "objc" else (tgt_meta.get("name") if tgt_lang == "objc" else None)
+            swift_name = src_meta.get("name") if src_lang == "swift" else (tgt_meta.get("name") if tgt_lang == "swift" else None)
+            def_lang = src_lang or tgt_lang
             conn.execute(
                 "MATCH (a:Symbol {id: $src}), (b:Symbol {id: $dst}) "
                 "MERGE (a)-[:BridgesTo {bridge_kind: $kind, provenance: $prov, "
-                "confidence: $conf, build_id: $bid}]->(b)",
+                "confidence: $conf, build_id: $bid, reason: $reason, "
+                "clang_name: $clang, swift_name: $swift, "
+                "definition_language: $deflang}]->(b)",
                 {
                     "src": make_symbol_id(target_id, src_usr),
                     "dst": make_symbol_id(target_id, tgt_usr),
@@ -114,6 +138,10 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
                     "prov": "derive/bridge",
                     "conf": conf,
                     "bid": build_id,
+                    "reason": "derive/bridge",
+                    "clang": clang_name,
+                    "swift": swift_name,
+                    "deflang": def_lang,
                 },
             )
 
