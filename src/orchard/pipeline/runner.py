@@ -15,6 +15,8 @@ from orchard.normalize.identity import (
     upsert_calls,
     upsert_references,
 )
+from orchard.search.chunker import chunk_symbols
+from orchard.search.embedder import Embedder, EmbeddingError
 
 
 @dataclass
@@ -74,6 +76,44 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     results.append(PhaseResult(
         phase="cross_language_bridge_recovery", build_id=ctx.build_id, data=None,
         stats=bridge_stats,
+    ))
+
+    # embedding_projection — chunk symbols and embed them
+    embed_chunks = chunk_symbols(conn, ctx.target)
+    embed_written = 0
+    embed_warnings: list[str] = []
+    try:
+        embedder = Embedder()
+        texts = [c.content for c in embed_chunks]
+        if texts:
+            vectors = embedder.embed_batch(texts)
+            for chunk, vec in zip(embed_chunks, vectors):
+                conn.execute(
+                    "MERGE (c:Chunk {id: $id}) "
+                    "SET c.owner_usr=$usr, c.chunk_kind=$kind, "
+                    "c.content=$content, c.embedding=$emb",
+                    {
+                        "id": chunk.chunk_id,
+                        "usr": chunk.owner_usr,
+                        "kind": chunk.chunk_kind,
+                        "content": chunk.content,
+                        "emb": vec,
+                    },
+                )
+                sid = f"{ctx.target}:{chunk.owner_usr}"
+                conn.execute(
+                    "MATCH (s:Symbol {id: $sid}), (c:Chunk {id: $cid}) "
+                    "MERGE (s)-[:ContainsChunk]->(c)",
+                    {"sid": sid, "cid": chunk.chunk_id},
+                )
+                embed_written += 1
+    except EmbeddingError as e:
+        embed_warnings.append(f"Ollama unavailable: {e}")
+
+    results.append(PhaseResult(
+        phase="embedding_projection", build_id=ctx.build_id, data=None,
+        stats={"chunks": len(embed_chunks), "embedded": embed_written},
+        warnings=embed_warnings,
     ))
 
     # call_graph_derivation — persist Calls + References edges from IndexStore

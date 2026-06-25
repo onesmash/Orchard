@@ -108,3 +108,30 @@ async def test_pipeline_includes_bridge_recovery_phase(ctx, tmp_db_path):
         results = await run_ingest_pipeline(ctx, db_path=tmp_db_path)
     phases = [r.phase for r in results]
     assert "cross_language_bridge_recovery" in phases
+
+
+@pytest.mark.asyncio
+async def test_pipeline_embedding_projection_handles_ollama_down(ctx, tmp_db_path):
+    """When Ollama is unreachable, embedding_projection phase still appears
+    with embedded=0 and a warning."""
+    from unittest.mock import patch
+    from orchard.ingest.indexstore import IndexStoreResult
+    from orchard.ingest.symbolgraph import SymbolGraphResult
+    from orchard.search.embedder import EmbeddingError
+
+    with (
+        patch("orchard.pipeline.runner.read_index_store", return_value=IndexStoreResult()),
+        patch("orchard.pipeline.runner.parse_symbolgraph", return_value=SymbolGraphResult()),
+        patch("orchard.pipeline.runner.discover_symbolgraph_paths", return_value=[]),
+        patch("orchard.pipeline.runner.Embedder.__init__",
+              side_effect=EmbeddingError("Connection refused")),
+    ):
+        results = await run_ingest_pipeline(ctx, db_path=tmp_db_path)
+
+    phases = [r.phase for r in results]
+    assert "embedding_projection" in phases
+
+    embed_phase = next(r for r in results if r.phase == "embedding_projection")
+    assert embed_phase.stats["embedded"] == 0
+    assert len(embed_phase.warnings) > 0
+    assert any("Ollama unavailable" in w for w in embed_phase.warnings)
