@@ -33,8 +33,7 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
     dict
         Counters: ``bridges_by_name``, ``total``.
     """
-    # Count existing edges for this provenance/build_id so we can report
-    # only the *new* edges written in this call (delta-based idempotency).
+    # Count existing edges to report only *new* ones (delta-based idempotency).
     before = conn.execute(
         "MATCH ()-[r:BridgesTo {provenance: 'derive/bridge', build_id: $bid}]->() "
         "RETURN count(r)",
@@ -43,6 +42,7 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
     before_count = int(before[0][0]) if before else 0
 
     # Strategy 1: Name + kind match across languages.
+    # Strategy 2: Same source directory → USR correlation (higher confidence).
     # Simple cross-language scan using only Symbol nodes (no File/Target edges
     # required).  Symbols must differ in language, both be swift or objc, and
     # belong to the same target.
@@ -52,19 +52,34 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
         "  AND a.language <> b.language AND a.language IN ['swift','objc'] "
         "  AND b.language IN ['swift','objc'] "
         "  AND a.target_id = $tid AND b.target_id = $tid "
-        "RETURN a.usr, b.usr LIMIT 5000",
+        "RETURN a.usr, b.usr, a.file_path, b.file_path LIMIT 5000",
         {"tid": target_id},
     ).get_all()
 
-    # Deduplicate pairs: (a,b) and (b,a) are the same bridge.
-    pairs: set[tuple[str, str]] = set()
+    # Deduplicate pairs and determine confidence tier.
+    # (usr_a, usr_b, kind, confidence)
+    pairs: dict[tuple[str, str], tuple[str, float]] = {}
     for row in rows:
-        usr_a, usr_b = row[0], row[1]
+        usr_a, usr_b, fp_a, fp_b = row[0], row[1], row[2] or "", row[3] or ""
         pair_key = tuple(sorted([usr_a, usr_b]))
-        pairs.add(pair_key)
+        # Strategy 2: same source directory → USR correlation (0.85)
+        # Falls back to name_match (0.70) when file paths differ.
+        from pathlib import PurePosixPath
+        same_dir = bool(fp_a and fp_b and
+                        PurePosixPath(fp_a).parent == PurePosixPath(fp_b).parent)
+        kind = "usr_correlate" if same_dir else "name_match"
+        conf = 0.85 if same_dir else 0.70
+        pairs[pair_key] = (kind, conf)
 
     # Write bidirectional BridgesTo edges via MERGE.
-    for usr_a, usr_b in pairs:
+    counts: dict[str, int] = {"bridges_by_name": 0, "bridges_by_usr": 0, "total": 0}
+
+    for (usr_a, usr_b), (kind, conf) in pairs.items():
+        if kind == "usr_correlate":
+            counts["bridges_by_usr"] += 2  # bidirectional
+        else:
+            counts["bridges_by_name"] += 2
+        counts["total"] += 2
         for src_usr, tgt_usr in [(usr_a, usr_b), (usr_b, usr_a)]:
             conn.execute(
                 "MATCH (a:Symbol {id: $src}), (b:Symbol {id: $dst}) "
@@ -73,23 +88,23 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
                 {
                     "src": make_symbol_id(target_id, src_usr),
                     "dst": make_symbol_id(target_id, tgt_usr),
-                    "kind": "name_match",
+                    "kind": kind,
                     "prov": "derive/bridge",
-                    "conf": 0.70,
+                    "conf": conf,
                     "bid": build_id,
                 },
             )
 
-    # Count after and compute delta — only *new* edges are reported.
+    # Report delta (new edges only) for idempotency.
     after = conn.execute(
         "MATCH ()-[r:BridgesTo {provenance: 'derive/bridge', build_id: $bid}]->() "
         "RETURN count(r)",
         {"bid": build_id},
     ).get_all()
     after_count = int(after[0][0]) if after else 0
-
-    new_edges = after_count - before_count
+    new_total = max(0, after_count - before_count)
     return {
-        "bridges_by_name": len(pairs) if new_edges > 0 else 0,
-        "total": new_edges,
+        "bridges_by_name": counts["bridges_by_name"],
+        "bridges_by_usr": counts["bridges_by_usr"],
+        "total": new_total,
     }

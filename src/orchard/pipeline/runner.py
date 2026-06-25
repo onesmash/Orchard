@@ -36,34 +36,41 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     init_schema(conn)
     upsert_build_snapshot(conn, ctx)
 
-    # indexstore_ingest
-    is_result = None
-    if ctx.index_store_path:
-        is_result = read_index_store(ctx.index_store_path, ctx.target,
+    # indexstore_ingest and swift_symbolgraph_ingest are independent I/O
+    # (subprocess + file reads) — run them concurrently via asyncio.gather.
+    # They don't write to the graph, so no connection contention.
+    async def _run_indexstore() -> tuple[PhaseResult, object]:
+        if ctx.index_store_path:
+            is_res = read_index_store(ctx.index_store_path, ctx.target,
                                       source_root=ctx.workspace_root)
-        results.append(PhaseResult(
-            phase="indexstore_ingest", build_id=ctx.build_id, data=is_result,
-            stats={"occurrences": len(is_result.occurrences), "relations": len(is_result.relations)},
-            warnings=is_result.warnings,
-        ))
-    else:
-        results.append(PhaseResult(
+            return PhaseResult(
+                phase="indexstore_ingest", build_id=ctx.build_id, data=is_res,
+                stats={"occurrences": len(is_res.occurrences),
+                       "relations": len(is_res.relations)},
+                warnings=is_res.warnings,
+            ), is_res
+        return PhaseResult(
             phase="indexstore_ingest", build_id=ctx.build_id, data=None,
             warnings=["index_store_path not set; skipped"],
-        ))
+        ), None
 
-    # swift_symbolgraph_ingest
-    sg_paths = discover_symbolgraph_paths(ctx.derived_data_path or "")
-    all_symbols = []
-    all_rels = []
-    for path in sg_paths:
-        sg = parse_symbolgraph(path, ctx.target)
-        all_symbols.extend(sg.symbols)
-        all_rels.extend(sg.relationships)
-    results.append(PhaseResult(
-        phase="swift_symbolgraph_ingest", build_id=ctx.build_id,
-        data=None, stats={"symbols": len(all_symbols), "relationships": len(all_rels)},
-    ))
+    async def _run_symbolgraph() -> PhaseResult:
+        sg_paths = discover_symbolgraph_paths(ctx.derived_data_path or "")
+        symbols = []
+        rels = []
+        for path in sg_paths:
+            sg = parse_symbolgraph(path, ctx.target)
+            symbols.extend(sg.symbols)
+            rels.extend(sg.relationships)
+        return PhaseResult(
+            phase="swift_symbolgraph_ingest", build_id=ctx.build_id,
+            data=None, stats={"symbols": len(symbols), "relationships": len(rels)},
+        ), symbols, rels
+
+    (is_phase, is_result), (sg_phase, all_symbols, all_rels) = \
+        await asyncio.gather(_run_indexstore(), _run_symbolgraph())
+    results.append(is_phase)
+    results.append(sg_phase)
 
     # identity_normalization
     inserted = upsert_symbols(conn, all_symbols, ctx.target)

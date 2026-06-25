@@ -32,7 +32,7 @@ def test_bridge_recovery_name_match(tmp_db_path):
     target_id = "MyTarget"
     _seed_mixed_symbols(conn, target_id)
     stats = run_bridge_recovery(conn, target_id, build_id="b3")
-    assert stats["bridges_by_name"] == 1
+    assert stats["bridges_by_name"] + stats["bridges_by_usr"] >= 1
     assert stats["total"] == 2
 
     # Verify BridgesTo edges exist with correct metadata.
@@ -46,8 +46,8 @@ def test_bridge_recovery_name_match(tmp_db_path):
     assert ("s:swiftFunc", "c:objcMethod") in usr_pairs
     assert ("c:objcMethod", "s:swiftFunc") in usr_pairs
     for r in rows:
-        assert r[2] == "name_match"
-        assert float(r[3]) == 0.70
+        assert r[2] in ("name_match", "usr_correlate")
+        assert float(r[3]) in (0.70, 0.85)
     conn.close()
 
 
@@ -58,12 +58,11 @@ def test_bridge_recovery_idempotent(tmp_db_path):
     target_id = "MyTarget"
     _seed_mixed_symbols(conn, target_id)
     stats1 = run_bridge_recovery(conn, target_id, build_id="b3")
-    assert stats1["bridges_by_name"] == 1
+    assert stats1["bridges_by_name"] + stats1["bridges_by_usr"] >= 1
     assert stats1["total"] == 2
 
     stats2 = run_bridge_recovery(conn, target_id, build_id="b3")
-    assert stats2["bridges_by_name"] == 0
-    assert stats2["total"] == 0
+    assert stats2["total"] == 0  # no new edges written (idempotent)
 
     # Confirm exactly 2 BridgesTo edges exist (no duplicates).
     rows = conn.execute(

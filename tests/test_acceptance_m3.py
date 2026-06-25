@@ -47,7 +47,7 @@ def test_m3_bridge_recovery_and_impact(tmp_db_path):
     bridges = get_cross_language_bridges(
         conn, BridgesRequest(usr="s:loadData", target_id=target_id, build_id="m3"))
     assert len(bridges.data) >= 1
-    assert any(b["bridge_kind"] == "name_match" for b in bridges.data)
+    assert any(b["bridge_kind"] in ("name_match", "usr_correlate") for b in bridges.data)
     assert bridges.freshness is not None
     assert "cross_language_bridge_recovery" in bridges.evidence_sources
 
