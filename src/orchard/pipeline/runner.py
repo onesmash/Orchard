@@ -114,6 +114,42 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
         stats={"symbols_upserted": inserted},
     ))
 
+    # swiftinterface_conformances — extract ConformsTo edges from .swiftinterface
+    conformances_written = 0
+    if ctx.derived_data_path:
+        from orchard.build.discovery import discover_swiftinterface_paths
+        from orchard.ingest.swiftinterface import parse_interface_file
+        si_paths = discover_swiftinterface_paths(ctx.derived_data_path)
+        for sip in si_paths:
+            confs = parse_interface_file(sip)
+            for c in confs:
+                # Match type -> Symbol by name.  Collisions are possible
+                # across modules; the first name-match wins.
+                sym_rows = conn.execute(
+                    "MATCH (s:Symbol {target_id: $tid}) "
+                    "WHERE s.name = $name RETURN s.usr",
+                    {"tid": ctx.target, "name": c.type_name},
+                ).get_all()
+                proto_rows = conn.execute(
+                    "MATCH (p:Symbol {target_id: $tid}) "
+                    "WHERE p.name = $name RETURN p.usr",
+                    {"tid": ctx.target, "name": c.protocol_name},
+                ).get_all()
+                if sym_rows and proto_rows:
+                    conn.execute(
+                        "MATCH (a:Symbol {id: $src}), (b:Symbol {id: $dst}) "
+                        "MERGE (a)-[:ConformsTo {source: 'swiftinterface'}]->(b)",
+                        {"src": f"{ctx.target}:{sym_rows[0][0]}",
+                         "dst": f"{ctx.target}:{proto_rows[0][0]}"},
+                    )
+                    conformances_written += 1
+        if si_paths:
+            results.append(PhaseResult(
+                phase="swiftinterface_conformances", build_id=ctx.build_id,
+                data=None, stats={"interfaces_parsed": len(si_paths),
+                                  "conformances_written": conformances_written},
+            ))
+
     # cross_language_bridge_recovery
     bridge_stats = run_bridge_recovery(conn, ctx.target, ctx.build_id)
     results.append(PhaseResult(
