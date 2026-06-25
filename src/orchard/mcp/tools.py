@@ -13,8 +13,10 @@ from orchard.mcp.handlers.callers import CallerRequest, find_callers
 from orchard.mcp.handlers.impact import ImpactRequest, impact_analysis
 from orchard.mcp.handlers.layer_violations import LayerViolationRequest, find_layer_violations
 from orchard.mcp.handlers.module_graph import ModuleGraphRequest, get_module_graph
+from orchard.mcp.handlers.navigation_flow import NavigationFlowRequest, find_navigation_flow
 from orchard.mcp.handlers.symbol_context import SymbolContextRequest, get_symbol_context
 from orchard.mcp.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
+from orchard.mcp.handlers.view_tree import ViewTreeRequest, get_view_tree
 
 DEFAULT_DB = os.environ.get("ORCHARD_DB_PATH", os.path.expanduser("~/.orchard/graph.db"))
 
@@ -139,3 +141,31 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             include_details=include_details,
         )
         return find_layer_violations(_conn, req).__dict__
+
+    @server.tool()
+    def get_view_tree_tool(
+        module: str = "",
+        target_id: str = "",
+        build_id: str = "",
+    ) -> dict:
+        """Query ViewTree edges (parent view -> child view) from the semantic graph."""
+        req = ViewTreeRequest(
+            module=module or None,
+            target_id=target_id or None,
+            build_id=build_id or None,
+        )
+        return get_view_tree(_conn, req).__dict__
+
+    @server.tool()
+    def find_navigation_flow_tool(
+        module: str = "",
+        target_id: str = "",
+        build_id: str = "",
+    ) -> dict:
+        """Query NavigationFlow edges from the semantic graph."""
+        req = NavigationFlowRequest(
+            module=module or None,
+            target_id=target_id or None,
+            build_id=build_id or None,
+        )
+        return find_navigation_flow(_conn, req).__dict__

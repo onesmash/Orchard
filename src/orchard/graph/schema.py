@@ -115,6 +115,18 @@ REL_TABLES: list[str] = [
         source STRING,
         build_id STRING
     )""",
+    """CREATE REL TABLE IF NOT EXISTS ViewTree(
+        FROM Symbol TO Symbol,
+        derived_from STRING,
+        confidence DOUBLE,
+        build_id STRING
+    )""",
+    """CREATE REL TABLE IF NOT EXISTS NavigationFlow(
+        FROM Symbol TO Symbol,
+        derived_from STRING,
+        confidence DOUBLE,
+        build_id STRING
+    )""",
 ]
 
 SCHEMA_STATEMENTS: list[str] = NODE_TABLES + REL_TABLES

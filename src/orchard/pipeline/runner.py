@@ -6,6 +6,7 @@ from orchard.build.context import BuildContext
 from orchard.build.discovery import discover_symbolgraph_paths
 from orchard.derive.architecture import run_architecture_derivation
 from orchard.derive.bridge import run_bridge_recovery
+from orchard.derive.swiftui import run_swiftui_derivation
 from orchard.graph.db import get_connection, init_schema
 from orchard.ingest.indexstore import read_index_store
 from orchard.ingest.symbolgraph import parse_symbolgraph
@@ -138,6 +139,13 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     results.append(PhaseResult(
         phase="architecture_derivation", build_id=ctx.build_id, data=None,
         stats=arch_stats,
+    ))
+
+    # swiftui_derivation — ViewTree + NavigationFlow edges (placeholder heuristic)
+    swiftui_stats = run_swiftui_derivation(conn, ctx.target, ctx.build_id)
+    results.append(PhaseResult(
+        phase="swiftui_derivation", build_id=ctx.build_id, data=None,
+        stats=swiftui_stats,
     ))
     conn.close()
     return results
