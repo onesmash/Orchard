@@ -11,6 +11,7 @@ from orchard.graph.db import get_connection, init_schema
 from orchard.mcp.handlers.bridges import BridgesRequest, get_cross_language_bridges
 from orchard.mcp.handlers.callees import CalleeRequest, find_callees
 from orchard.mcp.handlers.callers import CallerRequest, find_callers
+from orchard.mcp.handlers.references import ReferencesRequest, find_references
 from orchard.mcp.handlers.impact import ImpactRequest, impact_analysis
 from orchard.mcp.handlers.layer_violations import LayerViolationRequest, find_layer_violations
 from orchard.mcp.handlers.module_graph import ModuleGraphRequest, get_module_graph
@@ -98,6 +99,20 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             usr=usr, target_id=target_id or None, build_id=build_id or None,
         )
         return asdict(get_cross_language_bridges(_conn, req))
+
+    @server.tool()
+    @server.tool()
+    def find_references_tool(
+        usr: str,
+        target_id: str = "",
+        build_id: str = "",
+    ) -> dict:
+        """Find all outgoing and incoming references (calls) for a symbol."""
+        req = ReferencesRequest(
+            usr=usr, target_id=target_id or None, build_id=build_id or None,
+        )
+        return asdict(find_references(_conn, req))
+
 
     @server.tool()
     def impact_analysis_tool(
