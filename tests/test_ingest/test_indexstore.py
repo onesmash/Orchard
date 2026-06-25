@@ -3,15 +3,20 @@ import pytest
 from unittest.mock import patch
 from orchard.ingest.indexstore import read_index_store, OccurrenceRecord, RelationRecord
 
-SAMPLE_OUTPUT = "\n".join([
+_SAMPLE_LINES = [
     json.dumps({"kind": "occurrence", "usr": "s:MyFunc", "file": "/src/f.swift",
                 "line": 10, "column": 5, "role": "definition"}),
     json.dumps({"kind": "relation", "from_usr": "s:MyFunc", "to_usr": "s:OtherFunc",
                 "role": "calledBy"}),
-])
+]
+
+def _mock_cli(lines):
+    """Return a generator that yields lines (matches streaming _run_cli)."""
+    for line in lines:
+        yield line
 
 def test_read_index_store_parses_occurrences():
-    with patch("orchard.ingest.indexstore._run_cli", return_value=SAMPLE_OUTPUT):
+    with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(_SAMPLE_LINES)):
         result = read_index_store("/fake/store", target_id="MyTarget")
     assert len(result.occurrences) == 1
     occ = result.occurrences[0]
@@ -22,7 +27,7 @@ def test_read_index_store_parses_occurrences():
     assert occ.role == "definition"
 
 def test_read_index_store_parses_relations():
-    with patch("orchard.ingest.indexstore._run_cli", return_value=SAMPLE_OUTPUT):
+    with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(_SAMPLE_LINES)):
         result = read_index_store("/fake/store", target_id="MyTarget")
     assert len(result.relations) == 1
     rel = result.relations[0]
@@ -31,15 +36,18 @@ def test_read_index_store_parses_relations():
     assert rel.role == "calledBy"
 
 def test_read_index_store_empty_store():
-    with patch("orchard.ingest.indexstore._run_cli", return_value=""):
+    with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli([])):
         result = read_index_store("/fake/store", target_id="MyTarget")
     assert result.occurrences == []
     assert result.relations == []
 
 
 def test_read_index_store_tolerates_malformed_lines():
-    output = '{"kind":"occurrence","usr":"s:A","file":"f.swift","line":1,"column":1,"role":"definition"}\nNOT VALID JSON\n'
-    with patch("orchard.ingest.indexstore._run_cli", return_value=output):
+    lines = [
+        '{"kind":"occurrence","usr":"s:A","file":"f.swift","line":1,"column":1,"role":"definition"}',
+        'NOT VALID JSON',
+    ]
+    with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(lines)):
         result = read_index_store("/fake/store", target_id="T")
     assert len(result.occurrences) == 1
     assert len(result.warnings) == 1
@@ -47,10 +55,12 @@ def test_read_index_store_tolerates_malformed_lines():
 
 
 def test_read_index_store_tolerates_missing_keys():
-    output = '{"kind":"occurrence","usr":"s:A","file":"f.swift","line":1,"column":1}\n{"kind":"relation","from_usr":"a","to_usr":"b"}\n'
-    with patch("orchard.ingest.indexstore._run_cli", return_value=output):
+    lines = [
+        '{"kind":"occurrence","usr":"s:A","file":"f.swift","line":1,"column":1}',
+        '{"kind":"relation","from_usr":"a","to_usr":"b"}',
+    ]
+    with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(lines)):
         result = read_index_store("/fake/store", target_id="T")
-    # Both lines should be skipped (missing required keys): 2 warnings.
     assert len(result.occurrences) == 0
     assert len(result.relations) == 0
     assert len(result.warnings) == 2

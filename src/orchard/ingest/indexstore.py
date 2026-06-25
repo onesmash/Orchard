@@ -49,20 +49,28 @@ def _cli_path() -> str:
     raise FileNotFoundError("orchard-indexstore-reader not found; build the Swift CLI first")
 
 
-def _run_cli(index_store_path: str, source_root: str | None = None) -> str:
+def _run_cli(index_store_path: str, source_root: str | None = None):
+    """Run the CLI and yield JSONL lines one at a time (no buffering)."""
     cmd = [_cli_path(), index_store_path]
     if source_root:
         cmd += ["--source-root", source_root]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    return proc.stdout
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        for line in proc.stdout:
+            yield line.rstrip("\n")
+    finally:
+        proc.stdout.close()
+        rc = proc.wait()
+        if rc != 0:
+            err = proc.stderr.read()
+            raise subprocess.CalledProcessError(rc, cmd, output=None, stderr=err)
 
 
 def read_index_store(
     index_store_path: str, target_id: str, source_root: str | None = None
 ) -> IndexStoreResult:
-    raw = _run_cli(index_store_path, source_root=source_root)
     result = IndexStoreResult()
-    for line in raw.splitlines():
+    for line in _run_cli(index_store_path, source_root=source_root):
         line = line.strip()
         if not line:
             continue

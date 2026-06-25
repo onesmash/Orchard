@@ -71,7 +71,7 @@ async def test_pipeline_writes_calls_then_handlers_return_data(ctx, tmp_db_path)
         relationships=[],
     )
     with (
-        patch.object(is_mod, "_run_cli", return_value=indexstore_jsonl),
+        patch.object(is_mod, "_run_cli", side_effect=lambda *a, **kw: (line for line in indexstore_jsonl.split("\n"))),
         patch("orchard.pipeline.runner.parse_symbolgraph", return_value=sg),
         patch("orchard.pipeline.runner.discover_symbolgraph_paths",
               return_value=["/x.json"]),
