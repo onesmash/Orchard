@@ -171,11 +171,14 @@ def upsert_indexstore_rels(
         s_id = make_symbol_id(target_id, rel.from_usr)
         t_id = make_symbol_id(target_id, rel.to_usr)
         if s_id in existing_ids and t_id in existing_ids:
-            # Forward direction: the occurrence symbol (from_usr) is the
-            # subject; the related symbol (to_usr) is the descriptor.
-            #   baseOf(from=A, to=B): B is a base of A → Inherits(A → B).
-            #   childOf(from=A, to=B): B is a child of A → A contains B → Contains(A → B).
-            by_table.setdefault(table, []).append((s_id, t_id))
+            # IndexStore roles describe the relationship FROM the related
+            # symbol TO the occurrence symbol. E.g. baseOf: related IS the
+            # base of the occurrence. So occurrence inherits from related.
+            # Inherits(occurrence → related).
+            # Empirically, this is the SWAPPED direction:
+            #   UIViewController --inherits-> ZMClips... is wrong, so
+            #   we write (t_id, s_id) = Inherits(related → occurrence).
+            by_table.setdefault(table, []).append((t_id, s_id))
     import csv, tempfile, os
     count = 0
     for table, pairs in by_table.items():
