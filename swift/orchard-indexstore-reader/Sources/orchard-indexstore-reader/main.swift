@@ -217,6 +217,7 @@ if let root = sourceRoot {
 
 // 2. Emit per file.
 var emittedRels = Set<String>()
+var emittedSymbols = Set<String>()
 
 for file in filePaths {
   for occ in db.symbolOccurrences(inFilePath: file) {
@@ -225,11 +226,25 @@ for file in filePaths {
     let line = occ.location.line
     let col = occ.location.utf8Column
 
+    // Symbol rows: each unique USR gets one descriptor line.
+    let usr = occ.symbol.usr
+    if emittedSymbols.insert(usr).inserted {
+      let symName = js(occ.symbol.name)
+      let symKind = js(String(describing: occ.symbol.kind))
+      let langStr = { () -> String in
+        switch occ.symbol.language { case .swift: return "swift"; case .objc: return "objc"; case .c: return "c"; case .cxx: return "cxx" }
+      }()
+      let symLang = js(langStr)
+      let symMod  = js(occ.location.moduleName)
+      let symLine = "{\"kind\":\"symbol\",\"usr\":\(js(usr)),\"name\":\(symName),\"symbol_kind\":\(symKind),\"language\":\(symLang),\"module\":\(symMod)}"
+      writeLine(symLine)
+    }
+
     // Occurrence rows are symbol-definition records. Emit only
     // definitions/declarations to keep the stream lean.
     if roles.contains(.definition) || roles.contains(.declaration) {
       writeLine(
-        "{\"kind\":\"occurrence\",\"usr\":\(js(occ.symbol.usr)),"
+        "{\"kind\":\"occurrence\",\"usr\":\(js(usr)),"
         + "\"file\":\(js(path)),\"line\":\(line),\"column\":\(col),"
         + "\"role\":\(js(occurrenceRoleName(roles)))}"
       )
@@ -237,10 +252,10 @@ for file in filePaths {
 
     for rel in occ.relations {
       for roleName in relationRoleNames(rel.roles) {
-        let key = "\(occ.symbol.usr)\u{1}\(rel.symbol.usr)\u{1}\(roleName)"
+        let key = "\(usr)\u{1}\(rel.symbol.usr)\u{1}\(roleName)"
         if emittedRels.insert(key).inserted {
           writeLine(
-            "{\"kind\":\"relation\",\"from_usr\":\(js(occ.symbol.usr)),"
+            "{\"kind\":\"relation\",\"from_usr\":\(js(usr)),"
             + "\"to_usr\":\(js(rel.symbol.usr)),\"role\":\(js(roleName))}"
           )
         }

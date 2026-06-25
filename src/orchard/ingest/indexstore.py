@@ -22,9 +22,20 @@ class RelationRecord:
 
 
 @dataclass
+class SymbolLineRecord:
+    """Symbol metadata extracted from IndexStore (name, kind, language, module)."""
+    usr: str
+    name: str
+    symbol_kind: str
+    language: str
+    module: str
+
+
+@dataclass
 class IndexStoreResult:
     occurrences: list[OccurrenceRecord] = field(default_factory=list)
     relations: list[RelationRecord] = field(default_factory=list)
+    symbols: list[SymbolLineRecord] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -70,6 +81,14 @@ def read_index_store(
                     from_usr=obj["from_usr"],
                     to_usr=obj["to_usr"],
                     role=obj["role"],
+                ))
+            elif obj["kind"] == "symbol":
+                result.symbols.append(SymbolLineRecord(
+                    usr=obj["usr"],
+                    name=obj["name"],
+                    symbol_kind=obj["symbol_kind"],
+                    language=obj["language"],
+                    module=obj.get("module", ""),
                 ))
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             snippet = line[:80] + ("..." if len(line) > 80 else "")

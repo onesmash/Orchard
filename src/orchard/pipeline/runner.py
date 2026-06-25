@@ -30,6 +30,22 @@ class PhaseResult:
     warnings: list[str] = field(default_factory=list)
 
 
+def _map_indexstore_kind(kind: str) -> str:
+    """Normalise IndexStoreDB kind strings to Orchard symbol kinds."""
+    k = kind.lower()
+    if k in ("struct", "class", "enum", "protocol", "extension", "union"):
+        return k
+    if k in ("function", "constructor", "destructor"):
+        return "function"
+    if k in ("instancemethod", "staticmethod", "classmethod"):
+        return "method"
+    if k in ("instanceproperty", "staticproperty", "classproperty"):
+        return "instanceProperty"
+    if k in ("var", "variable", "local", "parameter"):
+        return "var"
+    return k  # pass through unknown kinds
+
+
 async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResult]:
     results: list[PhaseResult] = []
     conn = get_connection(db_path)
@@ -71,6 +87,23 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
         await asyncio.gather(_run_indexstore(), _run_symbolgraph())
     results.append(is_phase)
     results.append(sg_phase)
+
+    # Fallback: when no .symbols.json files are found, use IndexStore symbol
+    # descriptors.  These carry real name / kind / module from the compiler,
+    # just without inter-symbol structure edges (inherits, conforms, etc.).
+    if not all_symbols and is_result and is_result.symbols:
+        from orchard.ingest.indexstore import SymbolLineRecord
+        is_syms = [
+            SymbolRecord(
+                usr=s.usr, precise_id="", name=s.name,
+                kind=_map_indexstore_kind(s.symbol_kind),
+                module=s.module, language=s.language,
+                file_path="", signature="", access_level="public",
+                container_usr=None,
+            )
+            for s in is_result.symbols
+        ]
+        all_symbols = is_syms
 
     # identity_normalization
     inserted = upsert_symbols(conn, all_symbols, ctx.target)
