@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from orchard.handlers.base import BaseToolRequest, BaseToolResponse
+from orchard.mcp.handlers.base import BaseToolRequest, BaseToolResponse
 from orchard.validation.freshness import freshness_for
 
 

@@ -39,7 +39,7 @@ def conn_with_nav_flows(tmp_db_path):
 
 def test_find_navigation_flow_all(conn_with_nav_flows):
     """Returns all NavigationFlow edges."""
-    from orchard.handlers.navigation_flow import NavigationFlowRequest, find_navigation_flow
+    from orchard.mcp.handlers.navigation_flow import NavigationFlowRequest, find_navigation_flow
 
     req = NavigationFlowRequest(build_id="b1")
     resp = find_navigation_flow(conn_with_nav_flows, req)
@@ -64,7 +64,7 @@ def test_find_navigation_flow_all(conn_with_nav_flows):
 
 def test_find_navigation_flow_filter(conn_with_nav_flows):
     """Module filter restricts results."""
-    from orchard.handlers.navigation_flow import NavigationFlowRequest, find_navigation_flow
+    from orchard.mcp.handlers.navigation_flow import NavigationFlowRequest, find_navigation_flow
 
     req = NavigationFlowRequest(module="MyApp", build_id="b1")
     resp = find_navigation_flow(conn_with_nav_flows, req)
@@ -78,7 +78,7 @@ def test_find_navigation_flow_filter(conn_with_nav_flows):
 
 def test_find_navigation_flow_empty(tmp_db_path):
     """Empty database returns zero edges with open_gap message."""
-    from orchard.handlers.navigation_flow import NavigationFlowRequest, find_navigation_flow
+    from orchard.mcp.handlers.navigation_flow import NavigationFlowRequest, find_navigation_flow
 
     conn = get_connection(tmp_db_path)
     init_schema(conn)

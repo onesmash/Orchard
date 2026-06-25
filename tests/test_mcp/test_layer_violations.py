@@ -1,7 +1,7 @@
 """Tests for find_layer_violations handler."""
 import pytest
 from orchard.graph.db import get_connection, init_schema
-from orchard.handlers.layer_violations import (
+from orchard.mcp.handlers.layer_violations import (
     LayerViolationRequest,
     find_layer_violations,
 )

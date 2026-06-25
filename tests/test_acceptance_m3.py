@@ -7,8 +7,8 @@ from orchard.graph.db import get_connection, init_schema
 from orchard.normalize.identity import make_symbol_id, upsert_symbols
 from orchard.ingest.symbolgraph import SymbolRecord
 from orchard.derive.bridge import run_bridge_recovery
-from orchard.handlers.bridges import BridgesRequest, get_cross_language_bridges
-from orchard.handlers.impact import ImpactRequest, impact_analysis
+from orchard.mcp.handlers.bridges import BridgesRequest, get_cross_language_bridges
+from orchard.mcp.handlers.impact import ImpactRequest, impact_analysis
 
 
 def test_m3_bridge_recovery_and_impact(tmp_db_path):

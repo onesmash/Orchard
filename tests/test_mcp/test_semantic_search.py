@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from orchard.graph.db import get_connection, init_schema
-from orchard.handlers.semantic_search import (
+from orchard.mcp.handlers.semantic_search import (
     SemanticSearchRequest,
     dot,
     norm,
@@ -111,7 +111,7 @@ class TestDotNorm:
 @pytest.fixture
 def conn_for_fts(tmp_db_path):
     """Same as conn_with_chunks but with Embedder mocked to fail (forces FTS path)."""
-    from orchard.handlers.semantic_search import semantic_search as _ss
+    from orchard.mcp.handlers.semantic_search import semantic_search as _ss
     with patch("orchard.search.embedder.Embedder", side_effect=RuntimeError("no Ollama")):
         conn = get_connection(tmp_db_path)
         init_schema(conn)

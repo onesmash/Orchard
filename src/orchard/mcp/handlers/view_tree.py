@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from orchard.handlers.base import BaseToolRequest, BaseToolResponse
+from orchard.mcp.handlers.base import BaseToolRequest, BaseToolResponse
 from orchard.validation.freshness import freshness_for
 
 

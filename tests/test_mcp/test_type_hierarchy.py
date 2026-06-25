@@ -1,6 +1,6 @@
 import pytest
 from orchard.graph.db import get_connection, init_schema
-from orchard.handlers.type_hierarchy import get_type_hierarchy, TypeHierarchyRequest
+from orchard.mcp.handlers.type_hierarchy import get_type_hierarchy, TypeHierarchyRequest
 
 
 @pytest.fixture

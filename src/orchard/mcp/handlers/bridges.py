@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from orchard.handlers.base import BaseToolRequest, BaseToolResponse
+from orchard.mcp.handlers.base import BaseToolRequest, BaseToolResponse
 from orchard.normalize.identity import make_symbol_id
 from orchard.validation.freshness import freshness_for
 

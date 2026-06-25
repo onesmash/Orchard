@@ -1,7 +1,7 @@
 """Tests for impact_analysis handler."""
 import pytest
 from orchard.graph.db import get_connection, init_schema
-from orchard.handlers.impact import ImpactRequest, impact_analysis
+from orchard.mcp.handlers.impact import ImpactRequest, impact_analysis
 
 
 @pytest.fixture
