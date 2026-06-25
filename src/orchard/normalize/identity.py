@@ -17,10 +17,16 @@ from orchard.build.context import BuildContext
 # Performance probes — module-level dict populated by the upsert functions.
 # Keys: "upsert_symbols_s"/"_n", "upsert_calls_s"/"_n", "upsert_struct_s"/"_n".
 _perf_probes: dict[str, float] = {}
+_progress: bool = False
 
 
 def get_perf_probes() -> dict[str, float]:
     return dict(_perf_probes)
+
+
+def enable_progress() -> None:
+    global _progress
+    _progress = True
 
 
 def make_symbol_id(target_id: str, usr: str) -> str:
@@ -28,8 +34,8 @@ def make_symbol_id(target_id: str, usr: str) -> str:
     return f"{target_id}:{usr}"
 
 
-_SYMBOL_BATCH_SIZE = 5000
-_EDGE_BATCH_SIZE = 5000
+_SYMBOL_BATCH_SIZE = 1000
+_EDGE_BATCH_SIZE = 1000
 
 
 def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
@@ -69,6 +75,8 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
             {"rows": rows, "tid": target_id},
         )
         count += len(batch)
+        if _progress:
+            print(f"  symbols: {count}/{len(symbols)} ({count*100//len(symbols)}%)", end="\r")
     t = round(time.monotonic() - t0, 3)
     _perf_probes.setdefault("upsert_symbols_s", t)
     _perf_probes.setdefault("upsert_symbols_n", count)
@@ -175,6 +183,8 @@ def upsert_indexstore_rels(
                 {"rows": rows, "src": source},
             )
             count += len(batch)
+    if _progress:
+        print(f"  struct: {count} edges", end="\r")
     t = round(time.monotonic() - t0, 3)
     _perf_probes["upsert_struct_s"] = t
     _perf_probes["upsert_struct_n"] = count
@@ -212,6 +222,8 @@ def upsert_calls(
             {"rows": rows, "src": source, "bid": build_id},
         )
         count += len(batch)
+        if _progress:
+            print(f"  calls: {count}/{len(called)} ({count*100//len(called)}%)", end="\r")
     t = round(time.monotonic() - t0, 3)
     _perf_probes["upsert_calls_s"] = t
     _perf_probes["upsert_calls_n"] = count
