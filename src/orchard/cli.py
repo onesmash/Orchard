@@ -104,6 +104,40 @@ def cmd_ingest(args: list[str]):
     print(f"done  {time.monotonic()-t0:.0f}s")
 
 
+def cmd_search(args: list[str]):
+    """Search symbols by name pattern (regex, case-sensitive)."""
+    import argparse
+    ap = argparse.ArgumentParser(prog="orchard search")
+    ap.add_argument("--name", required=True, help="Regex pattern for symbol name (case-sensitive)")
+    ap.add_argument("--target", default="", help="Filter by target/module")
+    ap.add_argument("--kind", default="", help="Filter by kind (class, method, function, etc.)")
+    ap.add_argument("--language", default="", help="Filter by language (swift, objc, c, etc.)")
+    ap.add_argument("--limit", type=int, default=20)
+    ap.add_argument("--db", default="")
+    ns = ap.parse_args(args)
+    conn = _conn(ns.db)
+    where = ["s.name =~ $pattern"]
+    params: dict = {"pattern": ns.name, "limit": ns.limit}
+    if ns.target:
+        where.append("s.module = $target")
+        params["target"] = ns.target
+    if ns.kind:
+        where.append("s.kind = $kind")
+        params["kind"] = ns.kind
+    if ns.language:
+        where.append("s.language = $language")
+        params["language"] = ns.language
+    rows = conn.execute(
+        f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
+        "RETURN s.usr, s.name, s.kind, s.language, s.module "
+        "ORDER BY s.name LIMIT $limit",
+        params,
+    ).get_all()
+    results = [{"usr": r[0], "name": r[1], "kind": r[2], "language": r[3], "module": r[4]} for r in rows]
+    _print_json({"count": len(results), "results": results})
+    conn.close()
+
+
 def cmd_stats(args: list[str]):
     db = _parse_db(args)
     conn = _conn(db)
@@ -139,6 +173,7 @@ COMMANDS = {
     "impact": cmd_impact,
     "symbol": cmd_symbol,
     "hierarchy": cmd_hierarchy,
+    "search": cmd_search,
     "ingest": cmd_ingest,
     "stats": cmd_stats,
 }
