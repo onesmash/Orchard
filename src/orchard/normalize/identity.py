@@ -75,8 +75,11 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
             {"rows": rows, "tid": target_id},
         )
         count += len(batch)
+        if i % (5 * _SYMBOL_BATCH_SIZE) == 0:
+            conn.execute("CHECKPOINT")
         if _progress:
             print(f"  symbols: {count}/{len(symbols)} ({count*100//len(symbols)}%)", end="\r")
+    conn.execute("CHECKPOINT")
     t = round(time.monotonic() - t0, 3)
     _perf_probes.setdefault("upsert_symbols_s", t)
     _perf_probes.setdefault("upsert_symbols_n", count)
@@ -183,6 +186,9 @@ def upsert_indexstore_rels(
                 {"rows": rows, "src": source},
             )
             count += len(batch)
+            if i % (10 * _EDGE_BATCH_SIZE) == 0:
+                conn.execute("CHECKPOINT")
+    conn.execute("CHECKPOINT")
     if _progress:
         print(f"  struct: {count} edges", end="\r")
     t = round(time.monotonic() - t0, 3)
@@ -222,8 +228,11 @@ def upsert_calls(
             {"rows": rows, "src": source, "bid": build_id},
         )
         count += len(batch)
+        if i % (10 * _EDGE_BATCH_SIZE) == 0:
+            conn.execute("CHECKPOINT")
         if _progress:
             print(f"  calls: {count}/{len(called)} ({count*100//len(called)}%)", end="\r")
+    conn.execute("CHECKPOINT")
     t = round(time.monotonic() - t0, 3)
     _perf_probes["upsert_calls_s"] = t
     _perf_probes["upsert_calls_n"] = count
