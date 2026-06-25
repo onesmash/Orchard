@@ -178,7 +178,7 @@ def upsert_indexstore_rels(
     for table, pairs in by_table.items():
         csv_path = os.path.join(tempfile.mkdtemp(), f"{table}.csv")
         with open(csv_path, "w", newline="") as fh:
-            w = csv.writer(fh)
+            w = csv.writer(fh, quoting=csv.QUOTE_ALL)
             for s, t in pairs:
                 w.writerow([s, t, source])
         if _progress:
@@ -218,10 +218,9 @@ def upsert_calls(
         return 0
 
     import csv, tempfile, os
-    # Build CSV: two columns are FROM/TO primary keys, the rest are edge props.
     csv_path = os.path.join(tempfile.mkdtemp(), "calls.csv")
     with open(csv_path, "w", newline="") as fh:
-        w = csv.writer(fh)
+        w = csv.writer(fh, quoting=csv.QUOTE_ALL)
         for to_u, fm_u in called:
             w.writerow([
                 make_symbol_id(target_id, to_u),
