@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from orchard.mcp.handlers.base import BaseToolRequest, BaseToolResponse
-from orchard.normalize.identity import make_symbol_id
-from orchard.validation.freshness import freshness_for
+from orchard.query.lookup import GraphLookup
 
 
 @dataclass
@@ -11,21 +10,12 @@ class CalleeRequest(BaseToolRequest):
 
 
 def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
-    target_id = req.target_id or ""
-    sym_id = make_symbol_id(target_id, req.usr)
-    rows = conn.execute(
-        "MATCH (src:Symbol {id: $id})-[:Calls]->(callee:Symbol) "
-        "RETURN DISTINCT callee.usr, callee.name, callee.module, callee.kind, callee.language",
-        {"id": sym_id},
-    ).get_all()
-    _, freshness_status = freshness_for(conn, req.build_id or "", {})
-    data = [
-        {"usr": r[0], "name": r[1], "module": r[2], "kind": r[3], "language": r[4], "depth": 1}
-        for r in rows
-    ]
+    g = GraphLookup(conn)
+    data = g.callees_of(req.usr, req.target_id or "")
+    _, status = g.freshness(req.build_id or "")
     return BaseToolResponse(
-        data=data,
-        freshness=freshness_status,
+        data=[{**d, "depth": 1} for d in data],
+        freshness=status,
         build_id=req.build_id,
         evidence_sources=["call_graph_derivation"],
         open_gaps=[] if data else ["no callees found"],
