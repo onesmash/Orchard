@@ -95,6 +95,46 @@ def bridges_graph(tmp_db_path):
     conn.close()
 
 
+@pytest.fixture
+def fresh_graph(tmp_db_path):
+    """Same as impact_graph but with a BuildSnapshot so freshness is fresh."""
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    T = "T"
+    for sid, name, usr in [
+        ("T:s:targetFn", "targetFn", "s:targetFn"),
+        ("T:s:directCaller", "directCaller", "s:directCaller"),
+    ]:
+        conn.execute(
+            f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', "
+            f"precise_id: '', name: '{name}', language: 'swift', "
+            f"kind: 'function', module: 'M', target_id: '{T}', file_path: '', "
+            f"signature: '', container_usr: '', access_level: 'public', "
+            f"origin: 'symbolgraph', is_generated: false}})"
+        )
+    conn.execute(
+        "MATCH (a:Symbol {id: 'T:s:directCaller'}), (b:Symbol {id: 'T:s:targetFn'}) "
+        "CREATE (a)-[:Calls {source: 'test', confidence: 1.0}]->(b)"
+    )
+    # Create BuildSnapshot so freshness_for returns "fresh".
+    conn.execute(
+        "CREATE (:BuildSnapshot {id: 'b-fresh', build_system: 'swift', "
+        "workspace_root: '/', derived_data_path: '', index_store_path: '', "
+        "toolchain_id: 'swift-5.10', commit_sha: '', created_at: '2025-01-01T00:00:00Z', "
+        "build_config_hash: 'abc', sdk: '', configuration: ''})"
+    )
+    yield conn
+    conn.close()
+
+
+def test_impact_risk_not_critical_when_fresh(fresh_graph):
+    """With freshness=fresh and 1 direct caller, risk should be 'low', not 'critical'."""
+    req = ImpactRequest(usr="s:targetFn", target_id="T", build_id="b-fresh")
+    resp = impact_analysis(fresh_graph, req)
+    assert resp.data["risk"] == "low"
+    assert resp.freshness == "fresh"
+
+
 def test_impact_traverses_bridges_to(bridges_graph):
     """Verify BridgesTo edges are traversed when include_bridge_edges=True.
 
@@ -107,4 +147,6 @@ def test_impact_traverses_bridges_to(bridges_graph):
     by_depth = resp.data["by_depth"]
     # objcCaller -[BridgesTo]-> swiftFn, so querying swiftFn finds objcCaller
     # at depth 1 via incoming BridgesTo.
-    assert any(d["usr"] == "c:objcCaller" for d in by_depth.get("d1", []))
+    d1_bridges = [d for d in by_depth.get("d1", []) if d["usr"] == "c:objcCaller"]
+    assert d1_bridges
+    assert d1_bridges[0]["reached_via"] == "BridgesTo"

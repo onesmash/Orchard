@@ -52,7 +52,7 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
         "  AND a.language <> b.language AND a.language IN ['swift','objc'] "
         "  AND b.language IN ['swift','objc'] "
         "  AND a.target_id = $tid AND b.target_id = $tid "
-        "RETURN a.usr, b.usr",
+        "RETURN a.usr, b.usr LIMIT 5000",
         {"tid": target_id},
     ).get_all()
 

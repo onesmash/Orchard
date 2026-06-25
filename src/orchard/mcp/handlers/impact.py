@@ -35,7 +35,7 @@ def _risk_level(d1_count: int, has_bridge: bool, freshness_ok: bool) -> str:
     d1_count:
         Number of direct (depth-1) dependents.
     has_bridge:
-        True if any d1 dependent has a language different from the queried symbol.
+        True if any d1 dependent was reached via a BridgesTo edge.
     freshness_ok:
         True if the build snapshot freshness status is "fresh".
 
@@ -79,13 +79,6 @@ def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
     sym_id = make_symbol_id(target_id, req.usr)
     max_depth = min(req.max_depth or 5, policy.max_depth)
 
-    # Get the queried symbol's language for bridge detection.
-    queried_rows = conn.execute(
-        "MATCH (s:Symbol {id: $id}) RETURN s.language",
-        {"id": sym_id},
-    ).get_all()
-    queried_language = queried_rows[0][0] if queried_rows else ""
-
     # Build per-depth result dict.
     depths: dict[str, list[dict]] = {}
 
@@ -122,6 +115,7 @@ def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
                             "module": row[3],
                             "language": row[4],
                             "kind": row[5],
+                            "reached_via": rel_type,
                         })
         if not next_ids:
             break
@@ -129,8 +123,10 @@ def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
 
     _, freshness_status = freshness_for(conn, req.build_id or "", {})
     d1 = depths.get("d1", [])
+    # Use actual edge-type tracking instead of language-proxy heuristic.
+    # A dependent reached via BridgesTo indicates cross-language impact.
     has_bridge = any(
-        d.get("language") != queried_language for d in d1
+        d.get("reached_via") == "BridgesTo" for d in d1
     )
     risk = _risk_level(len(d1), has_bridge, freshness_status == "fresh")
 
