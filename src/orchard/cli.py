@@ -116,8 +116,9 @@ def cmd_search(args: list[str]):
     ap.add_argument("--db", default="")
     ns = ap.parse_args(args)
     conn = _conn(ns.db)
+    pattern = _compile_search_pattern(ns.name)
     where = ["s.name =~ $pattern"]
-    params: dict = {"pattern": ns.name, "limit": ns.limit}
+    params: dict = {"pattern": pattern, "limit": ns.limit}
     if ns.target:
         where.append("s.module = $target")
         params["target"] = ns.target
@@ -136,6 +137,125 @@ def cmd_search(args: list[str]):
     results = [{"usr": r[0], "name": r[1], "kind": r[2], "language": r[3], "module": r[4]} for r in rows]
     _print_json({"count": len(results), "results": results})
     conn.close()
+
+
+def cmd_pipe(args: list[str]):
+    """Execute multiple queries from stdin (JSONL) in a single process.
+
+    Reads one JSON object per line from stdin.  Each object must have ``"cmd"``
+    (one of: search, find_callers, find_callees, impact, symbol, hierarchy)
+    and ``"args"`` (a dict of keyword arguments).
+
+    Example stdin::
+
+        {"cmd":"search","args":{"name":"initWithProvider","target":"Zoom"}}
+        {"cmd":"find_callers","args":{"usr":"c:objc...(im)initWithProvider:","target_id":"Zoom"}}
+        {"cmd":"find_callees","args":{"usr":"c:objc...(im)initWithProvider:","target_id":"Zoom"}}
+
+    Results are written as JSONL to stdout (one line per input).
+    Errors are caught per-line — one bad query won't kill the session.
+    """
+    import argparse
+    ap = argparse.ArgumentParser(prog="orchard pipe")
+    ap.add_argument("--db", default="")
+    ns = ap.parse_args(args)
+    conn = _conn(ns.db)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as e:
+            print(json.dumps({"error": f"invalid JSON: {e}", "line": line[:120]}), flush=True)
+            continue
+        cmd = obj.get("cmd", "")
+        try:
+            result = _execute_pipe_cmd(conn, cmd, obj.get("args", {}))
+            print(json.dumps({"cmd": cmd, "ok": True, "data": result}, default=str), flush=True)
+        except Exception as e:
+            print(json.dumps({"cmd": cmd, "ok": False, "error": str(e)}, default=str), flush=True)
+    conn.close()
+
+
+def _execute_pipe_cmd(conn, cmd: str, args: dict):
+    """Dispatch a single pipe command. Handler imports are lazy."""
+    req_keys = {"usr", "target_id"}
+
+    if cmd == "search":
+        return _pipe_search(conn, args)
+
+    if cmd == "find_callers":
+        from orchard.handlers.callers import CallerRequest, find_callers
+        return find_callers(conn, CallerRequest(
+            usr=args.get("usr", ""), target_id=args.get("target_id", "")
+        )).__dict__
+
+    if cmd == "find_callees":
+        from orchard.handlers.callees import CalleeRequest, find_callees
+        return find_callees(conn, CalleeRequest(
+            usr=args.get("usr", ""), target_id=args.get("target_id", "")
+        )).__dict__
+
+    if cmd == "impact":
+        from orchard.handlers.impact import ImpactRequest, impact_analysis
+        return impact_analysis(conn, ImpactRequest(
+            usr=args.get("usr", ""), target_id=args.get("target_id", ""),
+            max_depth=args.get("max_depth", 5),
+        )).__dict__
+
+    if cmd == "symbol":
+        from orchard.handlers.symbol_context import SymbolContextRequest, get_symbol_context
+        return get_symbol_context(conn, SymbolContextRequest(
+            usr=args.get("usr", ""), target_id=args.get("target_id", "")
+        )).__dict__
+
+    if cmd == "hierarchy":
+        from orchard.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
+        return get_type_hierarchy(conn, TypeHierarchyRequest(
+            usr=args.get("usr", ""), target_id=args.get("target_id", "")
+        )).__dict__
+
+    raise ValueError(f"unknown pipe command: {cmd}")
+
+
+def _compile_search_pattern(raw: str) -> str:
+    """Convert a user-friendly search string to a Cypher regex.
+
+    If *raw* already contains regex metacharacters (``.*+?^$[](){}|\\``),
+    it is used as-is.  Otherwise it is wrapped in ``.*`` for substring matching.
+    """
+    import re as _re
+    if _re.search(r'[.*+?^$\[\](){}\\|]', raw):
+        return raw
+    return f".*{raw}.*"
+
+
+def _pipe_search(conn, args: dict):
+    """Direct search query — no handler overhead for this path."""
+    pattern = _compile_search_pattern(args.get("name", ""))
+    target = args.get("target", "")
+    kind = args.get("kind", "")
+    language = args.get("language", "")
+    limit = args.get("limit", 20)
+    where = ["s.name =~ $pattern"]
+    params: dict = {"pattern": pattern, "limit": limit}
+    if target:
+        where.append("s.module = $target")
+        params["target"] = target
+    if kind:
+        where.append("s.kind = $kind")
+        params["kind"] = kind
+    if language:
+        where.append("s.language = $language")
+        params["language"] = language
+    rows = conn.execute(
+        f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
+        "RETURN s.usr, s.name, s.kind, s.language, s.module "
+        "ORDER BY s.name LIMIT $limit",
+        params,
+    ).get_all()
+    return [{"usr": r[0], "name": r[1], "kind": r[2], "language": r[3], "module": r[4]} for r in rows]
 
 
 def cmd_stats(args: list[str]):
@@ -174,6 +294,7 @@ COMMANDS = {
     "symbol": cmd_symbol,
     "hierarchy": cmd_hierarchy,
     "search": cmd_search,
+    "pipe": cmd_pipe,
     "ingest": cmd_ingest,
     "stats": cmd_stats,
 }

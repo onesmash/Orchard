@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "orchard": {
+      "command": "uv",
+      "args": ["run", "orchard-mcp", "--db", "/tmp/orchard-final/graph.db"]
+    }
+  }
+}

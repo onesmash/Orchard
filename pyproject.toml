@@ -10,6 +10,7 @@ dependencies = [
 
 [project.scripts]
 orchard = "orchard.cli:main"
+orchard-mcp = "orchard.server:main"
 
 [build-system]
 requires = ["hatchling"]
