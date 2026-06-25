@@ -103,7 +103,7 @@ _INDEXSTORE_REL_TO_TABLE: dict[str, str] = {
     "overrideOf": "Implements",
     "childOf": "Contains",
     "containedBy": "Contains",
-    # extendedBy is ObjC category extension, NOT subclassing — skip it.
+    "extendedBy": "Extends",  # ObjC category: NSString extendedBy CalendarDateFromString
 }
 
 
