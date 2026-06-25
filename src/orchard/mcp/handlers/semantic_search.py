@@ -60,16 +60,16 @@ def semantic_search(conn, req: SemanticSearchRequest) -> BaseToolResponse:
         results.sort(key=lambda x: x[0], reverse=True)
         results = results[: req.top_k]
     else:
-        # FTS fallback: substring match
-        q = req.query.lower()
+        # FTS fallback: Ladybug CONTAINS substring match.
+        # No FTS extension needed — CONTAINS is a built-in Cypher operator
+        # that scans the column store efficiently (no Python-side O(N) loop).
         rows = conn.execute(
-            "MATCH (c:Chunk) RETURN c.owner_usr, c.content, c.chunk_kind"
+            "MATCH (c:Chunk) WHERE lower(c.content) CONTAINS lower($q) "
+            "RETURN c.owner_usr, c.content, c.chunk_kind LIMIT $k",
+            {"q": req.query, "k": req.top_k},
         ).get_all()
         for r in rows:
-            content = r[1] or ""
-            if q in content.lower():
-                results.append((1.0, (r[0] or "", r[1] or "", r[2] or "")))
-        results = results[: req.top_k]
+            results.append((1.0, (r[0] or "", r[1] or "", r[2] or "")))
 
     # 3. Resolve Symbol names
     data: list[dict] = []
