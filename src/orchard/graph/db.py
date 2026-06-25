@@ -59,7 +59,9 @@ def init_schema(conn) -> None:
     """Run all CREATE NODE/REL TABLE DDL statements against *conn*.
 
     All statements use ``IF NOT EXISTS`` so this function is idempotent and
-    safe to call on an existing database.
+    safe to call on an existing database.  For databases created before new
+    columns were added, :func:`migrate_schema` back-fills the missing columns
+    via ``ALTER TABLE ... ADD ... IF NOT EXISTS``.
 
     Parameters
     ----------
@@ -68,3 +70,49 @@ def init_schema(conn) -> None:
     """
     for stmt in SCHEMA_STATEMENTS:
         conn.execute(stmt)
+    migrate_schema(conn)
+
+
+# Columns added after the initial schema.  Each entry is
+# (table_name, column_name, column_type).  migrate_schema() adds any that are
+# missing on existing databases via ALTER TABLE ... ADD IF NOT EXISTS.
+_MIGRATION_COLUMNS: list[tuple[str, str, str]] = [
+    ("Calls", "reason", "STRING"),
+    ("References", "reason", "STRING"),
+    ("Contains", "confidence", "DOUBLE"),
+    ("Contains", "reason", "STRING"),
+    ("Extends", "confidence", "DOUBLE"),
+    ("Extends", "reason", "STRING"),
+    ("Inherits", "confidence", "DOUBLE"),
+    ("Inherits", "reason", "STRING"),
+    ("Implements", "confidence", "DOUBLE"),
+    ("Implements", "reason", "STRING"),
+    ("ConformsTo", "confidence", "DOUBLE"),
+    ("ConformsTo", "reason", "STRING"),
+    ("BridgesTo", "reason", "STRING"),
+    ("BridgesTo", "clang_name", "STRING"),
+    ("BridgesTo", "swift_name", "STRING"),
+    ("BridgesTo", "definition_language", "STRING"),
+    ("ViewTree", "reason", "STRING"),
+    ("NavigationFlow", "reason", "STRING"),
+]
+
+
+def migrate_schema(conn) -> None:
+    """Back-fill columns added after the initial schema on existing databases.
+
+    Uses ``ALTER TABLE ... ADD COLUMN``.  Already-existing columns and
+    missing tables are silently ignored (table errors → CREATE handles them,
+    duplicate columns → column already exists → no-op).
+    """
+    for table, col, col_type in _MIGRATION_COLUMNS:
+        try:
+            conn.execute(
+                f"ALTER TABLE {table} ADD {col} {col_type}"
+            )
+        except Exception as exc:
+            msg = str(exc).lower()
+            # Column already exists or table not yet created — safe to skip.
+            if "already has property" in msg or "does not exist" in msg:
+                continue
+            raise

@@ -24,12 +24,13 @@ class RelationRecord:
 
 @dataclass
 class SymbolLineRecord:
-    """Symbol metadata extracted from IndexStore (name, kind, language, module)."""
+    """Symbol metadata extracted from IndexStore."""
     usr: str
     name: str
     symbol_kind: str
     language: str
     module: str
+    file_path: str = ""
 
 
 @dataclass
@@ -100,6 +101,7 @@ def read_index_store(
                     symbol_kind=obj["symbol_kind"],
                     language=obj["language"],
                     module=obj.get("module", ""),
+                    file_path=obj.get("file", ""),
                 ))
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             snippet = line[:80] + ("..." if len(line) > 80 else "")

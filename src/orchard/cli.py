@@ -95,7 +95,7 @@ def cmd_ingest(args: list[str]):
     syms = [SymbolRecord(usr=s.usr, precise_id="", name=s.name,
                          kind=_map_indexstore_kind(s.symbol_kind),
                          module=s.module or ns.target, language=s.language,
-                         file_path="", signature="", access_level="public",
+                         file_path=s.file_path or "", signature="", access_level="public",
                          container_usr=None) for s in r.symbols]
     upsert_symbols(conn, syms, ns.target); print("symbols done")
     upsert_calls(conn, r.relations, ns.target, source="indexstore", build_id="cli")

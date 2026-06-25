@@ -236,7 +236,7 @@ for file in filePaths {
       }()
       let symLang = js(langStr)
       let symMod  = js(occ.location.moduleName)
-      let symLine = "{\"kind\":\"symbol\",\"usr\":\(js(usr)),\"name\":\(symName),\"symbol_kind\":\(symKind),\"language\":\(symLang),\"module\":\(symMod)}"
+      let symLine = "{\"kind\":\"symbol\",\"usr\":\(js(usr)),\"name\":\(symName),\"symbol_kind\":\(symKind),\"language\":\(symLang),\"module\":\(symMod),\"file\":\(js(file))}"
       writeLine(symLine)
     }
 

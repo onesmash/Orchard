@@ -106,7 +106,7 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
                 usr=s.usr, precise_id="", name=s.name,
                 kind=_map_indexstore_kind(s.symbol_kind),
                 module=s.module, language=s.language,
-                file_path="", signature="", access_level="public",
+                file_path=s.file_path or "", signature="", access_level="public",
                 container_usr=None,
             )
             for s in is_result.symbols
