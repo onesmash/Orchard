@@ -6,7 +6,29 @@ languages within the same target and writes BridgesTo edges.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from orchard.normalize.identity import make_symbol_id
+
+
+@dataclass
+class CrossLanguageName:
+    """Dual-language symbol name for ObjC/Swift interop.
+
+    Inspired by sourcekit-lsp's CrossLanguageName.
+    """
+    clang_name: str | None = None   # -[Class method:] / +[Class method:]
+    swift_name: str | None = None   # Class.method(_:)
+    definition_language: str = ""   # "swift" | "objc" | "c"
+
+    @property
+    def definition_name(self) -> str | None:
+        """Return the name in the symbol's definition language."""
+        if self.definition_language == "swift":
+            return self.swift_name
+        if self.definition_language in ("objc", "c", "cpp"):
+            return self.clang_name
+        return self.swift_name or self.clang_name
 
 
 def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:

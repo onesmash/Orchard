@@ -53,6 +53,36 @@ def _risk_level(d1_count: int, has_bridge: bool, freshness_ok: bool) -> str:
     return "low"
 
 
+def _subtype_closure(conn, usr: str, max_depth: int = 20) -> set[str]:
+    """Return all USRs that are subtypes or conformers of *usr*.
+
+    Walks Inherits:FROM, ConformsTo:FROM, and Extends:FROM edges
+    recursively with a visited guard and depth limit.
+    """
+    visited: set[str] = set()
+    frontier = {usr}
+    for _ in range(max_depth):
+        if not frontier:
+            break
+        next_frontier: set[str] = set()
+        f_list = list(frontier)
+        for rel_type in ("Inherits", "ConformsTo", "Extends"):
+            rows = conn.execute(
+                f"UNWIND $ids AS uid "
+                f"MATCH (child:Symbol)-[:{rel_type}]->(parent:Symbol {{usr: uid}}) "
+                f"WHERE child.usr <> uid "
+                f"RETURN DISTINCT child.usr",
+                {"ids": f_list},
+            ).get_all()
+            for row in rows:
+                child_usr = row[0]
+                if child_usr not in visited and child_usr != usr:
+                    next_frontier.add(child_usr)
+                    visited.add(child_usr)
+        frontier = next_frontier
+    return visited
+
+
 def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
     """Perform multi-hop impact analysis traversal from a queried symbol.
 

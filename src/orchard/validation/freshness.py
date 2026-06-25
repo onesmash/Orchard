@@ -1,13 +1,69 @@
 """
-GraphFreshness tracking for build snapshots.
+GraphFreshness tracking for build snapshots and per-occurrence freshness checks.
 
 Provides freshness validation to determine if a build snapshot is current
-relative to the requested toolchain and build configuration.
+relative to the requested toolchain and build configuration, plus per-file
+freshness checks inspired by sourcekit-lsp's IndexOutOfDateChecker.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from enum import Enum
+
+
+class IndexCheckLevel(Enum):
+    """Granularity of index freshness checks (inspired by sourcekit-lsp)."""
+    DELETED_FILES = "deleted_files"
+    MODIFIED_FILES = "modified_files"
+    IN_MEMORY_MODIFIED_FILES = "in_memory_modified_files"
+
+    @classmethod
+    def default(cls) -> "IndexCheckLevel":
+        return cls.MODIFIED_FILES
+
+
+@dataclass
+class SymbolLocation:
+    """Minimal location for per-occurrence freshness checking."""
+    path: str
+    timestamp: float  # Unix timestamp of when this symbol was indexed
+
+
+class IndexOutOfDateChecker:
+    """Checks whether indexed symbol locations are still up-to-date.
+
+    Caches file modification times for the lifetime of one request.
+    Inspired by sourcekit-lsp's IndexOutOfDateChecker.
+    """
+
+    def __init__(self, check_level: IndexCheckLevel | None = None):
+        self._check_level = check_level or IndexCheckLevel.default()
+        self._mod_time_cache: dict[str, float | None] = {}
+        self._file_exists_cache: dict[str, bool] = {}
+
+    def is_up_to_date(self, location: SymbolLocation) -> bool:
+        """Return True if the source file hasn't been modified since indexing."""
+        if self._check_level == IndexCheckLevel.DELETED_FILES:
+            return self._file_exists(location.path)
+        source_mtime = self._modification_time(location.path)
+        if source_mtime is None:
+            return False  # file deleted
+        return source_mtime <= location.timestamp
+
+    def _file_exists(self, path: str) -> bool:
+        if path not in self._file_exists_cache:
+            self._file_exists_cache[path] = os.path.exists(path)
+        return self._file_exists_cache[path]
+
+    def _modification_time(self, path: str) -> float | None:
+        if path not in self._mod_time_cache:
+            try:
+                self._mod_time_cache[path] = os.path.getmtime(path)
+            except OSError:
+                self._mod_time_cache[path] = None
+        return self._mod_time_cache[path]
 
 
 @dataclass
