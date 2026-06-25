@@ -41,32 +41,35 @@ _EDGE_BATCH_SIZE = 200
 
 def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
     """Upsert Symbol nodes via COPY FROM CSV — fast bulk import."""
-    t0 = time.monotonic()
     import csv, tempfile, os
+    t0 = time.monotonic()
+    # Pre-fetch existing IDs so we only COPY new symbols (idempotent without
+    # IGNORE_ERRORS, which would mask real schema violations).
+    existing = set()
+    id_rows = conn.execute(
+        "MATCH (s:Symbol {target_id: $tid}) RETURN s.id",
+        {"tid": target_id},
+    ).get_all()
+    existing = {r[0] for r in id_rows}
+    new = [s for s in symbols if make_symbol_id(target_id, s.usr) not in existing]
+    if not new:
+        _perf_probes.setdefault("upsert_symbols_s", 0.0)
+        _perf_probes.setdefault("upsert_symbols_n", 0)
+        return 0
     csv_path = os.path.join(tempfile.mkdtemp(), "symbols.csv")
     with open(csv_path, "w", newline="") as fh:
         w = csv.writer(fh, quoting=csv.QUOTE_ALL)
-        for s in symbols:
+        for s in new:
             w.writerow([
-                make_symbol_id(target_id, s.usr),  # id
-                s.usr,                              # usr
-                s.precise_id or "",                  # precise_id
-                s.name,                              # name
-                s.language,                          # language
-                s.kind,                              # kind
-                s.module,                            # module
-                target_id,                           # target_id
-                s.file_path or "",                   # file_path
-                s.signature or "",                   # signature
-                s.container_usr or "",               # container_usr
-                s.access_level,                      # access_level
-                "swift_symbolgraph",                 # origin
-                "false",                             # is_generated
+                make_symbol_id(target_id, s.usr),
+                s.usr, s.precise_id or "", s.name, s.language, s.kind,
+                s.module, target_id, s.file_path or "", s.signature or "",
+                s.container_usr or "", s.access_level, "swift_symbolgraph", "false",
             ])
     if _progress:
         sys.stdout.write(f"  csv {os.path.getsize(csv_path)/1024/1024:.0f}MB, importing...")
         sys.stdout.flush()
-    conn.execute(f"COPY Symbol FROM '{csv_path}' (HEADER=false, DELIM=',', IGNORE_ERRORS=true)")
+    conn.execute(f"COPY Symbol FROM '{csv_path}' (HEADER=false, DELIM=',')")
     os.unlink(csv_path)
     conn.execute("CHECKPOINT")
     t = round(time.monotonic() - t0, 3)
