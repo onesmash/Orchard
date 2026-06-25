@@ -98,6 +98,7 @@ REL_TABLES: list[str] = [
         source STRING,
         confidence DOUBLE
     )""",
+    "CREATE REL TABLE IF NOT EXISTS Contains(FROM Symbol TO Symbol, source STRING)",
     "CREATE REL TABLE IF NOT EXISTS Inherits(FROM Symbol TO Symbol, source STRING)",
     "CREATE REL TABLE IF NOT EXISTS Implements(FROM Symbol TO Symbol, source STRING)",
     "CREATE REL TABLE IF NOT EXISTS Imports(FROM File TO File, kind STRING)",

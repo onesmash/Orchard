@@ -83,9 +83,8 @@ _INDEXSTORE_REL_TO_TABLE: dict[str, str] = {
     "baseOf": "Inherits",       # from_usr inherits from to_usr
     "overrideOf": "Implements",  # from_usr overrides to_usr
     "extendedBy": "Inherits",    # from_usr is extended by to_usr
-    # "childOf" / "containedBy" are Symbol→Symbol containment — no matching
-    # edge in the current schema (Declares is File→Symbol, not Symbol→Symbol).
-    # Deferred until a Symbol→Symbol containment edge is added.
+    "childOf": "Contains",       # from_usr is a child of to_usr → to_usr contains from_usr
+    "containedBy": "Contains",   # from_usr is contained by to_usr → to_usr contains from_usr
 }
 
 
