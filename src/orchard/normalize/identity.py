@@ -99,12 +99,11 @@ _REL_KIND_TO_TABLE: dict[str, str] = {
 # related symbol. E.g. baseOf(from_usr=Derived, to_usr=Base) means Derived
 # inherits from Base → Inherits(Derived → Base).
 _INDEXSTORE_REL_TO_TABLE: dict[str, str] = {
-    "baseOf": "Inherits",       # to_usr is a base of from_usr → Inherits(to_usr, from_usr)
-                                # (direction reversed at CSV write time)
-    "overrideOf": "Implements",  # from_usr overrides to_usr
-    "extendedBy": "Inherits",    # from_usr is extended by to_usr
-    "childOf": "Contains",       # from_usr is a child of to_usr → to_usr contains from_usr
-    "containedBy": "Contains",   # from_usr is contained by to_usr → to_usr contains from_usr
+    "baseOf": "Inherits",
+    "overrideOf": "Implements",
+    "childOf": "Contains",
+    "containedBy": "Contains",
+    # extendedBy is ObjC category extension, NOT subclassing — skip it.
 }
 
 
@@ -180,15 +179,11 @@ def upsert_indexstore_rels(
         s_id = make_symbol_id(target_id, rel.from_usr)
         t_id = make_symbol_id(target_id, rel.to_usr)
         if s_id in existing_ids and t_id in existing_ids:
-            # All IndexStore relation roles describe what the *related*
-            # symbol (to_usr) does to the *subject* (from_usr).  E.g.
-            #   baseOf(from=A, to=B): B is a base of A → A inherits from B.
-            # So: Inherits(A → B) = Inherits(from_usr → to_usr).
-            # Wait — that's the forward direction.
-            # Actually: childOf(from=A, to=B): B is child of A? No —
-            # A is child of B → B contains A → Contains(B → A) = swap.
-            # For consistency, test empirically: swap for all.
-            by_table.setdefault(table, []).append((t_id, s_id))
+            # Forward direction: the occurrence symbol (from_usr) is the
+            # subject; the related symbol (to_usr) is the descriptor.
+            #   baseOf(from=A, to=B): B is a base of A → Inherits(A → B).
+            #   childOf(from=A, to=B): B is a child of A → A contains B → Contains(A → B).
+            by_table.setdefault(table, []).append((s_id, t_id))
     import csv, tempfile, os
     count = 0
     for table, pairs in by_table.items():
