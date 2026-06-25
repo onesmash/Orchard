@@ -40,50 +40,39 @@ _EDGE_BATCH_SIZE = 200
 
 
 def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
-    """Upsert Symbol nodes into the graph for the given target.
-
-    Uses UNWIND batching for large symbol lists — one Cypher query per
-    ``_SYMBOL_BATCH_SIZE`` rows, avoiding per-symbol round-trips.
-    """
+    """Upsert Symbol nodes via COPY FROM CSV — fast bulk import."""
     t0 = time.monotonic()
-    count = 0
-    for i in range(0, len(symbols), _SYMBOL_BATCH_SIZE):
-        batch = symbols[i : i + _SYMBOL_BATCH_SIZE]
-        rows = [
-            {
-                "id": make_symbol_id(target_id, s.usr),
-                "usr": s.usr,
-                "precise": s.precise_id or "",
-                "name": s.name,
-                "lang": s.language,
-                "kind": s.kind,
-                "mod": s.module,
-                "file": s.file_path or "",
-                "sig": s.signature or "",
-                "container": s.container_usr or "",
-                "access": s.access_level,
-            }
-            for s in batch
-        ]
-        conn.execute(
-            "UNWIND $rows AS r "
-            "MERGE (s:Symbol {id: r.id}) "
-            "SET s.usr=r.usr, s.precise_id=r.precise, s.name=r.name, "
-            "s.language=r.lang, s.kind=r.kind, s.module=r.mod, "
-            "s.target_id=$tid, s.file_path=r.file, s.signature=r.sig, "
-            "s.container_usr=r.container, s.access_level=r.access, "
-            "s.origin='swift_symbolgraph', s.is_generated=false",
-            {"rows": rows, "tid": target_id},
-        )
-        count += len(batch)
-        if _progress:
-            sys.stdout.write(f"\r  symbols: {count}/{len(symbols)} ({count*100//len(symbols)}%)")
-            sys.stdout.flush()
+    import csv, tempfile, os
+    csv_path = os.path.join(tempfile.mkdtemp(), "symbols.csv")
+    with open(csv_path, "w", newline="") as fh:
+        w = csv.writer(fh, quoting=csv.QUOTE_ALL)
+        for s in symbols:
+            w.writerow([
+                make_symbol_id(target_id, s.usr),  # id
+                s.usr,                              # usr
+                s.precise_id or "",                  # precise_id
+                s.name,                              # name
+                s.language,                          # language
+                s.kind,                              # kind
+                s.module,                            # module
+                target_id,                           # target_id
+                s.file_path or "",                   # file_path
+                s.signature or "",                   # signature
+                s.container_usr or "",               # container_usr
+                s.access_level,                      # access_level
+                "swift_symbolgraph",                 # origin
+                "false",                             # is_generated
+            ])
+    if _progress:
+        sys.stdout.write(f"  csv {os.path.getsize(csv_path)/1024/1024:.0f}MB, importing...")
+        sys.stdout.flush()
+    conn.execute(f"COPY Symbol FROM '{csv_path}' (HEADER=false, DELIM=',', IGNORE_ERRORS=true)")
+    os.unlink(csv_path)
     conn.execute("CHECKPOINT")
     t = round(time.monotonic() - t0, 3)
     _perf_probes.setdefault("upsert_symbols_s", t)
-    _perf_probes.setdefault("upsert_symbols_n", count)
-    return count
+    _perf_probes.setdefault("upsert_symbols_n", len(symbols))
+    return len(symbols)
 
 
 # Mapping from symbolgraph relationship kinds to Ladybug rel table names.
