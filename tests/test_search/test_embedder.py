@@ -10,12 +10,12 @@ import pytest
 from orchard.search.embedder import Embedder, EmbeddingError
 
 
-def _mock_embed_response_768d() -> mock.Mock:
-    """Return a mock httpx.Response that simulates a 768-dim embedding."""
+def _mock_embed_response_1024d() -> mock.Mock:
+    """Return a mock httpx.Response that simulates a 1024-dim embedding."""
     resp = mock.Mock(spec=httpx.Response)
     resp.status_code = 200
     resp.json.return_value = {
-        "embeddings": [[float(i) for i in range(768)]],
+        "embeddings": [[float(i) for i in range(1024)]],
     }
     resp.raise_for_status = mock.Mock()
     return resp
@@ -24,15 +24,15 @@ def _mock_embed_response_768d() -> mock.Mock:
 class TestEmbedder:
     """Test suite for Embedder."""
 
-    def test_embedder_returns_768d_vector(self) -> None:
-        """embed() returns a list of exactly 768 floats."""
+    def test_embedder_returns_1024d_vector(self) -> None:
+        """embed() returns a list of exactly 1024 floats."""
         embedder = Embedder()
         with mock.patch.object(embedder._client, "post") as mock_post:
-            mock_post.return_value = _mock_embed_response_768d()
+            mock_post.return_value = _mock_embed_response_1024d()
 
             vec = embedder.embed("hello world")
 
-        assert len(vec) == 768
+        assert len(vec) == 1024
         assert isinstance(vec, list)
         assert all(isinstance(v, float) for v in vec)
 
@@ -49,8 +49,8 @@ class TestEmbedder:
 
         assert "Ollama unreachable" in str(excinfo.value)
 
-    def test_embed_batch_returns_list_of_768d_vectors(self) -> None:
-        """embed_batch() returns a list of 768-dim vectors, one per input."""
+    def test_embed_batch_returns_list_of_1024d_vectors(self) -> None:
+        """embed_batch() returns a list of 1024-dim vectors, one per input."""
         embedder = Embedder()
         texts = ["hello", "world", "foo"]
         with mock.patch.object(embedder._client, "post") as mock_post:
@@ -58,7 +58,7 @@ class TestEmbedder:
             mock_resp.status_code = 200
             mock_resp.json.return_value = {
                 "embeddings": [
-                    [float(j) for j in range(768)] for _ in texts
+                    [float(j) for j in range(1024)] for _ in texts
                 ]
             }
             mock_resp.raise_for_status = mock.Mock()
@@ -68,7 +68,7 @@ class TestEmbedder:
 
         assert len(result) == len(texts)
         for vec in result:
-            assert len(vec) == 768
+            assert len(vec) == 1024
 
     def test_embed_batch_unreachable_raises(self) -> None:
         """embed_batch() wraps exceptions in EmbeddingError."""

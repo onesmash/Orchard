@@ -10,7 +10,7 @@ class EmbeddingError(Exception):
 class Embedder:
     """Thin client for Ollama /api/embed endpoint.
 
-    Produces 768-dimensional embedding vectors using a local Ollama model
+    Produces 1024-dimensional embedding vectors using a local Ollama model
     (default: qwen3-embedding:0.6b).
     """
 
@@ -25,7 +25,7 @@ class Embedder:
         self._client = httpx.Client(timeout=timeout)
 
     def embed(self, text: str) -> list[float]:
-        """Embed a single text string into a 768-dimensional vector."""
+        """Embed a single text string into a 1024-dimensional vector."""
         try:
             r = self._client.post(
                 self._url, json={"model": self._model, "input": [text]}
@@ -36,7 +36,7 @@ class Embedder:
             raise EmbeddingError(f"Ollama unreachable: {e}") from e
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed a batch of text strings into 768-dimensional vectors."""
+        """Embed a batch of text strings into 1024-dimensional vectors."""
         try:
             r = self._client.post(
                 self._url, json={"model": self._model, "input": texts}

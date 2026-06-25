@@ -66,7 +66,7 @@ NODE_TABLES: list[str] = [
         owner_usr STRING,
         chunk_kind STRING,
         content STRING,
-        embedding FLOAT[768]
+        embedding FLOAT[1024]
     )""",
     """CREATE NODE TABLE IF NOT EXISTS Diagnostic(
         id STRING PRIMARY KEY,

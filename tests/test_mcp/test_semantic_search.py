@@ -16,9 +16,9 @@ from orchard.mcp.handlers.semantic_search import (
 )
 
 
-def _make_vec768(base: float = 0.0, step: float = 0.001) -> list[float]:
-    """Generate a 768-element vector for Ladybug FLOAT[768] columns."""
-    return [base + i * step for i in range(768)]
+def _make_vec1024(base: float = 0.0, step: float = 0.001) -> list[float]:
+    """Generate a 1024-element vector for Ladybug FLOAT[1024] columns."""
+    return [base + i * step for i in range(1024)]
 
 
 @pytest.fixture
@@ -61,8 +61,8 @@ def conn_with_chunks(tmp_db_path):
         )
 
     # Seed a Chunk WITH embedding for vector search path.
-    # Must be exactly 768 elements for Ladybug FLOAT[768].
-    stored_vec = _make_vec768(base=0.0, step=0.001)
+    # Must be exactly 1024 elements for Ladybug FLOAT[1024].
+    stored_vec = _make_vec1024(base=0.0, step=0.001)
     conn.execute(
         "CREATE (:Chunk {"
         "id: $cid, owner_usr: $usr, chunk_kind: $kind, "
@@ -108,47 +108,71 @@ class TestDotNorm:
         assert math.isclose(score, 0.0, abs_tol=1e-9)
 
 
+@pytest.fixture
+def conn_for_fts(tmp_db_path):
+    """Same as conn_with_chunks but with Embedder mocked to fail (forces FTS path)."""
+    from orchard.mcp.handlers.semantic_search import semantic_search as _ss
+    with patch("orchard.search.embedder.Embedder", side_effect=RuntimeError("no Ollama")):
+        conn = get_connection(tmp_db_path)
+        init_schema(conn)
+        # Seed same data as conn_with_chunks.
+        for sid, usr, name, kind, module in [
+            ("MyApp:s:Foo", "s:Foo", "Foo", "struct", "MyApp"),
+            ("MyApp:s:doIt", "s:doIt()", "doIt", "function", "MyApp"),
+            ("MyApp:s:empty", "s:empty", "emptyFunc", "function", "MyApp"),
+        ]:
+            conn.execute(f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', precise_id: '', name: '{name}', language: 'swift', kind: '{kind}', module: '{module}', target_id: 'MyApp', file_path: '', signature: '', container_usr: '', access_level: 'public', origin: 'symbolgraph', is_generated: false}})")
+        for cid, usr, kind, content in [
+            ("MyApp:s:Foo:chunk:type:0", "s:Foo", "type", "struct Foo: public struct Foo"),
+            ("MyApp:s:doIt:chunk:method:1", "s:doIt()", "method", "function doIt: func doIt()"),
+            ("MyApp:s:Foo:chunk:type:vec", "s:Foo", "type", "struct Foo: public struct Foo with generics"),
+        ]:
+            conn.execute(f"CREATE (:Chunk {{id: '{cid}', owner_usr: '{usr}', chunk_kind: '{kind}', content: '{content}'}})")
+        yield conn
+        conn.close()
+
+
 class TestSemanticSearchFTS:
     """Tests for FTS fallback path (no Ollama / no embedding)."""
 
-    def test_fts_finds_matching_chunk(self, conn_with_chunks):
+    def test_fts_finds_matching_chunk(self, conn_for_fts):
         """Substring match should find the Foo chunk."""
         req = SemanticSearchRequest(query="struct Foo", top_k=10)
-        resp = semantic_search(conn_with_chunks, req)
+        resp = semantic_search(conn_for_fts, req)
 
         assert len(resp.data) >= 2  # multiple Foo chunks with "struct Foo"
         usrs = {item["usr"] for item in resp.data}
         assert "s:Foo" in usrs
 
-    def test_fts_finds_doit_chunk(self, conn_with_chunks):
+    def test_fts_finds_doit_chunk(self, conn_for_fts):
         """Substring match for doIt should find the function chunk."""
         req = SemanticSearchRequest(query="doIt", top_k=10)
-        resp = semantic_search(conn_with_chunks, req)
+        resp = semantic_search(conn_for_fts, req)
 
         assert len(resp.data) >= 1
         usrs = {item["usr"] for item in resp.data}
         assert "s:doIt()" in usrs
 
-    def test_fts_case_insensitive(self, conn_with_chunks):
+    def test_fts_case_insensitive(self, conn_for_fts):
         """Search should be case-insensitive."""
         req = SemanticSearchRequest(query="FUNC", top_k=10)
-        resp = semantic_search(conn_with_chunks, req)
+        resp = semantic_search(conn_for_fts, req)
 
         assert len(resp.data) >= 1
         assert any("doIt" in item["chunk_content"] for item in resp.data)
 
-    def test_fts_no_match_returns_empty(self, conn_with_chunks):
+    def test_fts_no_match_returns_empty(self, conn_for_fts):
         """A query with no matches returns empty data and open_gaps."""
         req = SemanticSearchRequest(query="nonexistent_xyz", top_k=10)
-        resp = semantic_search(conn_with_chunks, req)
+        resp = semantic_search(conn_for_fts, req)
 
         assert resp.data == []
         assert "no matching chunks found" in resp.open_gaps
 
-    def test_fts_respects_top_k(self, conn_with_chunks):
+    def test_fts_respects_top_k(self, conn_for_fts):
         """top_k should limit results."""
         req = SemanticSearchRequest(query="struct", top_k=1)
-        resp = semantic_search(conn_with_chunks, req)
+        resp = semantic_search(conn_for_fts, req)
 
         assert len(resp.data) == 1
 
@@ -159,7 +183,7 @@ class TestSemanticSearchVector:
     def test_vector_search_with_mocked_embedder(self, conn_with_chunks):
         """When Embedder succeeds, cosine similarity on stored vectors is used."""
         # Return the exact same vector stored in the DB for cosine ~= 1.0
-        stored_vec = _make_vec768(base=0.0, step=0.001)
+        stored_vec = _make_vec1024(base=0.0, step=0.001)
 
         with patch(
             "orchard.search.embedder.Embedder",

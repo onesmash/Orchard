@@ -44,8 +44,11 @@ def semantic_search(conn, req: SemanticSearchRequest) -> BaseToolResponse:
     except Exception:
         pass
 
-    # 2. Search
+    # 2. Search — vector + FTS, merged and deduped.
     results: list[tuple[float, tuple[str, str, str]]] = []
+    seen_content: set[str] = set()
+
+    # Vector path: cosine similarity over Chunks with embeddings.
     if query_vec:
         q_norm = norm(query_vec)
         rows = conn.execute(
@@ -57,19 +60,22 @@ def semantic_search(conn, req: SemanticSearchRequest) -> BaseToolResponse:
             if emb and q_norm > 0:
                 score = dot(query_vec, emb) / (q_norm * norm(emb))
                 results.append((score, (r[0] or "", r[1] or "", r[2] or "")))
-        results.sort(key=lambda x: x[0], reverse=True)
-        results = results[: req.top_k]
-    else:
-        # FTS fallback: Ladybug CONTAINS substring match.
-        # No FTS extension needed — CONTAINS is a built-in Cypher operator
-        # that scans the column store efficiently (no Python-side O(N) loop).
-        rows = conn.execute(
-            "MATCH (c:Chunk) WHERE lower(c.content) CONTAINS lower($q) "
-            "RETURN c.owner_usr, c.content, c.chunk_kind LIMIT $k",
-            {"q": req.query, "k": req.top_k},
-        ).get_all()
-        for r in rows:
-            results.append((1.0, (r[0] or "", r[1] or "", r[2] or "")))
+                seen_content.add(r[1] or "")  # dedup by content
+
+    # FTS path: substring match, always runs alongside vector for coverage.
+    rows = conn.execute(
+        "MATCH (c:Chunk) WHERE lower(c.content) CONTAINS lower($q) "
+        "RETURN c.owner_usr, c.content, c.chunk_kind LIMIT $k",
+        {"q": req.query, "k": req.top_k},
+    ).get_all()
+    for r in rows:
+        content = r[1] or ""
+        if content not in seen_content:
+            results.append((0.5, (r[0] or "", content, r[2] or "")))
+            seen_content.add(content)
+
+    results.sort(key=lambda x: x[0], reverse=True)
+    results = results[: req.top_k]
 
     # 3. Resolve Symbol names
     data: list[dict] = []
