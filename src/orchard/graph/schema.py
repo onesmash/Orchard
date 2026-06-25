@@ -75,6 +75,15 @@ NODE_TABLES: list[str] = [
         code STRING,
         message STRING
     )""",
+    """CREATE NODE TABLE IF NOT EXISTS Community(
+        id STRING PRIMARY KEY,
+        size INT64
+    )""",
+    """CREATE NODE TABLE IF NOT EXISTS Process(
+        id STRING PRIMARY KEY,
+        entry_name STRING,
+        entry_kind STRING
+    )""",
 ]
 
 REL_TABLES: list[str] = [
@@ -91,25 +100,28 @@ REL_TABLES: list[str] = [
         source STRING,
         confidence DOUBLE,
         provenance STRING,
-        build_id STRING
+        build_id STRING,
+        reason STRING
     )""",
     """CREATE REL TABLE IF NOT EXISTS References(
         FROM Symbol TO Symbol,
         source STRING,
-        confidence DOUBLE
+        confidence DOUBLE,
+        reason STRING
     )""",
-    "CREATE REL TABLE IF NOT EXISTS Contains(FROM Symbol TO Symbol, source STRING)",
-    "CREATE REL TABLE IF NOT EXISTS Extends(FROM Symbol TO Symbol, source STRING)",
-    "CREATE REL TABLE IF NOT EXISTS Inherits(FROM Symbol TO Symbol, source STRING)",
-    "CREATE REL TABLE IF NOT EXISTS Implements(FROM Symbol TO Symbol, source STRING)",
+    "CREATE REL TABLE IF NOT EXISTS Contains(FROM Symbol TO Symbol, source STRING, confidence DOUBLE, reason STRING)",
+    "CREATE REL TABLE IF NOT EXISTS Extends(FROM Symbol TO Symbol, source STRING, confidence DOUBLE, reason STRING)",
+    "CREATE REL TABLE IF NOT EXISTS Inherits(FROM Symbol TO Symbol, source STRING, confidence DOUBLE, reason STRING)",
+    "CREATE REL TABLE IF NOT EXISTS Implements(FROM Symbol TO Symbol, source STRING, confidence DOUBLE, reason STRING)",
     "CREATE REL TABLE IF NOT EXISTS Imports(FROM File TO File, kind STRING)",
-    "CREATE REL TABLE IF NOT EXISTS ConformsTo(FROM Symbol TO Symbol, source STRING)",
+    "CREATE REL TABLE IF NOT EXISTS ConformsTo(FROM Symbol TO Symbol, source STRING, confidence DOUBLE, reason STRING)",
     """CREATE REL TABLE IF NOT EXISTS BridgesTo(
         FROM Symbol TO Symbol,
         bridge_kind STRING,
         provenance STRING,
         confidence DOUBLE,
-        build_id STRING
+        build_id STRING,
+        reason STRING
     )""",
     "CREATE REL TABLE IF NOT EXISTS ProducedDiagnostic(FROM BuildSnapshot TO Diagnostic)",
     """CREATE REL TABLE IF NOT EXISTS DependsOn(
@@ -121,14 +133,18 @@ REL_TABLES: list[str] = [
         FROM Symbol TO Symbol,
         derived_from STRING,
         confidence DOUBLE,
-        build_id STRING
+        build_id STRING,
+        reason STRING
     )""",
     """CREATE REL TABLE IF NOT EXISTS NavigationFlow(
         FROM Symbol TO Symbol,
         derived_from STRING,
         confidence DOUBLE,
-        build_id STRING
+        build_id STRING,
+        reason STRING
     )""",
+    "CREATE REL TABLE IF NOT EXISTS MEMBER_OF(FROM Symbol TO Community)",
+    "CREATE REL TABLE IF NOT EXISTS STEP_IN_PROCESS(FROM Symbol TO Process, step INT64)",
 ]
 
 SCHEMA_STATEMENTS: list[str] = NODE_TABLES + REL_TABLES

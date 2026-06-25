@@ -186,7 +186,7 @@ def upsert_indexstore_rels(
         with open(csv_path, "w", newline="") as fh:
             w = csv.writer(fh, quoting=csv.QUOTE_ALL)
             for s, t in pairs:
-                w.writerow([s, t, source])
+                w.writerow([s, t, source, "0.90", "indexstore"])
         if _progress:
             sys.stdout.write(f"  importing {len(pairs):,} {table} edges...")
             sys.stdout.flush()
@@ -231,7 +231,7 @@ def upsert_calls(
             w.writerow([
                 make_symbol_id(target_id, to_u),
                 make_symbol_id(target_id, fm_u),
-                source, "1.0", "indexstore", build_id,
+                source, "1.0", "indexstore", build_id, "indexstore",
             ])
     if _progress:
         sys.stdout.write(f"  csv {os.path.getsize(csv_path)/1024/1024:.0f}MB, importing...")
