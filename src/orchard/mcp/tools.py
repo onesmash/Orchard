@@ -11,6 +11,8 @@ from orchard.mcp.handlers.bridges import BridgesRequest, get_cross_language_brid
 from orchard.mcp.handlers.callees import CalleeRequest, find_callees
 from orchard.mcp.handlers.callers import CallerRequest, find_callers
 from orchard.mcp.handlers.impact import ImpactRequest, impact_analysis
+from orchard.mcp.handlers.layer_violations import LayerViolationRequest, find_layer_violations
+from orchard.mcp.handlers.module_graph import ModuleGraphRequest, get_module_graph
 from orchard.mcp.handlers.symbol_context import SymbolContextRequest, get_symbol_context
 from orchard.mcp.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
 
@@ -107,3 +109,33 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             max_depth=max_depth,
         )
         return impact_analysis(_conn, req).__dict__
+
+    @server.tool()
+    def get_module_graph_tool(
+        target_id: str = "",
+        build_id: str = "",
+        module_filter: str = "",
+        include_deps: bool = True,
+    ) -> dict:
+        """Query Module nodes and their DependsOn edges."""
+        req = ModuleGraphRequest(
+            target_id=target_id or None,
+            build_id=build_id or None,
+            module_filter=module_filter or None,
+            include_deps=include_deps,
+        )
+        return get_module_graph(_conn, req).__dict__
+
+    @server.tool()
+    def find_layer_violations_tool(
+        target_id: str = "",
+        build_id: str = "",
+        include_details: bool = True,
+    ) -> dict:
+        """Detect Calls crossing heuristic layer boundaries (UI->Data, Data->Service)."""
+        req = LayerViolationRequest(
+            target_id=target_id or None,
+            build_id=build_id or None,
+            include_details=include_details,
+        )
+        return find_layer_violations(_conn, req).__dict__

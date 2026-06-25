@@ -110,6 +110,11 @@ REL_TABLES: list[str] = [
         build_id STRING
     )""",
     "CREATE REL TABLE IF NOT EXISTS ProducedDiagnostic(FROM BuildSnapshot TO Diagnostic)",
+    """CREATE REL TABLE IF NOT EXISTS DependsOn(
+        FROM Module TO Module,
+        source STRING,
+        build_id STRING
+    )""",
 ]
 
 SCHEMA_STATEMENTS: list[str] = NODE_TABLES + REL_TABLES
