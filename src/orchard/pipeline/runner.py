@@ -147,5 +147,7 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
         phase="swiftui_derivation", build_id=ctx.build_id, data=None,
         stats=swiftui_stats,
     ))
-    conn.close()
-    return results
+    try:
+        return results
+    finally:
+        conn.close()

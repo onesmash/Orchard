@@ -33,7 +33,7 @@ def get_cross_language_bridges(conn, req: BridgesRequest) -> BaseToolResponse:
     data = [
         {
             "bridge_kind": r[0],
-            "confidence": float(r[1]) if r[1] is not None else 1.0,
+            "confidence": float(r[1]) if r[1] is not None else 0.0,
             "provenance": r[2] or "",
             "target_usr": r[3],
             "target_name": r[4],

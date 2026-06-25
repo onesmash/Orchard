@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import asdict
 
 from mcp.server import FastMCP
 
@@ -42,7 +43,7 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             target_id=target_id or None,
             build_id=build_id or None,
         )
-        return get_symbol_context(_conn, req).__dict__
+        return asdict(get_symbol_context(_conn, req))
 
     @server.tool()
     def find_callers_tool(
@@ -56,7 +57,7 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             target_id=target_id or None,
             build_id=build_id or None,
         )
-        return find_callers(_conn, req).__dict__
+        return asdict(find_callers(_conn, req))
 
     @server.tool()
     def find_callees_tool(
@@ -70,7 +71,7 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             target_id=target_id or None,
             build_id=build_id or None,
         )
-        return find_callees(_conn, req).__dict__
+        return asdict(find_callees(_conn, req))
 
     @server.tool()
     def get_type_hierarchy_tool(
@@ -84,7 +85,7 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             target_id=target_id or None,
             build_id=build_id or None,
         )
-        return get_type_hierarchy(_conn, req).__dict__
+        return asdict(get_type_hierarchy(_conn, req))
 
     @server.tool()
     def get_cross_language_bridges_tool(
@@ -96,7 +97,7 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
         req = BridgesRequest(
             usr=usr, target_id=target_id or None, build_id=build_id or None,
         )
-        return get_cross_language_bridges(_conn, req).__dict__
+        return asdict(get_cross_language_bridges(_conn, req))
 
     @server.tool()
     def impact_analysis_tool(
@@ -110,7 +111,7 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             usr=usr, target_id=target_id or None, build_id=build_id or None,
             max_depth=max_depth,
         )
-        return impact_analysis(_conn, req).__dict__
+        return asdict(impact_analysis(_conn, req))
 
     @server.tool()
     def get_module_graph_tool(
@@ -126,7 +127,7 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             module_filter=module_filter or None,
             include_deps=include_deps,
         )
-        return get_module_graph(_conn, req).__dict__
+        return asdict(get_module_graph(_conn, req))
 
     @server.tool()
     def find_layer_violations_tool(
@@ -140,7 +141,7 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             build_id=build_id or None,
             include_details=include_details,
         )
-        return find_layer_violations(_conn, req).__dict__
+        return asdict(find_layer_violations(_conn, req))
 
     @server.tool()
     def get_view_tree_tool(
@@ -154,7 +155,7 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             target_id=target_id or None,
             build_id=build_id or None,
         )
-        return get_view_tree(_conn, req).__dict__
+        return asdict(get_view_tree(_conn, req))
 
     @server.tool()
     def find_navigation_flow_tool(
@@ -168,4 +169,4 @@ def register_tools(server: FastMCP, db_path: str = DEFAULT_DB) -> None:
             target_id=target_id or None,
             build_id=build_id or None,
         )
-        return find_navigation_flow(_conn, req).__dict__
+        return asdict(find_navigation_flow(_conn, req))

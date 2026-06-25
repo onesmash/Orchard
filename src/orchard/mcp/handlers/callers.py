@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from orchard.mcp.handlers.base import BaseToolRequest, BaseToolResponse
+from orchard.normalize.identity import make_symbol_id
 from orchard.validation.freshness import freshness_for
 
 
@@ -11,7 +12,7 @@ class CallerRequest(BaseToolRequest):
 
 def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
     target_id = req.target_id or ""
-    sym_id = f"{target_id}:{req.usr}"
+    sym_id = make_symbol_id(target_id, req.usr)
     rows = conn.execute(
         "MATCH (caller:Symbol)-[:Calls]->(target:Symbol {id: $id}) "
         "RETURN caller.usr, caller.name, caller.module",

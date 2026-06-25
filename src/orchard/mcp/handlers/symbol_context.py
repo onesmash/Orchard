@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from orchard.mcp.handlers.base import BaseToolRequest, BaseToolResponse
+from orchard.normalize.identity import make_symbol_id
 from orchard.validation.freshness import freshness_for
 
 
@@ -32,7 +33,7 @@ def get_symbol_context(conn, req: SymbolContextRequest) -> BaseToolResponse:
         A response containing symbol data, freshness status, and metadata.
     """
     target_id = req.target_id or ""
-    sym_id = f"{target_id}:{req.usr}" if target_id else req.usr
+    sym_id = make_symbol_id(target_id, req.usr) if target_id else req.usr
     rows = conn.execute(
         "MATCH (s:Symbol {id: $id}) "
         "RETURN s.name, s.language, s.kind, s.module, s.file_path, "

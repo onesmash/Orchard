@@ -16,12 +16,10 @@ class ImpactTraversalPolicy:
 
     Attributes:
         relation_types: Edge types to traverse during impact analysis.
-        include_low_confidence: Whether to include edges with confidence < 1.0.
+        include_low_confidence: Whether to include BridgesTo edges with
+            confidence < 0.70 (excluded from default traversal).
         include_bridge_edges: Whether to append "BridgesTo" to the effective
             relation types for cross-module traversal.
-        stop_at_target_boundary: Stop traversal when leaving the target symbol's
-            owning module/file boundary.
-        stop_at_module_boundary: Stop traversal when crossing a module boundary.
         max_depth: Maximum traversal depth from the starting symbol.
     """
 
@@ -32,8 +30,6 @@ class ImpactTraversalPolicy:
     ])
     include_low_confidence: bool = False
     include_bridge_edges: bool = True
-    stop_at_target_boundary: bool = False
-    stop_at_module_boundary: bool = False
     max_depth: int = 5
 
     def effective_relation_types(self) -> list[str]:
