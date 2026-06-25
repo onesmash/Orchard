@@ -1,161 +1,100 @@
-"""Tests for swiftui_derivation phase."""
+"""Tests for swiftui_derivation phase (ConformsTo + Calls data)."""
 from orchard.graph.db import get_connection, init_schema
-from orchard.normalize.identity import make_symbol_id, upsert_symbols
-from orchard.ingest.symbolgraph import SymbolRecord
 from orchard.derive.swiftui import run_swiftui_derivation
 
 
-def _seed_structs(conn, target_id, structs: list[tuple[str, str, str]]):
-    """Seed Symbol nodes. Each tuple is (usr, name, module)."""
-    records = [
-        SymbolRecord(
-            usr=usr, precise_id="", name=name, kind="struct",
-            module=mod, language="swift", file_path="", signature="",
-            access_level="public", container_usr=None,
-        )
-        for usr, name, mod in structs
-    ]
-    upsert_symbols(conn, records, target_id)
+def _sym(conn, sid, usr, name, kind="struct", mod="M"):
+    conn.execute(
+        f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', precise_id: '', "
+        f"name: '{name}', language: 'swift', kind: '{kind}', module: '{mod}', "
+        f"target_id: 'T', file_path: '', signature: '', container_usr: '', "
+        f"access_level: 'public', origin: 'symbolgraph', is_generated: false}})"
+    )
 
 
-def test_swiftui_derivation_creates_view_tree_edges(tmp_db_path):
-    """Structs in the same module get ViewTree edges from the first to others."""
+def _conforms(conn, usr_sid, proto_sid):
+    conn.execute(
+        f"MATCH (a:Symbol {{id: '{usr_sid}'}}), (b:Symbol {{id: '{proto_sid}'}}) "
+        "CREATE (a)-[:ConformsTo {source: 'symbolgraph'}]->(b)"
+    )
+
+
+def _calls(conn, from_sid, to_sid):
+    conn.execute(
+        f"MATCH (a:Symbol {{id: '{from_sid}'}}), (b:Symbol {{id: '{to_sid}'}}) "
+        "CREATE (a)-[:Calls {source: 'indexstore', confidence: 1.0}]->(b)"
+    )
+
+
+def test_viewtree_from_body_callee(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "MyApp"
+    tid = "T"
 
-    _seed_structs(conn, target_id, [
-        ("s:ContentView", "ContentView", "MyApp"),
-        ("s:HeaderView", "HeaderView", "MyApp"),
-        ("s:FooterView", "FooterView", "MyApp"),
-    ])
+    _sym(conn, f"{tid}:s:C", "s:C", "ContentView")
+    _sym(conn, f"{tid}:s:H", "s:H", "HeaderView")
+    _sym(conn, f"{tid}:v:V", "v:V", "View", "protocol", "SwiftUI")
+    _sym(conn, f"{tid}:s:Cbody", "s:Cbody", "body", "instanceProperty")
+    _conforms(conn, f"{tid}:s:C", f"{tid}:v:V")
+    _conforms(conn, f"{tid}:s:H", f"{tid}:v:V")
+    _calls(conn, f"{tid}:s:Cbody", f"{tid}:s:H")
 
-    stats = run_swiftui_derivation(conn, target_id, build_id="b1")
-    # ContentView -> HeaderView, ContentView -> FooterView = 2 ViewTree edges
-    assert stats["view_tree_edges"] == 2
-    assert stats["nav_flow_edges"] == 0
+    stats = run_swiftui_derivation(conn, tid, build_id="b1")
+    assert stats["view_tree_edges"] == 1
 
     rows = conn.execute(
-        "MATCH (a:Symbol)-[r:ViewTree]->(b:Symbol) "
-        "RETURN a.name, b.name, r.confidence, r.derived_from, r.build_id"
+        "MATCH (a:Symbol)-[r:ViewTree]->(b:Symbol) RETURN a.name, b.name, r.confidence"
     ).get_all()
-    assert len(rows) == 2
-    sources = {r[0] for r in rows}
-    targets = {r[1] for r in rows}
-    assert sources == {"ContentView"}
-    assert targets == {"HeaderView", "FooterView"}
-    for r in rows:
-        assert float(r[2]) == 0.70
-        assert r[3] == "derive/swiftui"
-        assert r[4] == "b1"
-
+    assert rows[0][0] == "ContentView"
+    assert rows[0][1] == "HeaderView"
+    assert float(rows[0][2]) == 0.75
     conn.close()
 
 
-def test_swiftui_derivation_creates_navigation_flow_edges(tmp_db_path):
-    """Structs with navigation-like names get NavigationFlow edges."""
+def test_excludes_non_view_callee(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "MyApp"
+    tid = "T"
 
-    _seed_structs(conn, target_id, [
-        ("s:HomeView", "HomeView", "MyApp"),
-        ("s:SettingsLink", "SettingsLink", "MyApp"),
-        ("s:ProfileNav", "ProfileNav", "MyApp"),
-    ])
+    _sym(conn, f"{tid}:s:R", "s:R", "RootView")
+    _sym(conn, f"{tid}:s:S", "s:S", "SubView")
+    _sym(conn, f"{tid}:s:fmt", "s:fmt", "fmt", "function")
+    _sym(conn, f"{tid}:v:V", "v:V", "View", "protocol", "SwiftUI")
+    _sym(conn, f"{tid}:s:Rbody", "s:Rbody", "body", "instanceProperty")
+    _conforms(conn, f"{tid}:s:R", f"{tid}:v:V")
+    _conforms(conn, f"{tid}:s:S", f"{tid}:v:V")
+    _calls(conn, f"{tid}:s:Rbody", f"{tid}:s:S")
+    _calls(conn, f"{tid}:s:Rbody", f"{tid}:s:fmt")
 
-    stats = run_swiftui_derivation(conn, target_id, build_id="b1")
-    # ViewTree: HomeView -> SettingsLink, HomeView -> ProfileNav = 2
-    # NavigationFlow: SettingsLink -> HomeView, ProfileNav -> HomeView = 2
-    assert stats["view_tree_edges"] == 2
-    assert stats["nav_flow_edges"] == 2
-
-    nf_rows = conn.execute(
-        "MATCH (a:Symbol)-[r:NavigationFlow]->(b:Symbol) "
-        "RETURN a.name, b.name, r.confidence, r.derived_from"
-    ).get_all()
-    assert len(nf_rows) == 2
-    for r in nf_rows:
-        assert r[1] == "HomeView"  # destination is HomeView
-        assert r[0] in ("SettingsLink", "ProfileNav")
-        assert float(r[2]) == 0.70
-        assert r[3] == "derive/swiftui"
-
+    stats = run_swiftui_derivation(conn, tid, build_id="b1")
+    assert stats["view_tree_edges"] == 1  # SubView only
     conn.close()
 
 
-def test_swiftui_derivation_idempotent(tmp_db_path):
-    """Second run with same data reports zero new edges (idempotent via MERGE)."""
+def test_idempotent(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "MyApp"
+    tid = "T"
+    _sym(conn, f"{tid}:s:A", "s:A", "AView")
+    _sym(conn, f"{tid}:s:B", "s:B", "BView")
+    _sym(conn, f"{tid}:v:V", "v:V", "View", "protocol", "SwiftUI")
+    _sym(conn, f"{tid}:s:A:body", "s:A:body", "body", "instanceProperty")
+    _conforms(conn, f"{tid}:s:A", f"{tid}:v:V")
+    _conforms(conn, f"{tid}:s:B", f"{tid}:v:V")
+    _calls(conn, f"{tid}:s:A:body", f"{tid}:s:B")
 
-    _seed_structs(conn, target_id, [
-        ("s:RootView", "RootView", "MyApp"),
-        ("s:ChildView", "ChildView", "MyApp"),
-    ])
-
-    stats1 = run_swiftui_derivation(conn, target_id, build_id="b1")
-    assert stats1["view_tree_edges"] == 1
-
-    stats2 = run_swiftui_derivation(conn, target_id, build_id="b1")
-    assert stats2["view_tree_edges"] == 0
-    assert stats2["nav_flow_edges"] == 0
-
-    # Only 1 edge total (no duplicates).
+    s1 = run_swiftui_derivation(conn, tid, build_id="b1")
+    assert s1["view_tree_edges"] == 1
+    s2 = run_swiftui_derivation(conn, tid, build_id="b1")
+    assert s2["view_tree_edges"] == 0
     rows = conn.execute("MATCH ()-[r:ViewTree]->() RETURN count(r)").get_all()
     assert rows[0][0] == 1
-
     conn.close()
 
 
-def test_swiftui_derivation_single_struct_no_edges(tmp_db_path):
-    """A single struct in a module produces no edges (need at least 2)."""
+def test_no_views_no_edges(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "Solo"
-
-    _seed_structs(conn, target_id, [
-        ("s:LoneView", "LoneView", "Solo"),
-    ])
-
-    stats = run_swiftui_derivation(conn, target_id, build_id="b1")
-    assert stats["view_tree_edges"] == 0
-    assert stats["nav_flow_edges"] == 0
-
-    conn.close()
-
-
-def test_swiftui_derivation_no_structs(tmp_db_path):
-    """No struct Symbols means zero edges produced."""
-    conn = get_connection(tmp_db_path)
-    init_schema(conn)
-    target_id = "Empty"
-
-    stats = run_swiftui_derivation(conn, target_id, build_id="b1")
-    assert stats["view_tree_edges"] == 0
-    assert stats["nav_flow_edges"] == 0
-
-    conn.close()
-
-
-def test_swiftui_derivation_multiple_modules(tmp_db_path):
-    """Structs in different modules get separate ViewTree edges per module."""
-    conn = get_connection(tmp_db_path)
-    init_schema(conn)
-    target_id = "T"
-
-    _seed_structs(conn, target_id, [
-        ("s:AV", "AView", "ModA"),
-        ("s:AB", "AButton", "ModA"),
-        ("s:BV", "BView", "ModB"),
-        ("s:BL", "BLabel", "ModB"),
-    ])
-
-    stats = run_swiftui_derivation(conn, target_id, build_id="b1")
-    # ModA: AView -> AButton = 1
-    # ModB: BView -> BLabel = 1
-    assert stats["view_tree_edges"] == 2
-    assert stats["nav_flow_edges"] == 0
-
+    stats = run_swiftui_derivation(conn, "T", build_id="b1")
+    assert stats["view_tree_edges"] == 0 and stats["nav_flow_edges"] == 0
     conn.close()
