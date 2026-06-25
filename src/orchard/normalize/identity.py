@@ -75,6 +75,19 @@ _REL_KIND_TO_TABLE: dict[str, str] = {
     "overrides": "Implements",
 }
 
+# Mapping from IndexStore relation roles to Ladybug rel table names.
+# Direction: from_usr is the subject (occurrence's symbol), to_usr is the
+# related symbol. E.g. baseOf(from_usr=Derived, to_usr=Base) means Derived
+# inherits from Base → Inherits(Derived → Base).
+_INDEXSTORE_REL_TO_TABLE: dict[str, str] = {
+    "baseOf": "Inherits",       # from_usr inherits from to_usr
+    "overrideOf": "Implements",  # from_usr overrides to_usr
+    "extendedBy": "Inherits",    # from_usr is extended by to_usr
+    # "childOf" / "containedBy" are Symbol→Symbol containment — no matching
+    # edge in the current schema (Declares is File→Symbol, not Symbol→Symbol).
+    # Deferred until a Symbol→Symbol containment edge is added.
+}
+
 
 def upsert_symbol_rels(
     conn,
@@ -110,6 +123,41 @@ def upsert_symbol_rels(
             continue
         src_id = make_symbol_id(target_id, rel.source_usr)
         tgt_id = make_symbol_id(target_id, rel.target_usr)
+        conn.execute(
+            f"MATCH (a:Symbol {{id: $src}}), (b:Symbol {{id: $tgt}}) "
+            f"MERGE (a)-[:{table} {{source: $source}}]->(b)",
+            {"src": src_id, "tgt": tgt_id, "source": source},
+        )
+        count += 1
+    return count
+
+
+def upsert_indexstore_rels(
+    conn,
+    rels: list[RelationRecord],
+    target_id: str,
+    source: str,
+    build_id: str,
+) -> int:
+    """Upsert IndexStore structural relation edges into the graph.
+
+    Maps IndexStore relation roles (``baseOf``, ``overrideOf``, ``childOf``,
+    ``containedBy``, ``extendedBy``) to their corresponding Ladybug relation
+    tables (``Inherits``, ``Implements``, ``Declares``).  Only roles with a
+    known mapping are written; others are silently skipped.
+
+    Direction for inherited-by/overridden-by roles:
+      ``from_usr`` is the subject (derived / overrider),
+      ``to_usr`` is the related symbol (base / overridden).
+      E.g. ``baseOf(from=A, to=B)`` → A derives from B → ``Inherits(A → B)``.
+    """
+    count = 0
+    for rel in rels:
+        table = _INDEXSTORE_REL_TO_TABLE.get(rel.role)
+        if table is None:
+            continue
+        src_id = make_symbol_id(target_id, rel.from_usr)
+        tgt_id = make_symbol_id(target_id, rel.to_usr)
         conn.execute(
             f"MATCH (a:Symbol {{id: $src}}), (b:Symbol {{id: $tgt}}) "
             f"MERGE (a)-[:{table} {{source: $source}}]->(b)",

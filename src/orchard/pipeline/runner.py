@@ -15,6 +15,7 @@ from orchard.normalize.identity import (
     upsert_symbols,
     upsert_symbol_rels,
     upsert_calls,
+    upsert_indexstore_rels,
     upsert_references,
 )
 from orchard.search.chunker import chunk_symbols
@@ -158,9 +159,10 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
         warnings=embed_warnings,
     ))
 
-    # call_graph_derivation — persist Calls + References edges from IndexStore
+    # call_graph_derivation — persist Calls + References + structural edges
     calls_written = 0
     refs_written = 0
+    struct_written = 0
     if is_result is not None:
         calls_written = upsert_calls(
             conn, is_result.relations, ctx.target,
@@ -169,9 +171,14 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
         refs_written = upsert_references(
             conn, is_result.relations, ctx.target, source="indexstore",
         )
+        struct_written = upsert_indexstore_rels(
+            conn, is_result.relations, ctx.target,
+            source="indexstore", build_id=ctx.build_id,
+        )
     results.append(PhaseResult(
         phase="call_graph_derivation", build_id=ctx.build_id, data=None,
-        stats={"calls_written": calls_written, "references_written": refs_written},
+        stats={"calls_written": calls_written, "references_written": refs_written,
+               "structural_written": struct_written},
     ))
 
     # architecture_derivation — Module DependsOn edges + cycle detection
