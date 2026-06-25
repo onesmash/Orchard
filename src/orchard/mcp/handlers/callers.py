@@ -15,11 +15,14 @@ def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
     sym_id = make_symbol_id(target_id, req.usr)
     rows = conn.execute(
         "MATCH (caller:Symbol)-[:Calls]->(target:Symbol {id: $id}) "
-        "RETURN caller.usr, caller.name, caller.module",
+        "RETURN DISTINCT caller.usr, caller.name, caller.module, caller.kind, caller.language",
         {"id": sym_id},
     ).get_all()
     _, freshness_status = freshness_for(conn, req.build_id or "", {})
-    data = [{"usr": r[0], "name": r[1], "module": r[2], "depth": 1} for r in rows]
+    data = [
+        {"usr": r[0], "name": r[1], "module": r[2], "kind": r[3], "language": r[4], "depth": 1}
+        for r in rows
+    ]
     return BaseToolResponse(
         data=data,
         freshness=freshness_status,
