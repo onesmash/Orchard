@@ -22,8 +22,8 @@ from orchard.graph.db import get_connection, init_schema
 from orchard.ingest.indexstore import _cli_path, read_index_store
 from orchard.ingest.symbolgraph import SymbolRecord
 from orchard.normalize.identity import upsert_calls, upsert_symbols
-from orchard.mcp.handlers.callers import CallerRequest, find_callers
-from orchard.mcp.handlers.callees import CalleeRequest, find_callees
+from orchard.handlers.callers import CallerRequest, find_callers
+from orchard.handlers.callees import CalleeRequest, find_callees
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

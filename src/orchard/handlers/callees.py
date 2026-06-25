@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from orchard.mcp.handlers.base import BaseToolRequest, BaseToolResponse
+from orchard.handlers.base import BaseToolRequest, BaseToolResponse
 from orchard.query.lookup import GraphLookup
 
 

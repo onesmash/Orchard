@@ -48,8 +48,8 @@ async def test_pipeline_writes_calls_then_handlers_return_data(ctx, tmp_db_path)
     from orchard.ingest import indexstore as is_mod
     from orchard.ingest.symbolgraph import SymbolRecord, SymbolGraphResult
     from orchard.pipeline.runner import run_ingest_pipeline
-    from orchard.mcp.handlers.callers import find_callers, CallerRequest
-    from orchard.mcp.handlers.callees import find_callees, CalleeRequest
+    from orchard.handlers.callers import find_callers, CallerRequest
+    from orchard.handlers.callees import find_callees, CalleeRequest
 
     # Synthetic IndexStore JSONL: callee is calledBy caller => caller calls callee
     indexstore_jsonl = (

@@ -1,7 +1,7 @@
 """Tests for get_module_graph handler."""
 import pytest
 from orchard.graph.db import get_connection, init_schema
-from orchard.mcp.handlers.module_graph import (
+from orchard.handlers.module_graph import (
     ModuleGraphRequest,
     get_module_graph,
 )

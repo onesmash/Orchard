@@ -1,4 +1,5 @@
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -49,6 +50,12 @@ def _map_indexstore_kind(kind: str) -> str:
 
 async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResult]:
     results: list[PhaseResult] = []
+
+    def _elapsed(t0: float) -> float:
+        return round(time.monotonic() - t0, 3)
+
+    # Phase timing is recorded in stats["elapsed_s"] so every PhaseResult
+    # carries its own wall-clock duration.
     conn = get_connection(db_path)
     init_schema(conn)
     upsert_build_snapshot(conn, ctx)

@@ -1,8 +1,8 @@
 """M5 acceptance: swiftui_derivation (real ConformsTo + Calls) + handlers."""
 from orchard.graph.db import get_connection, init_schema
 from orchard.derive.swiftui import run_swiftui_derivation
-from orchard.mcp.handlers.view_tree import ViewTreeRequest, get_view_tree
-from orchard.mcp.handlers.navigation_flow import NavigationFlowRequest, find_navigation_flow
+from orchard.handlers.view_tree import ViewTreeRequest, get_view_tree
+from orchard.handlers.navigation_flow import NavigationFlowRequest, find_navigation_flow
 
 
 def _sym(conn, sid, usr, name, kind="struct", mod="M"):

@@ -13,7 +13,7 @@ from orchard.normalize.identity import upsert_symbols
 from orchard.ingest.symbolgraph import SymbolRecord
 from orchard.search.embedder import Embedder, EmbeddingError
 from orchard.search.chunker import chunk_symbols
-from orchard.mcp.handlers.semantic_search import SemanticSearchRequest, semantic_search
+from orchard.handlers.semantic_search import SemanticSearchRequest, semantic_search
 
 
 def _ollama_available() -> bool:

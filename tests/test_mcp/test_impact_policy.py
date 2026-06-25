@@ -1,6 +1,6 @@
 """Tests for the ImpactTraversalPolicy dataclass."""
 
-from orchard.mcp.handlers.impact_policy import ImpactTraversalPolicy
+from orchard.handlers.impact_policy import ImpactTraversalPolicy
 
 
 class TestImpactTraversalPolicy:

@@ -1,6 +1,6 @@
 import pytest
 from orchard.graph.db import get_connection, init_schema
-from orchard.mcp.handlers.symbol_context import get_symbol_context, SymbolContextRequest
+from orchard.handlers.symbol_context import get_symbol_context, SymbolContextRequest
 
 
 @pytest.fixture

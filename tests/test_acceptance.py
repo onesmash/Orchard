@@ -13,8 +13,8 @@ from orchard.graph.db import get_connection, init_schema
 from orchard.ingest.symbolgraph import SymbolRecord
 from orchard.normalize.identity import upsert_symbols, upsert_build_snapshot
 from orchard.build.context import BuildContext, make_build_id
-from orchard.mcp.handlers.symbol_context import get_symbol_context, SymbolContextRequest
-from orchard.mcp.handlers.callers import find_callers, CallerRequest
+from orchard.handlers.symbol_context import get_symbol_context, SymbolContextRequest
+from orchard.handlers.callers import find_callers, CallerRequest
 from orchard.validation.freshness import freshness_for
 
 

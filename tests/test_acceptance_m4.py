@@ -3,9 +3,9 @@ from orchard.graph.db import get_connection, init_schema
 from orchard.normalize.identity import upsert_symbols, make_symbol_id
 from orchard.ingest.symbolgraph import SymbolRecord
 from orchard.derive.architecture import run_architecture_derivation
-from orchard.mcp.handlers.semantic_search import SemanticSearchRequest, semantic_search
-from orchard.mcp.handlers.module_graph import ModuleGraphRequest, get_module_graph
-from orchard.mcp.handlers.layer_violations import (
+from orchard.handlers.semantic_search import SemanticSearchRequest, semantic_search
+from orchard.handlers.module_graph import ModuleGraphRequest, get_module_graph
+from orchard.handlers.layer_violations import (
     LayerViolationRequest,
     find_layer_violations,
 )

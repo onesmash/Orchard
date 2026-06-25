@@ -9,7 +9,6 @@ dependencies = [
 ]
 
 [project.scripts]
-orchard-mcp = "orchard.mcp.server:main"
 orchard = "orchard.cli:main"
 
 [build-system]

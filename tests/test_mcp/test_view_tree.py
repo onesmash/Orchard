@@ -40,7 +40,7 @@ def conn_with_views(tmp_db_path):
 
 def test_get_view_tree_all(conn_with_views):
     """Returns all ViewTree edges."""
-    from orchard.mcp.handlers.view_tree import ViewTreeRequest, get_view_tree
+    from orchard.handlers.view_tree import ViewTreeRequest, get_view_tree
 
     req = ViewTreeRequest(build_id="b1")
     resp = get_view_tree(conn_with_views, req)
@@ -65,7 +65,7 @@ def test_get_view_tree_all(conn_with_views):
 
 def test_get_view_tree_filter(conn_with_views):
     """Module filter restricts results."""
-    from orchard.mcp.handlers.view_tree import ViewTreeRequest, get_view_tree
+    from orchard.handlers.view_tree import ViewTreeRequest, get_view_tree
 
     req = ViewTreeRequest(module="MyApp", build_id="b1")
     resp = get_view_tree(conn_with_views, req)
@@ -79,7 +79,7 @@ def test_get_view_tree_filter(conn_with_views):
 
 def test_get_view_tree_empty(tmp_db_path):
     """Empty database returns zero edges with open_gap message."""
-    from orchard.mcp.handlers.view_tree import ViewTreeRequest, get_view_tree
+    from orchard.handlers.view_tree import ViewTreeRequest, get_view_tree
 
     conn = get_connection(tmp_db_path)
     init_schema(conn)
