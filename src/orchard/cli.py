@@ -33,7 +33,7 @@ def _print_json(obj):
 
 def cmd_find_callers(args: list[str]):
     usr, target, db = _parse_common(args)
-    from orchard.mcp.handlers.callers import CallerRequest, find_callers
+    from orchard.handlers.callers import CallerRequest, find_callers
     conn = _conn(db)
     r = find_callers(conn, CallerRequest(usr=usr, target_id=target))
     _print_json(r.__dict__)
@@ -42,7 +42,7 @@ def cmd_find_callers(args: list[str]):
 
 def cmd_find_callees(args: list[str]):
     usr, target, db = _parse_common(args)
-    from orchard.mcp.handlers.callees import CalleeRequest, find_callees
+    from orchard.handlers.callees import CalleeRequest, find_callees
     conn = _conn(db)
     r = find_callees(conn, CalleeRequest(usr=usr, target_id=target))
     _print_json(r.__dict__)
@@ -51,7 +51,7 @@ def cmd_find_callees(args: list[str]):
 
 def cmd_impact(args: list[str]):
     usr, target, db = _parse_common(args)
-    from orchard.mcp.handlers.impact import ImpactRequest, impact_analysis
+    from orchard.handlers.impact import ImpactRequest, impact_analysis
     conn = _conn(db)
     r = impact_analysis(conn, ImpactRequest(usr=usr, target_id=target, max_depth=5))
     _print_json(r.__dict__)
@@ -60,7 +60,7 @@ def cmd_impact(args: list[str]):
 
 def cmd_symbol(args: list[str]):
     usr, target, db = _parse_common(args)
-    from orchard.mcp.handlers.symbol_context import SymbolContextRequest, get_symbol_context
+    from orchard.handlers.symbol_context import SymbolContextRequest, get_symbol_context
     conn = _conn(db)
     r = get_symbol_context(conn, SymbolContextRequest(usr=usr, target_id=target))
     _print_json(r.__dict__)
@@ -69,7 +69,7 @@ def cmd_symbol(args: list[str]):
 
 def cmd_hierarchy(args: list[str]):
     usr, target, db = _parse_common(args)
-    from orchard.mcp.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
+    from orchard.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
     conn = _conn(db)
     r = get_type_hierarchy(conn, TypeHierarchyRequest(usr=usr, target_id=target))
     _print_json(r.__dict__)

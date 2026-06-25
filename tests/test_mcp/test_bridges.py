@@ -1,7 +1,7 @@
 """Tests for get_cross_language_bridges handler."""
 import pytest
 from orchard.graph.db import get_connection, init_schema
-from orchard.mcp.handlers.bridges import (
+from orchard.handlers.bridges import (
     BridgesRequest,
     get_cross_language_bridges,
 )

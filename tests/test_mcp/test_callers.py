@@ -1,7 +1,7 @@
 import pytest
 from orchard.graph.db import get_connection, init_schema
-from orchard.mcp.handlers.callers import find_callers, CallerRequest
-from orchard.mcp.handlers.callees import find_callees, CalleeRequest
+from orchard.handlers.callers import find_callers, CallerRequest
+from orchard.handlers.callees import find_callees, CalleeRequest
 
 
 @pytest.fixture
