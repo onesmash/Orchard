@@ -7,6 +7,7 @@ for symbols, relationships, and build snapshots.
 
 from __future__ import annotations
 
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -78,7 +79,8 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
         if i % (5 * _SYMBOL_BATCH_SIZE) == 0:
             conn.execute("CHECKPOINT")
         if _progress:
-            print(f"  symbols: {count}/{len(symbols)} ({count*100//len(symbols)}%)", end="\r")
+            sys.stdout.write(f"\r  symbols: {count}/{len(symbols)} ({count*100//len(symbols)}%)")
+            sys.stdout.flush()
     conn.execute("CHECKPOINT")
     t = round(time.monotonic() - t0, 3)
     _perf_probes.setdefault("upsert_symbols_s", t)
@@ -190,7 +192,8 @@ def upsert_indexstore_rels(
                 conn.execute("CHECKPOINT")
     conn.execute("CHECKPOINT")
     if _progress:
-        print(f"  struct: {count} edges", end="\r")
+        sys.stdout.write(f"\r  struct: {count} edges")
+        sys.stdout.flush()
     t = round(time.monotonic() - t0, 3)
     _perf_probes["upsert_struct_s"] = t
     _perf_probes["upsert_struct_n"] = count
@@ -231,7 +234,8 @@ def upsert_calls(
         if i % (10 * _EDGE_BATCH_SIZE) == 0:
             conn.execute("CHECKPOINT")
         if _progress:
-            print(f"  calls: {count}/{len(called)} ({count*100//len(called)}%)", end="\r")
+            sys.stdout.write(f"\r  calls: {count}/{len(called)} ({count*100//len(called)}%)")
+            sys.stdout.flush()
     conn.execute("CHECKPOINT")
     t = round(time.monotonic() - t0, 3)
     _perf_probes["upsert_calls_s"] = t
