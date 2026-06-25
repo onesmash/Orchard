@@ -35,8 +35,8 @@ def make_symbol_id(target_id: str, usr: str) -> str:
     return f"{target_id}:{usr}"
 
 
-_SYMBOL_BATCH_SIZE = 1000
-_EDGE_BATCH_SIZE = 1000
+_SYMBOL_BATCH_SIZE = 2000
+_EDGE_BATCH_SIZE = 200
 
 
 def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
@@ -76,8 +76,6 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
             {"rows": rows, "tid": target_id},
         )
         count += len(batch)
-        if i % (5 * _SYMBOL_BATCH_SIZE) == 0:
-            conn.execute("CHECKPOINT")
         if _progress:
             sys.stdout.write(f"\r  symbols: {count}/{len(symbols)} ({count*100//len(symbols)}%)")
             sys.stdout.flush()
@@ -188,8 +186,6 @@ def upsert_indexstore_rels(
                 {"rows": rows, "src": source},
             )
             count += len(batch)
-            if i % (10 * _EDGE_BATCH_SIZE) == 0:
-                conn.execute("CHECKPOINT")
     conn.execute("CHECKPOINT")
     if _progress:
         sys.stdout.write(f"\r  struct: {count} edges")
@@ -226,13 +222,11 @@ def upsert_calls(
         conn.execute(
             "UNWIND $rows AS r "
             "MATCH (a:Symbol {id: r.c}), (b:Symbol {id: r.d}) "
-            "MERGE (a)-[:Calls {source: $src, confidence: 1.0, "
+            "CREATE (a)-[:Calls {source: $src, confidence: 1.0, "
             "provenance: 'indexstore', build_id: $bid}]->(b)",
             {"rows": rows, "src": source, "bid": build_id},
         )
         count += len(batch)
-        if i % (10 * _EDGE_BATCH_SIZE) == 0:
-            conn.execute("CHECKPOINT")
         if _progress:
             sys.stdout.write(f"\r  calls: {count}/{len(called)} ({count*100//len(called)}%)")
             sys.stdout.flush()
