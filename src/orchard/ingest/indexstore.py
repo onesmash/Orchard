@@ -1,6 +1,7 @@
 import json
 import subprocess
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,6 +38,7 @@ class IndexStoreResult:
     relations: list[RelationRecord] = field(default_factory=list)
     symbols: list[SymbolLineRecord] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    elapsed_s: float = 0.0
 
 
 def _cli_path() -> str:
@@ -69,6 +71,7 @@ def _run_cli(index_store_path: str, source_root: str | None = None):
 def read_index_store(
     index_store_path: str, target_id: str, source_root: str | None = None
 ) -> IndexStoreResult:
+    t0 = time.monotonic()
     result = IndexStoreResult()
     for line in _run_cli(index_store_path, source_root=source_root):
         line = line.strip()
@@ -101,4 +104,5 @@ def read_index_store(
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             snippet = line[:80] + ("..." if len(line) > 80 else "")
             result.warnings.append(f"invalid JSONL line ({exc}): {snippet}")
+    result.elapsed_s = round(time.monotonic() - t0, 3)
     return result

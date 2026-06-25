@@ -7,11 +7,20 @@ for symbols, relationships, and build snapshots.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 from orchard.ingest.symbolgraph import SymbolRecord, SymbolRelRecord
 from orchard.ingest.indexstore import RelationRecord
 from orchard.build.context import BuildContext
+
+# Performance probes — module-level dict populated by the upsert functions.
+# Keys: "upsert_symbols_s"/"_n", "upsert_calls_s"/"_n", "upsert_struct_s"/"_n".
+_perf_probes: dict[str, float] = {}
+
+
+def get_perf_probes() -> dict[str, float]:
+    return dict(_perf_probes)
 
 
 def make_symbol_id(target_id: str, usr: str) -> str:
@@ -29,6 +38,7 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
     Uses UNWIND batching for large symbol lists — one Cypher query per
     ``_SYMBOL_BATCH_SIZE`` rows, avoiding per-symbol round-trips.
     """
+    t0 = time.monotonic()
     count = 0
     for i in range(0, len(symbols), _SYMBOL_BATCH_SIZE):
         batch = symbols[i : i + _SYMBOL_BATCH_SIZE]
@@ -59,6 +69,9 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
             {"rows": rows, "tid": target_id},
         )
         count += len(batch)
+    t = round(time.monotonic() - t0, 3)
+    _perf_probes.setdefault("upsert_symbols_s", t)
+    _perf_probes.setdefault("upsert_symbols_n", count)
     return count
 
 
@@ -139,6 +152,7 @@ def upsert_indexstore_rels(
     ``_INDEXSTORE_REL_TO_TABLE``).  Roles without a mapping are silently
     skipped.  Batched per role type for efficient UNWIND queries.
     """
+    t0 = time.monotonic()
     count = 0
     # Group by target table to emit one UNWIND query per role.
     by_table: dict[str, list[tuple[str, str]]] = {}
@@ -161,6 +175,9 @@ def upsert_indexstore_rels(
                 {"rows": rows, "src": source},
             )
             count += len(batch)
+    t = round(time.monotonic() - t0, 3)
+    _perf_probes["upsert_struct_s"] = t
+    _perf_probes["upsert_struct_n"] = count
     return count
 
 
@@ -177,6 +194,7 @@ def upsert_calls(
     ``to_usr`` calls ``from_usr``. The CALLER is therefore ``to_usr`` and the
     CALLEE is ``from_usr``. Edge written: ``Calls(caller=to_usr, callee=from_usr)``.
     """
+    t0 = time.monotonic()
     called = [(r.to_usr, r.from_usr) for r in relations if r.role == "calledBy"]
     count = 0
     for i in range(0, len(called), _EDGE_BATCH_SIZE):
@@ -194,6 +212,9 @@ def upsert_calls(
             {"rows": rows, "src": source, "bid": build_id},
         )
         count += len(batch)
+    t = round(time.monotonic() - t0, 3)
+    _perf_probes["upsert_calls_s"] = t
+    _perf_probes["upsert_calls_n"] = count
     return count
 
 
