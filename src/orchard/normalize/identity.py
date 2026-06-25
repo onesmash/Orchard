@@ -19,51 +19,46 @@ def make_symbol_id(target_id: str, usr: str) -> str:
     return f"{target_id}:{usr}"
 
 
+_SYMBOL_BATCH_SIZE = 5000
+_EDGE_BATCH_SIZE = 5000
+
+
 def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
     """Upsert Symbol nodes into the graph for the given target.
 
-    Parameters
-    ----------
-    conn:
-        An open Ladybug connection.
-    symbols:
-        List of SymbolRecord objects to write.
-    target_id:
-        The build target identifier used to namespace symbol IDs.
-
-    Returns
-    -------
-    int
-        Number of symbols processed.
+    Uses UNWIND batching for large symbol lists — one Cypher query per
+    ``_SYMBOL_BATCH_SIZE`` rows, avoiding per-symbol round-trips.
     """
     count = 0
-    for sym in symbols:
-        sid = make_symbol_id(target_id, sym.usr)
-        conn.execute(
-            "MERGE (s:Symbol {id: $id}) "
-            "SET s.usr = $usr, s.precise_id = $precise_id, s.name = $name, "
-            "s.language = $language, s.kind = $kind, s.module = $module, "
-            "s.target_id = $target_id, s.file_path = $file_path, "
-            "s.signature = $signature, s.container_usr = $container_usr, "
-            "s.access_level = $access_level, s.origin = $origin, "
-            "s.is_generated = false",
+    for i in range(0, len(symbols), _SYMBOL_BATCH_SIZE):
+        batch = symbols[i : i + _SYMBOL_BATCH_SIZE]
+        rows = [
             {
-                "id": sid,
-                "usr": sym.usr,
-                "precise_id": sym.precise_id or "",
-                "name": sym.name,
-                "language": sym.language,
-                "kind": sym.kind,
-                "module": sym.module,
-                "target_id": target_id,
-                "file_path": sym.file_path or "",
-                "signature": sym.signature or "",
-                "container_usr": sym.container_usr or "",
-                "access_level": sym.access_level,
-                "origin": "swift_symbolgraph",
-            },
+                "id": make_symbol_id(target_id, s.usr),
+                "usr": s.usr,
+                "precise": s.precise_id or "",
+                "name": s.name,
+                "lang": s.language,
+                "kind": s.kind,
+                "mod": s.module,
+                "file": s.file_path or "",
+                "sig": s.signature or "",
+                "container": s.container_usr or "",
+                "access": s.access_level,
+            }
+            for s in batch
+        ]
+        conn.execute(
+            "UNWIND $rows AS r "
+            "MERGE (s:Symbol {id: r.id}) "
+            "SET s.usr=r.usr, s.precise_id=r.precise, s.name=r.name, "
+            "s.language=r.lang, s.kind=r.kind, s.module=r.mod, "
+            "s.target_id=$tid, s.file_path=r.file, s.signature=r.sig, "
+            "s.container_usr=r.container, s.access_level=r.access, "
+            "s.origin='swift_symbolgraph', s.is_generated=false",
+            {"rows": rows, "tid": target_id},
         )
-        count += 1
+        count += len(batch)
     return count
 
 
@@ -138,31 +133,34 @@ def upsert_indexstore_rels(
     source: str,
     build_id: str,
 ) -> int:
-    """Upsert IndexStore structural relation edges into the graph.
+    """Upsert IndexStore structural relation edges — batched via UNWIND.
 
-    Maps IndexStore relation roles (``baseOf``, ``overrideOf``, ``childOf``,
-    ``containedBy``, ``extendedBy``) to their corresponding Ladybug relation
-    tables (``Inherits``, ``Implements``, ``Declares``).  Only roles with a
-    known mapping are written; others are silently skipped.
-
-    Direction for inherited-by/overridden-by roles:
-      ``from_usr`` is the subject (derived / overrider),
-      ``to_usr`` is the related symbol (base / overridden).
-      E.g. ``baseOf(from=A, to=B)`` → A derives from B → ``Inherits(A → B)``.
+    Maps IndexStore relation roles to Ladybug table names (see
+    ``_INDEXSTORE_REL_TO_TABLE``).  Roles without a mapping are silently
+    skipped.  Batched per role type for efficient UNWIND queries.
     """
     count = 0
+    # Group by target table to emit one UNWIND query per role.
+    by_table: dict[str, list[tuple[str, str]]] = {}
     for rel in rels:
         table = _INDEXSTORE_REL_TO_TABLE.get(rel.role)
         if table is None:
             continue
-        src_id = make_symbol_id(target_id, rel.from_usr)
-        tgt_id = make_symbol_id(target_id, rel.to_usr)
-        conn.execute(
-            f"MATCH (a:Symbol {{id: $src}}), (b:Symbol {{id: $tgt}}) "
-            f"MERGE (a)-[:{table} {{source: $source}}]->(b)",
-            {"src": src_id, "tgt": tgt_id, "source": source},
+        by_table.setdefault(table, []).append(
+            (make_symbol_id(target_id, rel.from_usr),
+             make_symbol_id(target_id, rel.to_usr))
         )
-        count += 1
+    for table, pairs in by_table.items():
+        for i in range(0, len(pairs), _EDGE_BATCH_SIZE):
+            batch = pairs[i : i + _EDGE_BATCH_SIZE]
+            rows = [{"s": s, "t": t} for s, t in batch]
+            conn.execute(
+                f"UNWIND $rows AS r "
+                f"MATCH (a:Symbol {{id: r.s}}), (b:Symbol {{id: r.t}}) "
+                f"MERGE (a)-[:{table} {{source: $src}}]->(b)",
+                {"rows": rows, "src": source},
+            )
+            count += len(batch)
     return count
 
 
@@ -173,29 +171,29 @@ def upsert_calls(
     source: str,
     build_id: str,
 ) -> int:
-    """Upsert Calls edges from IndexStore relations.
+    """Upsert Calls edges from IndexStore relations — batched via UNWIND.
 
     IndexStore role 'calledBy': ``from_usr`` is called by ``to_usr``, i.e.
     ``to_usr`` calls ``from_usr``. The CALLER is therefore ``to_usr`` and the
     CALLEE is ``from_usr``. Edge written: ``Calls(caller=to_usr, callee=from_usr)``.
-
-    Roles other than ``calledBy`` are silently skipped. Only edges whose
-    endpoints already exist as Symbol nodes are written (MATCH-then-MERGE);
-    missing endpoints are silently dropped, consistent with ``upsert_symbol_rels``.
     """
+    called = [(r.to_usr, r.from_usr) for r in relations if r.role == "calledBy"]
     count = 0
-    for rel in relations:
-        if rel.role != "calledBy":
-            continue
-        caller_id = make_symbol_id(target_id, rel.to_usr)
-        callee_id = make_symbol_id(target_id, rel.from_usr)
+    for i in range(0, len(called), _EDGE_BATCH_SIZE):
+        batch = called[i : i + _EDGE_BATCH_SIZE]
+        rows = [
+            {"c": make_symbol_id(target_id, to_u),
+             "d": make_symbol_id(target_id, fm_u)}
+            for to_u, fm_u in batch
+        ]
         conn.execute(
-            "MATCH (caller:Symbol {id: $caller}), (callee:Symbol {id: $callee}) "
-            "MERGE (caller)-[:Calls {source: $source, build_id: $build_id}]->(callee)",
-            {"caller": caller_id, "callee": callee_id,
-             "source": source, "build_id": build_id},
+            "UNWIND $rows AS r "
+            "MATCH (a:Symbol {id: r.c}), (b:Symbol {id: r.d}) "
+            "MERGE (a)-[:Calls {source: $src, confidence: 1.0, "
+            "provenance: 'indexstore', build_id: $bid}]->(b)",
+            {"rows": rows, "src": source, "bid": build_id},
         )
-        count += 1
+        count += len(batch)
     return count
 
 
