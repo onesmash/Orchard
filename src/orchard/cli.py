@@ -96,7 +96,7 @@ def cmd_ingest(args: list[str]):
     from orchard.ingest.symbolgraph import SymbolRecord
     from orchard.pipeline.runner import _map_indexstore_kind
     from pathlib import Path
-    from orchard.build.xcode_settings import find_xcode_project, match_derived_data
+    from orchard.build.xcode_settings import find_xcode_project, match_derived_data, get_derived_data_path
 
     index_store = ns.index_store
     source_root = ns.source_root or None
@@ -110,8 +110,14 @@ def cmd_ingest(args: list[str]):
             sys.exit(2)
         candidates = match_derived_data(project)
         if not candidates:
-            print(f"error: no DerivedData found for project '{project}'. "
-                  "Run an Xcode build first or pass --index-store.", file=sys.stderr)
+            project_name = Path(project).stem
+            dd_root = get_derived_data_path() or "~/Library/Developer/Xcode/DerivedData"
+            print(f"error: no DerivedData found for project '{project}'.", file=sys.stderr)
+            print(f"  Looked in:   {dd_root}", file=sys.stderr)
+            print(f"  Pattern:     {project_name}-*/Index.noindex/DataStore", file=sys.stderr)
+            print(f"  Checked:     info.plist WorkspacePath == '{project}'", file=sys.stderr)
+            print(f"  Hint: Run an Xcode build (Cmd+B) on this project first,", file=sys.stderr)
+            print(f"        or pass --index-store <path> to skip auto-detection.", file=sys.stderr)
             sys.exit(2)
         # Use the most recently accessed candidate.
         dd_dir, index_store, _ = candidates[0]

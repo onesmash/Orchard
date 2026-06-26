@@ -30,28 +30,69 @@ def get_derived_data_path() -> str:
     return os.path.expanduser("~/Library/Developer/Xcode/DerivedData")
 
 
+def _search_xcode_projects(root: Path, max_depth: int = 5) -> list[str]:
+    """Return matching ``.xcworkspace``/``.xcodeproj`` paths under *root*.
+
+    Uses iterative BFS so we return early when a match is found, avoiding
+    a full-tree walk on large directories.
+    """
+    from collections import deque
+    results: list[str] = []
+    visited: set[str] = {str(root)}
+    queue: deque[tuple[Path, int]] = deque([(root, 0)])
+    while queue:
+        directory, depth = queue.popleft()
+        if depth >= max_depth:
+            continue
+        try:
+            entries = list(directory.iterdir())
+        except (OSError, PermissionError):
+            continue
+        for entry in entries:
+            key = str(entry)
+            if key in visited:
+                continue
+            visited.add(key)
+            if entry.is_dir():
+                if entry.name.startswith("."):
+                    continue
+                if entry.suffix in (".xcworkspace", ".xcodeproj"):
+                    results.append(str(entry))
+                else:
+                    queue.append((entry, depth + 1))
+        if results and depth >= 1:
+            break  # found something, stop searching deeper
+    return results
+
+
 def find_xcode_project(cwd: str | None = None) -> str | None:
     """Walk up from *cwd* to find a ``.xcworkspace`` or ``.xcodeproj``.
 
-    Searches within cwd and up to 3 ancestors, max 5 levels deep.
-    Prefers matches closer to cwd.  Returns the absolute path, or None.
+    Searches within cwd and up to 3 ancestors using iterative BFS (max 5
+    levels deep).  Prefers matches closer to cwd.  Returns the absolute
+    path, or None.
     """
     cwd = Path(cwd or os.getcwd()).resolve()
-    candidates: list[tuple[float, str]] = []  # (depth_score, path)
-    for depth, directory in enumerate([cwd, *cwd.parents][:4]):
-        for suffix in (".xcworkspace", ".xcodeproj"):
-            for entry in directory.glob(f"**/*{suffix}"):
-                if not entry.is_dir() or entry.name.startswith("."):
-                    continue
-                try:
-                    rel_depth = len(entry.relative_to(directory).parts)
-                except ValueError:
-                    continue
-                if rel_depth > 5:
-                    continue
-                # Score: closer ancestors × 100 + rel_depth (lower = closer)
-                score = depth * 100 + rel_depth
-                candidates.append((score, str(entry)))
+    home = Path.home()
+    ancestors = [cwd]
+    for p in cwd.parents:
+        if not str(p).startswith(str(home) + os.sep) and p != home:
+            break
+        ancestors.append(p)
+        if len(ancestors) >= 4:
+            break
+    candidates: list[tuple[int, str]] = []  # (score, path)
+    for depth, directory in enumerate(ancestors):
+        found = _search_xcode_projects(directory, max_depth=5)
+        if not found and depth > 0:
+            continue  # no xcode project under this ancestor
+        for entry in found:
+            try:
+                rel_depth = len(Path(entry).relative_to(directory).parts)
+            except ValueError:
+                rel_depth = 99
+            score = depth * 100 + rel_depth
+            candidates.append((score, entry))
     if not candidates:
         return None
     candidates.sort(key=lambda x: x[0])
