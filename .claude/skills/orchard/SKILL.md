@@ -8,96 +8,129 @@ description: >
   does Y depend on", or wants to understand how iOS / macOS components
   relate to each other. Also use it when the user mentions "orchard"
   directly, or asks for a graph-based view of their Objective-C / Swift
-  codebase. The skill works against a pre-built Ladybug graph database
-  produced by the orchard ingest pipeline from Apple IndexStore data.
+  codebase. The skill works against a per-project graph database at
+  ``<project>/.orchard/graph.db`` built from Apple IndexStore data.
 ---
 
 # Orchard — Semantic Graph CLI
 
-The `orchard` CLI queries a pre-built semantic code graph (Ladybug/KuzuDB)
-containing symbols, call edges, and structural relationships (Contains,
-Inherits, Implements, Extends) extracted from Apple IndexStore data.
+The `orchard` CLI queries a semantic code graph (Ladybug/KuzuDB) built from
+Xcode IndexStore data.  The database lives at ``<project>/.orchard/graph.db``
+(GitNexus convention) and is auto-discovered by walking up from the current
+directory.
 
 ## Quick check
 
 Always verify the CLI responds before running queries:
 
 ```bash
-uv run orchard --help
+uv run --directory /path/to/orchard2 orchard --help
 ```
 
-The default database is `/tmp/orchard-final/graph.db` (Zoom iOS full build,
-~228k symbols). Override with `--db <path>` on every command.
+If orchard is installed globally (`uv tool install -e .`), omit
+`--directory`:
+
+```bash
+orchard --help
+```
+
+## Ingest — building the graph
+
+The ingest command auto-detects the IndexStore from an Xcode project:
+
+```bash
+# Zero-parameter: auto-detects everything from project directory
+orchard ingest --project-dir /path/to/Zoom_Client
+
+# What it does:
+# 1. Finds .xcworkspace/.xcodeproj → derives target name
+# 2. Matches DerivedData via info.plist WorkspacePath
+# 3. Auto-discovers IndexStore path
+# 4. Defaults source-root to project directory
+# 5. Writes DB to <project>/.orchard/graph.db
+
+# Manual override (compatible with old workflow):
+orchard ingest --index-store /path/to/Index.noindex/DataStore --db /path/to/graph.db
+```
+
+After ingest, the DB is at ``<project>/.orchard/graph.db`` and queries from
+any subdirectory automatically find it.
+
+## DB discovery
+
+Commands find the database automatically with this priority:
+
+1. `--db <path>` flag
+2. `ORCHARD_DB_PATH` environment variable
+3. Walk up from cwd → first `.orchard/graph.db` found (project-level)
+4. `~/.orchard/graph.db` (global fallback)
+
+This means you **rarely need `--db`** — just run queries from anywhere under
+the project.
 
 ## Finding symbols (search)
 
 Every query needs a USR (Unified Symbol Resolution string). Find USRs with
-the `search` command before running other queries:
+the `search` command:
 
 ```bash
-uv run orchard search --name "<regex>" [--target <Module>] [--kind <kind>] \
-  [--language <swift|objc|c>] [--limit 20] [--db <path>]
+orchard search --name "<text>" [--target <Module>] [--kind <kind>] \
+  [--language <swift|objc|c>] [--limit 20]
 ```
 
-The `--name` flag takes a case-sensitive Cypher regex. Common patterns:
+The `--name` flag does **substring matching by default** — `--name "viewDidLoad"`
+matches any symbol whose name contains "viewDidLoad".  For regex matching,
+use Cypher syntax explicitly:
 
+- Substring (default): `--name "release"` → auto-wraps to `.*release.*`
 - Exact match: `--name "^viewDidLoad$"`
 - Prefix match: `--name "^ZMZoom.*"`
-- Substring: `--name "release"`
-- Swift symbol: `--name "init\\("`
 
 Filters help narrow large result sets:
-
-- `--kind method` — only methods
-- `--kind class` — only classes
-- `--language swift` — only Swift symbols
-- `--target Zoom` — only symbols in the Zoom module
+- `--kind method` / `--kind class` / `--kind protocol`
+- `--language swift` / `--language objc`
+- `--target Zoom`
 
 Present the top matches to the user when there are multiple candidates.
-If the user's description is ambiguous, run search and ask which symbol
-they meant before running deeper queries.
+If ambiguous, ask which symbol they meant before running deeper queries.
 
 ## Query commands
 
 ### find_callers — Who calls this symbol?
 
 ```bash
-uv run orchard find_callers --usr "<USR>" --target <Module> [--db <path>]
+orchard find_callers --usr "<USR>" --target <Module>
 ```
 
-Returns a JSON array of caller objects, each with `usr`, `name`, `module`,
-`kind`, `language`, and `owner` (the containing class/struct/extension).
-
-Present results as a table or grouped list. If a symbol has many callers,
-highlight the most interesting ones (e.g. different modules, UI entry
-points).
+Returns caller objects with `usr`, `name`, `module`, `kind`, `language`,
+and `owner` (containing class/struct/extension).  Present as a table.
 
 ### find_callees — What does this symbol call?
 
 ```bash
-uv run orchard find_callees --usr "<USR>" --target <Module> [--db <path>]
+orchard find_callees --usr "<USR>" --target <Module>
 ```
 
-Returns a JSON array of callee objects. Useful for understanding what a
-function depends on internally.
-
-### impact — Blast-radius analysis
+### impact — Blast-radius analysis (includes subtype closure + freshness)
 
 ```bash
-uv run orchard impact --usr "<USR>" --target <Module> [--db <path>]
+orchard impact --usr "<USR>" --target <Module>
 ```
 
-Returns dependents grouped by depth and a risk level. This answers "what
-breaks if I change this symbol?".
+Returns dependents grouped by depth and a risk level.  Now includes:
+- **Subtype conformers** via Inherits/ConformsTo/Extends/Implements closure
+- **Freshness annotations** in `open_gaps` when index may be stale
 
 **Depth groups:**
+
 | Depth | Meaning |
 |-------|---------|
-| `d1` | WILL BREAK — direct callers, subclasses, protocol conformers |
+| `d1` | WILL BREAK — direct callers, subtypes, protocol conformers |
 | `d2` | LIKELY AFFECTED — callers of callers |
 | `d3+` | MAY NEED TESTING — transitive dependents |
 
 **Risk levels:**
+
 | Level | Condition |
 |-------|-----------|
 | `critical` | Graph index is stale — re-ingest before trusting results |
@@ -112,49 +145,62 @@ re-running `orchard ingest` first.
 ### symbol — Metadata for a single symbol
 
 ```bash
-uv run orchard symbol --usr "<USR>" --target <Module> [--db <path>]
+orchard symbol --usr "<USR>" --target <Module>
 ```
-
-Returns `name`, `language`, `kind`, `module`, `file_path`, `signature`,
-`access_level`. Use this to confirm you have the right USR before running
-impact or callers queries.
 
 ### hierarchy — Type hierarchy
 
 ```bash
-uv run orchard hierarchy --usr "<USR>" --target <Module> [--db <path>]
+orchard hierarchy --usr "<USR>" --target <Module>
 ```
-
-Returns superclasses, protocols, and subclasses/conformers. Use this to
-understand where a class sits in the inheritance tree.
 
 ### stats — Database overview
 
 ```bash
-uv run orchard stats [--db <path>]
+orchard stats
 ```
 
 Shows counts: Symbol, Calls, Contains, Inherits, Implements, Extends.
-Run this first if the user asks "how big is the graph?" or "what's in the
-database?".
 
-## Typical workflow
+## Pipe mode — batch queries in one process
+
+**Prefer pipe when running 3+ queries.** One DB connection, no cold start.
+
+```bash
+echo '{"cmd":"search","args":{"name":"viewDidLoad","limit":5}}
+{"cmd":"find_callers","args":{"usr":"<USR>","target_id":"Zoom"}}
+{"cmd":"impact","args":{"usr":"<USR>","target_id":"Zoom"}}' \
+  | orchard pipe
+```
+
+Each output line: `{"cmd":"...", "ok":true, "data":{...}}`.
+
+## MCP server — zero-latency for Claude Code
+
+When the MCP server is configured (`.claude/mcp.json`), all orchard tools
+are available as MCP tools with **session-scoped DB connection** (~21ms
+per call vs ~170ms CLI cold start).  The skill should prefer MCP tools
+when available; fall back to CLI pipe for batch queries.
+
+## Typical workflow for a user question
 
 1. **Search** for the symbol by name:
    ```bash
-   uv run orchard search --name "<user's description>" --db /tmp/orchard-final/graph.db
+   orchard search --name "<user's description>"
    ```
 2. **Confirm** the USR with the user (show top matches, let them pick).
 3. **Look up** symbol metadata:
    ```bash
-   uv run orchard symbol --usr "<chosen USR>" --target <Module> --db /tmp/orchard-final/graph.db
+   orchard symbol --usr "<chosen USR>" --target <Module>
    ```
 4. **Run the requested query** (callers, callees, impact, hierarchy).
+   When 3+ queries are needed, use **pipe mode**.
 5. **Synthesize** results into a human-readable summary. Highlight:
-   - How many dependents at each depth
+   - How many dependents at each depth (d1 = WILL BREAK)
    - Risk level and what it means
+   - Subtype closure results (protocol conformers, subclasses)
+   - Freshness warnings from `open_gaps`
    - Cross-language bridges (ObjC ↔ Swift callers)
-   - Any surprising or high-impact findings
 
 ## Interpreting USR formats
 
@@ -165,21 +211,20 @@ database?".
 | ObjC class method | `c:objc(cs)ZMMeetingViewController(cm)sharedInstance` |
 | Swift symbol | `s:So17OS_dispatch_queueC8DispatchE5label3qos:...` |
 | C function | `c:@F@_Block_release` |
-| C macro | `c:@macro@Block_release` |
 
 Swift USRs are mangled. The `search` command works regardless of language
 — always search by human-readable name, not USR.
 
 ## Important constraints
 
-- **Read-only**: The CLI only queries the graph, it never modifies it.
-  To rebuild the graph, the user must run `orchard ingest` separately.
+- **Read-only**: The CLI only queries the graph, never modifies it.
+  To rebuild, the user must run `orchard ingest --project-dir <path>`.
 - **Stale data warning**: If `impact` returns risk `critical`, the graph
-  index is out of date. Tell the user they should re-ingest before making
-  changes based on stale data.
+  index is out of date. Suggest re-running `orchard ingest`.
+- **DB discovery**: No `--db` needed — walks up from cwd to find
+  `.orchard/graph.db`. Override with `--db` if needed.
 - **Dynamic dispatch**: ObjC `release`/`retain`/`alloc`-style selectors
   may have duplicate callers due to IndexStore's dynamic dispatch
-  limitations. Mention this when results look inflated for ObjC methods.
-- **Filtered scope**: The graph was built with a `--source-root` filter,
-  so SDK/system symbols (UIKit, Foundation, etc.) are typically absent
-  unless they were compiled as part of the target.
+  limitations.
+- **Schema migration**: Existing databases are auto-migrated on first
+  `init_schema()` call (ALTER TABLE ADD with duplicate detection).
