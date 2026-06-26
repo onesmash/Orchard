@@ -98,8 +98,8 @@ def cmd_ingest(args: list[str]):
                     help="Xcode project directory for auto-detection (default: cwd)")
     ap.add_argument("--source-root", default="",
                     help="Only emit symbols under this directory")
-    ap.add_argument("--target", default="Zoom",
-                    help="Build target identifier")
+    ap.add_argument("--target", default="",
+                    help="Build target identifier (auto-detected from project name)")
     ap.add_argument("--db", default="",
                     help="Graph database path (default: <project>/.orchard/graph.db)")
     ns = ap.parse_args(args)
@@ -138,7 +138,7 @@ def cmd_ingest(args: list[str]):
             sys.exit(2)
         # Use the most recently accessed candidate.
         dd_dir, index_store, _ = candidates[0]
-        target = ns.target if ns.target != "Zoom" else Path(project).stem
+        target = ns.target or Path(project).stem  # auto-detect from project name
         if not source_root:
             source_root = ns.project_dir  # project root from user's --project-dir
         print(f"auto-detected: --index-store {index_store}")
@@ -209,9 +209,9 @@ def cmd_pipe(args: list[str]):
 
     Example stdin::
 
-        {"cmd":"search","args":{"name":"initWithProvider","target":"Zoom"}}
-        {"cmd":"find_callers","args":{"usr":"c:objc...(im)initWithProvider:","target_id":"Zoom"}}
-        {"cmd":"find_callees","args":{"usr":"c:objc...(im)initWithProvider:","target_id":"Zoom"}}
+        {"cmd":"search","args":{"name":"initWithProvider","target":"YourModule"}}
+        {"cmd":"find_callers","args":{"usr":"c:objc...(im)initWithProvider:","target_id":"YourModule"}}
+        {"cmd":"find_callees","args":{"usr":"c:objc...(im)initWithProvider:","target_id":"YourModule"}}
 
     Results are written as JSONL to stdout (one line per input).
     Errors are caught per-line — one bad query won't kill the session.

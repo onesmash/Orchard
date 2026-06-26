@@ -62,7 +62,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Substring to search for in symbol names (case-sensitive)"},
-                "target": {"type": "string", "description": "Filter by module/target name (e.g. 'Zoom')"},
+                "target": {"type": "string", "description": "Filter by module/target name (e.g. TheModuleName)"},
                 "kind": {"type": "string", "description": "Filter by symbol kind (class, method, function, etc.)"},
                 "language": {"type": "string", "description": "Filter by language (swift, objc, c)"},
                 "limit": {"type": "integer", "description": "Max results (default 20)"},
@@ -77,7 +77,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR (Unified Symbol Resolution) of the target symbol"},
-                "target_id": {"type": "string", "description": "Build target for disambiguation (e.g. 'Zoom')"},
+                "target_id": {"type": "string", "description": "Build target for disambiguation (e.g. TheModuleName)"},
             },
             "required": ["usr", "target_id"],
         },
@@ -89,7 +89,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the source symbol"},
-                "target_id": {"type": "string", "description": "Build target (e.g. 'Zoom')"},
+                "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
             },
             "required": ["usr", "target_id"],
         },
@@ -101,7 +101,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol to analyze"},
-                "target_id": {"type": "string", "description": "Build target (e.g. 'Zoom')"},
+                "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
                 "max_depth": {"type": "integer", "description": "Max traversal depth (default 5)"},
             },
             "required": ["usr", "target_id"],
@@ -114,7 +114,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol"},
-                "target_id": {"type": "string", "description": "Build target (e.g. 'Zoom')"},
+                "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
             },
             "required": ["usr", "target_id"],
         },
@@ -126,7 +126,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol"},
-                "target_id": {"type": "string", "description": "Build target (e.g. 'Zoom')"},
+                "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
             },
             "required": ["usr", "target_id"],
         },
