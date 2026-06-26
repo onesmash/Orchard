@@ -40,7 +40,7 @@ The ingest command auto-detects the IndexStore from an Xcode project:
 
 ```bash
 # Zero-parameter: auto-detects everything from project directory
-orchard ingest --project-dir /path/to/Zoom_Client
+orchard ingest --project-dir /path/to/YourProject
 
 # What it does:
 # 1. Finds .xcworkspace/.xcodeproj → derives target name
@@ -84,12 +84,12 @@ use Cypher syntax explicitly:
 
 - Substring (default): `--name "release"` → auto-wraps to `.*release.*`
 - Exact match: `--name "^viewDidLoad$"`
-- Prefix match: `--name "^ZMZoom.*"`
+- Prefix match: `--name "^MyClass.*"`
 
 Filters help narrow large result sets:
 - `--kind method` / `--kind class` / `--kind protocol`
 - `--language swift` / `--language objc`
-- `--target Zoom`
+- `--target <Module>` — only symbols in that module
 
 Present the top matches to the user when there are multiple candidates.
 If ambiguous, ask which symbol they meant before running deeper queries.
@@ -168,8 +168,8 @@ Shows counts: Symbol, Calls, Contains, Inherits, Implements, Extends.
 
 ```bash
 echo '{"cmd":"search","args":{"name":"viewDidLoad","limit":5}}
-{"cmd":"find_callers","args":{"usr":"<USR>","target_id":"Zoom"}}
-{"cmd":"impact","args":{"usr":"<USR>","target_id":"Zoom"}}' \
+{"cmd":"find_callers","args":{"usr":"<USR>","target_id":"<Module>"}}
+{"cmd":"impact","args":{"usr":"<USR>","target_id":"<Module>"}}' \
   | orchard pipe
 ```
 
@@ -206,9 +206,9 @@ when available; fall back to CLI pipe for batch queries.
 
 | Format | Example |
 |--------|---------|
-| ObjC class | `c:objc(cs)ZMMeetingViewController` |
-| ObjC instance method | `c:objc(cs)ZMMeetingViewController(im)viewDidLoad` |
-| ObjC class method | `c:objc(cs)ZMMeetingViewController(cm)sharedInstance` |
+| ObjC class | `c:objc(cs)MyViewController` |
+| ObjC instance method | `c:objc(cs)MyViewController(im)viewDidLoad` |
+| ObjC class method | `c:objc(cs)MyViewController(cm)sharedInstance` |
 | Swift symbol | `s:So17OS_dispatch_queueC8DispatchE5label3qos:...` |
 | C function | `c:@F@_Block_release` |
 
