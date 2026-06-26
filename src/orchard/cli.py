@@ -8,6 +8,7 @@ Usage::
     orchard symbol  --usi s:myFunc --target MyTarget
     orchard hierarchy --usi s:myFunc --target MyTarget
     orchard ingest  --index-store <path> [--source-root <dir>]
+    orchard setup   --mcp | --skill | --model   # one-shot configuration
 """
 from __future__ import annotations
 
@@ -150,11 +151,17 @@ def cmd_ingest(args: list[str]):
                     help="Build target identifier (auto-detected from project name)")
     ap.add_argument("--db", default="",
                     help="Graph database path (default: <project>/.orchard/graph.db)")
+    ap.add_argument("--incremental", action="store_true",
+                    help="Only ingest files changed since last ingest")
     ns = ap.parse_args(args)
-    from orchard.ingest.indexstore import read_index_store
-    from orchard.normalize.identity import upsert_symbols, upsert_calls, upsert_indexstore_rels
+    from orchard.ingest.indexstore import read_index_store, _unit_dir_mtime
+    from orchard.normalize.identity import (
+        upsert_symbols, upsert_calls, upsert_indexstore_rels,
+        delete_symbols_for_files,
+    )
     from orchard.ingest.symbolgraph import SymbolRecord
     from orchard.pipeline.runner import _map_indexstore_kind
+    from orchard.ingest.state import load_state, save_state, touch_timestamp
     from pathlib import Path
     from orchard.build.xcode_settings import find_xcode_project, match_derived_data, get_derived_data_path
 
@@ -183,11 +190,11 @@ def cmd_ingest(args: list[str]):
             ns.db = str(Path(project).parent / ".orchard" / "graph.db")
         # Use the most recently accessed candidate.
         dd_dir, index_store, _ = candidates[0]
-        target = ns.target or Path(project).stem  # auto-detect from project name
+        ns.target = ns.target or Path(project).stem  # auto-detect from project name
         if not source_root:
             source_root = str(Path(ns.project_dir).resolve())
         print(f"auto-detected: --index-store {index_store}")
-        print(f"auto-detected: --target {target}")
+        print(f"auto-detected: --target {ns.target}")
         if source_root:
             print(f"auto-detected: --source-root {source_root}")
         if len(candidates) > 1:
@@ -198,9 +205,54 @@ def cmd_ingest(args: list[str]):
         ns.db = str(Path(ns.project_dir) / ".orchard" / "graph.db")
 
     conn = _conn(ns.db)
+    project_dir = str(Path(ns.project_dir).resolve())
+
+    # Resolve incremental mode.
+    incremental_since: float | None = None
+    old_state: dict | None = None
+    if ns.incremental:
+        old_state = load_state(project_dir)
+        if old_state:
+            incremental_since = old_state.get("last_ingest_ts")
+            print(f"incremental: last ingest was {incremental_since}")
+        else:
+            print("incremental: no previous state found, falling back to full ingest")
+
+    # L1: target-level fast path — if no unit files changed since last ingest,
+    # skip the entire CLI scan (~100ms vs ~90s).
+    if ns.incremental and incremental_since is not None:
+        unit_ts = _unit_dir_mtime(index_store)
+        if unit_ts <= incremental_since:
+            print(f"incremental: no new units (unit mtime {unit_ts} <= {incremental_since})")
+            conn.close()
+            return
 
     t0 = time.monotonic()
-    r = read_index_store(index_store, ns.target, source_root=source_root)
+    r, file_status = read_index_store(
+        index_store, ns.target, source_root=source_root,
+        incremental_since=incremental_since,
+    )
+
+    # Incremental cleanup: delete stale symbols for changed and deleted files.
+    deleted_count = 0
+    if file_status:
+        changed = file_status.get("changed", [])
+        all_files = file_status.get("all", [])
+        old_files = set(old_state.get("files", []) if old_state else [])
+        deleted_files = old_files - set(all_files)
+        to_clean = changed + list(deleted_files)
+        if to_clean:
+            print(f"incremental: cleaning {len(changed)} changed + {len(deleted_files)} deleted files...")
+            deleted_count = delete_symbols_for_files(conn, ns.target, to_clean)
+            print(f"incremental: {deleted_count:,} old symbols deleted")
+        if not r.symbols and not r.relations:
+            # No changes — update state and exit.
+            all_list = file_status.get("all", []) if file_status else []
+            save_state(project_dir, touch_timestamp(), ns.target, index_store, all_list)
+            print("incremental: no changes detected")
+            conn.close()
+            return
+
     print(f"ingest: {r.elapsed_s}s  {len(r.symbols):,} syms  {len(r.relations):,} rels")
     syms = [SymbolRecord(usr=s.usr, precise_id="", name=s.name,
                          kind=_map_indexstore_kind(s.symbol_kind),
@@ -212,6 +264,15 @@ def cmd_ingest(args: list[str]):
     print("calls done")
     upsert_indexstore_rels(conn, r.relations, ns.target, source="indexstore", build_id="cli")
     print(f"done  {time.monotonic()-t0:.0f}s")
+
+    # Persist state for next incremental run.
+    # Full ingest: only save timestamp (no file list — we don't need it).
+    # Incremental: save timestamp + file list from CLI output.
+    if file_status and "all" in file_status:
+        save_state(project_dir, touch_timestamp(), ns.target, index_store,
+                   files=file_status["all"])
+    else:
+        save_state(project_dir, touch_timestamp(), ns.target, index_store)
 
 
 def cmd_search(args: list[str]):
@@ -409,30 +470,54 @@ def _parse_db(args: list[str]) -> str:
     return ap.parse_args(args).db
 
 
-COMMANDS = {
-    "find_callers": cmd_find_callers,
-    "find_callees": cmd_find_callees,
-    "impact": cmd_impact,
-    "symbol": cmd_symbol,
-    "hierarchy": cmd_hierarchy,
-    "search": cmd_search,
-    "pipe": cmd_pipe,
-    "ingest": cmd_ingest,
-    "stats": cmd_stats,
+from orchard.setup import cmd_setup
+
+COMMANDS: dict[str, tuple] = {
+    "search":        (cmd_search,        "Find symbols by name (substring or regex)"),
+    "find_callers":  (cmd_find_callers,  "List all callers of a symbol"),
+    "find_callees":  (cmd_find_callees,  "List all symbols called by a symbol"),
+    "impact":        (cmd_impact,        "Blast-radius analysis with risk scoring"),
+    "symbol":        (cmd_symbol,        "Show metadata for a single symbol"),
+    "hierarchy":     (cmd_hierarchy,     "Show type hierarchy (supertypes/subtypes)"),
+    "ingest":        (cmd_ingest,        "Build the graph from Xcode IndexStore data"),
+    "stats":         (cmd_stats,         "Database overview and freshness check"),
+    "pipe":          (cmd_pipe,          "Batch queries via stdin JSONL (3+ queries)"),
+    "setup":         (cmd_setup,         "Install MCP config + skill + download model"),
 }
+
+
+def _cmd_list() -> str:
+    width = max(len(name) for name in COMMANDS)
+    lines = []
+    for name, (_, desc) in COMMANDS.items():
+        lines.append(f"  {name:<{width}}  {desc}")
+    return "\n".join(lines)
+
+
+_HELP = f"""\
+Usage: orchard <command> [args]
+
+  An Apple semantic graph CLI built on Xcode IndexStore data.
+  Queries a per-project .orchard/graph.db (KuzuDB) with zero config.
+
+Commands:
+{_cmd_list()}
+
+Use 'orchard <command> --help' for detailed options on each command.
+"""
 
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print("orchard <command> [args]")
-        print("commands:", ", ".join(COMMANDS))
+        print(_HELP)
         return
     cmd = sys.argv[1]
-    fn = COMMANDS.get(cmd)
-    if fn is None:
-        print(f"unknown command: {cmd}\ncommands: {', '.join(COMMANDS)}", file=sys.stderr)
+    entry = COMMANDS.get(cmd)
+    if entry is None:
+        names = ", ".join(COMMANDS)
+        print(f"unknown command: {cmd}\ncommands: {names}", file=sys.stderr)
         sys.exit(2)
-    fn(sys.argv[2:])
+    entry[0](sys.argv[2:])
 
 
 if __name__ == "__main__":

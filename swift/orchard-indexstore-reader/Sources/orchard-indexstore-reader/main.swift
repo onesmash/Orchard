@@ -25,12 +25,28 @@
 import IndexStoreDB
 import Foundation
 
+// MARK: - Progress logging
+
+let runStart = Date()
+let progressOut = FileHandle.standardError
+
+func elapsedSeconds() -> String {
+  let dt = Date().timeIntervalSince(runStart)
+  return String(format: "%.1fs", dt)
+}
+
+func logProgress(_ message: String) {
+  progressOut.write("[orchard-indexstore-reader +\(elapsedSeconds())] \(message)\n".data(using: .utf8)!)
+}
+
 // MARK: - Argument parsing
 
 let args = CommandLine.arguments
 var storePath: String?
 var libIndexStore: String?
 var sourceRoot: String?
+var incrementalSince: Double?       // Unix epoch seconds
+var listFilesOnly: Bool = false
 
 var i = 1
 while i < args.count {
@@ -47,18 +63,37 @@ while i < args.count {
   if a.hasPrefix("--source-root=") {
     sourceRoot = String(a.dropFirst("--source-root=".count)); i += 1; continue
   }
+  if a == "--incremental-since", i + 1 < args.count {
+    incrementalSince = Double(args[i + 1]); i += 2; continue
+  }
+  if a.hasPrefix("--incremental-since=") {
+    incrementalSince = Double(a.dropFirst("--incremental-since=".count)); i += 1; continue
+  }
+  if a == "--list-files" {
+    listFilesOnly = true; i += 1; continue
+  }
   if a == "--help" || a == "-h" {
-    print("usage: orchard-indexstore-reader <index-store-path> [--libindexstore <dylib>] [--source-root <dir>]")
+    print("usage: orchard-indexstore-reader <index-store-path> [--libindexstore <dylib>] [--source-root <dir>] [--incremental-since <ts>] [--list-files]")
     exit(0)
   }
   if storePath == nil { storePath = a }
   i += 1
 }
 
+if listFilesOnly && incrementalSince != nil {
+  FileHandle.standardError.write("error: --list-files and --incremental-since are mutually exclusive\n".data(using: .utf8)!)
+  exit(2)
+}
+
 guard let storePath, !storePath.isEmpty else {
   FileHandle.standardError.write("error: index store path required\n".data(using: .utf8)!)
   print("usage: orchard-indexstore-reader <index-store-path> [--libindexstore <dylib>]")
   exit(2)
+}
+
+logProgress("starting for storePath=\(storePath)")
+if let sourceRoot {
+  logProgress("sourceRoot=\(sourceRoot)")
 }
 
 // MARK: - Resolve libIndexStore.dylib
@@ -90,6 +125,8 @@ guard let dylibPath = resolveDylib() else {
   exit(3)
 }
 
+logProgress("resolved libIndexStore at \(dylibPath)")
+
 // MARK: - Open IndexStoreDB (per-run temp database)
 
 let dbPath = NSTemporaryDirectory() + "orchard-indexstore-db-\(getpid())"
@@ -97,6 +134,7 @@ try? FileManager.default.removeItem(atPath: dbPath)
 try? FileManager.default.createDirectory(atPath: dbPath, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(atPath: dbPath) }
 
+logProgress("opening IndexStoreDB with temp databasePath=\(dbPath)")
 let library = try IndexStoreLibrary(dylibPath: dylibPath)
 let db = try IndexStoreDB(
   storePath: storePath,
@@ -105,7 +143,9 @@ let db = try IndexStoreDB(
   waitUntilDoneInitializing: true,
   listenToUnitEvents: false
 )
+logProgress("IndexStoreDB opened; starting initial scan")
 db.pollForUnitChangesAndWait(isInitialScan: true)
+logProgress("initial scan completed")
 
 // MARK: - Role normalization
 // SymbolRole.description yields abbreviated pipe-joined strings (e.g.
@@ -193,6 +233,7 @@ var filePaths: [String] = []
 if let root = sourceRoot {
   let fm = FileManager.default
   let baseURL = URL(fileURLWithPath: root)
+  logProgress("enumerating source files under sourceRoot")
   if let enumerator = fm.enumerator(at: baseURL, includingPropertiesForKeys: nil) {
     while let url = enumerator.nextObject() as? URL {
       if sourceExtensions.contains(url.pathExtension) {
@@ -205,6 +246,7 @@ if let root = sourceRoot {
   FileHandle.standardError.write(
     "warning: no --source-root given; falling back to slow allSymbolNames discovery\n".data(using: .utf8)!
   )
+  logProgress("discovering file paths via allSymbolNames fallback")
   var seen = Set<String>()
   for name in db.allSymbolNames() {
     for occ in db.canonicalOccurrences(ofName: name) {
@@ -215,33 +257,108 @@ if let root = sourceRoot {
   filePaths = Array(seen)
 }
 
-// 2. Emit per file.
+logProgress("discovered \(filePaths.count) source files to inspect")
+
+// --list-files mode: just output the file paths and exit.
+if listFilesOnly {
+  let json = try! JSONSerialization.data(withJSONObject: filePaths, options: [])
+  FileHandle.standardError.write(json)
+  FileHandle.standardError.write("\n".data(using: .utf8)!)
+  exit(0)
+}
+
+// --incremental-since: filter to only changed files.
+var allFiles = filePaths
+var changedFiles: [String] = []
+if let since = incrementalSince {
+  let sinceDate = Date(timeIntervalSince1970: since)
+  var skipped = 0
+  changedFiles = filePaths.filter { fp in
+    guard let unitDate = db.dateOfLatestUnitFor(filePath: fp) else {
+      // No unit → new file, treat as changed.
+      return true
+    }
+    return unitDate > sinceDate
+  }
+  skipped = filePaths.count - changedFiles.count
+  logProgress("incremental: \(changedFiles.count) changed, \(skipped) skipped (since \(sinceDate))")
+  if changedFiles.isEmpty {
+    // No changes — emit empty output but report file list via stderr.
+    let status: [String: Any] = ["changed": [], "all": allFiles]
+    let json = try! JSONSerialization.data(withJSONObject: status, options: [])
+    FileHandle.standardError.write(json)
+    FileHandle.standardError.write("\n".data(using: .utf8)!)
+    exit(0)
+  }
+  filePaths = changedFiles
+}
+
+// 2. First pass: collect best (canonical) occurrence per USR.
+//    SourceKit-LSP uses `forEachCanonicalSymbolOccurrence` which picks ONE
+//    canonical provider per USR across all TUs.  We replicate that by
+//    preferring definition / declaration (the "authoritative" occurrence)
+//    over call / reference sites.  Priority breaks ties deterministically.
+
+struct CanonicalSlot {
+  let usr: String
+  let name: String
+  let symbolKind: String
+  let language: String
+  let module: String
+  let file: String
+  let priority: Int
+}
+
+/// Higher = more authoritative (definition > declaration > other).
+func _canonicalPriority(_ roles: SymbolRole) -> Int {
+  if roles.contains(.definition)   { return 3 }
+  if roles.contains(.declaration)  { return 2 }
+  return 1
+}
+
+func _langString(_ lang: Language) -> String {
+  switch lang { case .swift: return "swift"; case .objc: return "objc"; case .c: return "c"; case .cxx: return "cxx" }
+}
+
+var bestSlot: [String: CanonicalSlot] = [:]   // usr → canonical descriptor
+var dupCount = 0
 var emittedRels = Set<String>()
-var emittedSymbols = Set<String>()
+var processedFileCount = 0
+
+logProgress("pass 1: scanning all files for canonical symbols + relations")
 
 for file in filePaths {
+  processedFileCount += 1
+  if processedFileCount == 1 || processedFileCount % 250 == 0 || processedFileCount == filePaths.count {
+    logProgress("scanning file \(processedFileCount)/\(filePaths.count): \(file)")
+  }
   for occ in db.symbolOccurrences(inFilePath: file) {
+    let usr = occ.symbol.usr
     let roles = occ.roles
     let path = occ.location.path
     let line = occ.location.line
     let col = occ.location.utf8Column
 
-    // Symbol rows: each unique USR gets one descriptor line.
-    let usr = occ.symbol.usr
-    if emittedSymbols.insert(usr).inserted {
-      let symName = js(occ.symbol.name)
-      let symKind = js(String(describing: occ.symbol.kind))
-      let langStr = { () -> String in
-        switch occ.symbol.language { case .swift: return "swift"; case .objc: return "objc"; case .c: return "c"; case .cxx: return "cxx" }
-      }()
-      let symLang = js(langStr)
-      let symMod  = js(occ.location.moduleName)
-      let symLine = "{\"kind\":\"symbol\",\"usr\":\(js(usr)),\"name\":\(symName),\"symbol_kind\":\(symKind),\"language\":\(symLang),\"module\":\(symMod),\"file\":\(js(file))}"
-      writeLine(symLine)
+    // ---- Symbol descriptor: prefer canonical (highest-priority) occurrence ----
+    let priority = _canonicalPriority(roles)
+    if let cur = bestSlot[usr] {
+      if priority > cur.priority {
+        dupCount += 1
+        bestSlot[usr] = CanonicalSlot(
+          usr: usr, name: occ.symbol.name,
+          symbolKind: String(describing: occ.symbol.kind),
+          language: _langString(occ.symbol.language),
+          module: occ.location.moduleName, file: file, priority: priority)
+      }
+    } else {
+      bestSlot[usr] = CanonicalSlot(
+        usr: usr, name: occ.symbol.name,
+        symbolKind: String(describing: occ.symbol.kind),
+        language: _langString(occ.symbol.language),
+        module: occ.location.moduleName, file: file, priority: priority)
     }
 
-    // Keep direct source call-site occurrences so Python can distinguish
-    // source-level calls from relation-only call edges later on.
+    // ---- Occurrences ----
     if roles.contains(.definition) || roles.contains(.declaration) || roles.contains(.call) {
       writeLine(
         "{\"kind\":\"occurrence\",\"usr\":\(js(usr)),"
@@ -250,6 +367,7 @@ for file in filePaths {
       )
     }
 
+    // ---- Relations ----
     for rel in occ.relations {
       for roleName in relationRoleNames(rel.roles) {
         let occRoleName = occurrenceRoleName(roles)
@@ -257,7 +375,10 @@ for file in filePaths {
         if emittedRels.insert(key).inserted {
           writeLine(
             "{\"kind\":\"relation\",\"from_usr\":\(js(usr)),"
-            + "\"to_usr\":\(js(rel.symbol.usr)),\"role\":\(js(roleName)),"
+            + "\"from_usr_name\":\(js(occ.symbol.name)),"
+            + "\"to_usr\":\(js(rel.symbol.usr)),"
+            + "\"to_usr_name\":\(js(rel.symbol.name)),"
+            + "\"role\":\(js(roleName)),"
             + "\"occurrence_role\":\(js(occRoleName)),"
             + "\"file\":\(js(path)),\"line\":\(line),\"column\":\(col)}"
           )
@@ -266,3 +387,25 @@ for file in filePaths {
     }
   }
 }
+
+// ---- Emit symbol descriptors from canonical slots ----
+logProgress("pass 1 done: canonical symbols=\(bestSlot.count) (upgraded \(dupCount) duplicates)")
+
+for (_, slot) in bestSlot {
+  writeLine(
+    "{\"kind\":\"symbol\",\"usr\":\(js(slot.usr)),"
+    + "\"name\":\(js(slot.name)),\"symbol_kind\":\(js(slot.symbolKind)),"
+    + "\"language\":\(js(slot.language)),\"module\":\(js(slot.module)),"
+    + "\"file\":\(js(slot.file))}"
+  )
+}
+
+// ---- File status (stderr, for Python to consume) ----
+if incrementalSince != nil {
+  let status: [String: Any] = ["changed": changedFiles, "all": allFiles]
+  let json = try! JSONSerialization.data(withJSONObject: status, options: [])
+  FileHandle.standardError.write(json)
+  FileHandle.standardError.write("\n".data(using: .utf8)!)
+}
+
+logProgress("completed emit: symbols=\(bestSlot.count) relations=\(emittedRels.count)")

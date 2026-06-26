@@ -1,7 +1,14 @@
 import json
 import pytest
 from unittest.mock import patch
-from orchard.ingest.indexstore import read_index_store, OccurrenceRecord, RelationRecord
+from orchard.ingest.indexstore import (
+    _cli_path,
+    _packaged_cli_path,
+    _packaged_cli_relpath,
+    read_index_store,
+    OccurrenceRecord,
+    RelationRecord,
+)
 
 _SAMPLE_LINES = [
     json.dumps({"kind": "occurrence", "usr": "s:MyFunc", "file": "/src/f.swift",
@@ -12,13 +19,12 @@ _SAMPLE_LINES = [
 ]
 
 def _mock_cli(lines):
-    """Return a generator that yields lines (matches streaming _run_cli)."""
-    for line in lines:
-        yield line
+    """Return ``(stdout_lines, stderr)`` like the real ``_run_cli``."""
+    return list(lines), ""
 
 def test_read_index_store_parses_occurrences():
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(_SAMPLE_LINES)):
-        result = read_index_store("/fake/store", target_id="MyTarget")
+        result, _ = read_index_store("/fake/store", target_id="MyTarget")
     assert len(result.occurrences) == 1
     occ = result.occurrences[0]
     assert occ.usr == "s:MyFunc"
@@ -29,7 +35,7 @@ def test_read_index_store_parses_occurrences():
 
 def test_read_index_store_parses_relations():
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(_SAMPLE_LINES)):
-        result = read_index_store("/fake/store", target_id="MyTarget")
+        result, _ = read_index_store("/fake/store", target_id="MyTarget")
     assert len(result.relations) == 1
     rel = result.relations[0]
     assert rel.from_usr == "s:MyFunc"
@@ -42,7 +48,7 @@ def test_read_index_store_parses_relations():
 
 def test_read_index_store_empty_store():
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli([])):
-        result = read_index_store("/fake/store", target_id="MyTarget")
+        result, _ = read_index_store("/fake/store", target_id="MyTarget")
     assert result.occurrences == []
     assert result.relations == []
 
@@ -53,7 +59,7 @@ def test_read_index_store_tolerates_malformed_lines():
         'NOT VALID JSON',
     ]
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(lines)):
-        result = read_index_store("/fake/store", target_id="T")
+        result, _ = read_index_store("/fake/store", target_id="T")
     assert len(result.occurrences) == 1
     assert len(result.warnings) == 1
     assert "NOT VALID" in result.warnings[0]
@@ -65,7 +71,92 @@ def test_read_index_store_tolerates_missing_keys():
         '{"kind":"relation","from_usr":"a","to_usr":"b"}',
     ]
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(lines)):
-        result = read_index_store("/fake/store", target_id="T")
+        result, _ = read_index_store("/fake/store", target_id="T")
     assert len(result.occurrences) == 0
     assert len(result.relations) == 0
     assert len(result.warnings) == 2
+
+
+def test_cli_path_prefers_swiftpm_release_binary(monkeypatch):
+    release_suffix = "swift/orchard-indexstore-reader/.build/release/orchard-indexstore-reader"
+    bin_suffix = "bin/orchard-indexstore-reader"
+
+    def fake_exists(path):
+        s = str(path)
+        return s.endswith(release_suffix) or s.endswith(bin_suffix)
+
+    def fake_access(path, mode):
+        return fake_exists(path)
+
+    monkeypatch.setattr("pathlib.Path.exists", fake_exists)
+    monkeypatch.setattr("orchard.ingest.indexstore.os.access", fake_access)
+    monkeypatch.setattr("orchard.ingest.indexstore.shutil.which", lambda _: None)
+    monkeypatch.setattr("orchard.ingest.indexstore._packaged_cli_path", lambda: None)
+
+    assert _cli_path().endswith(release_suffix)
+
+
+def test_cli_path_falls_back_to_bin_when_release_missing(monkeypatch):
+    bin_suffix = "bin/orchard-indexstore-reader"
+
+    def fake_exists(path):
+        return str(path).endswith(bin_suffix)
+
+    def fake_access(path, mode):
+        return fake_exists(path)
+
+    monkeypatch.setattr("pathlib.Path.exists", fake_exists)
+    monkeypatch.setattr("orchard.ingest.indexstore.os.access", fake_access)
+    monkeypatch.setattr("orchard.ingest.indexstore.shutil.which", lambda _: None)
+    monkeypatch.setattr("orchard.ingest.indexstore._packaged_cli_path", lambda: None)
+
+    assert _cli_path().endswith(bin_suffix)
+
+
+def test_cli_path_prefers_packaged_binary(monkeypatch):
+    monkeypatch.setattr("orchard.ingest.indexstore._packaged_cli_path", lambda: "/pkg/orchard-indexstore-reader")
+    assert _cli_path() == "/pkg/orchard-indexstore-reader"
+
+
+def test_packaged_cli_relpath_maps_current_macos_arm(monkeypatch):
+    monkeypatch.setattr("orchard.ingest.indexstore.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("orchard.ingest.indexstore.platform.machine", lambda: "arm64")
+    assert _packaged_cli_relpath() == pytest.importorskip("pathlib").Path("darwin-arm64/orchard-indexstore-reader")
+
+
+def test_packaged_cli_path_uses_package_dir(monkeypatch, tmp_path):
+    pkg_dir = tmp_path / "orchard" / "_bin"
+    binary = pkg_dir / "darwin-arm64" / "orchard-indexstore-reader"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    init_py = pkg_dir / "__init__.py"
+    init_py.write_text('"""pkg"""')
+
+    fake_module = type("M", (), {"__file__": str(init_py)})()
+    monkeypatch.setattr("orchard.ingest.indexstore._packaged_cli_relpath", lambda: pytest.importorskip("pathlib").Path("darwin-arm64/orchard-indexstore-reader"))
+    monkeypatch.setattr("orchard.ingest.indexstore.import_module", lambda _: fake_module)
+
+    assert _packaged_cli_path() == str(binary)
+
+def test_unit_dir_mtime_returns_latest(tmp_path):
+    from orchard.ingest.indexstore import _unit_dir_mtime
+    units = tmp_path / "v5" / "units"
+    units.mkdir(parents=True)
+    # Create files with known timestamps
+    f1 = units / "a.unit"
+    f1.write_text("x")
+    f2 = units / "b.unit"
+    f2.write_text("y")
+    ts = _unit_dir_mtime(str(tmp_path))
+    assert ts > 0
+
+def test_unit_dir_mtime_empty(tmp_path):
+    from orchard.ingest.indexstore import _unit_dir_mtime
+    units = tmp_path / "v5" / "units"
+    units.mkdir(parents=True)
+    assert _unit_dir_mtime(str(tmp_path)) == 0.0
+
+def test_unit_dir_mtime_missing(tmp_path):
+    from orchard.ingest.indexstore import _unit_dir_mtime
+    assert _unit_dir_mtime(str(tmp_path / "nope")) == 0.0

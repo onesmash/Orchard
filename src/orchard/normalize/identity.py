@@ -178,6 +178,64 @@ def upsert_symbol_rels(
     return count
 
 
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _ensure_symbol_ids_exist(
+    conn,
+    usr_names: dict[str, str],  # sid → name
+    target_id: str,
+) -> int:
+    """Create placeholder Symbol nodes for the given IDs if they don't exist.
+
+    Returns the number of placeholder nodes created.
+    """
+    if not usr_names:
+        return 0
+    import csv as _csv, tempfile as _tmp, os as _os
+    p = _os.path.join(_tmp.mkdtemp(), "placeholders.csv")
+    with open(p, "w", newline="") as fh:
+        w = _csv.writer(fh, quoting=_csv.QUOTE_ALL)
+        for sid, name in usr_names.items():
+            w.writerow([
+                sid,           # id
+                "",            # usr (placeholder — use id as usr)
+                sid,           # precise_id
+                name,          # name
+                "",            # swift_display_name
+                "objc",        # language
+                "unknown",     # kind
+                "",            # module
+                target_id,     # target_id
+                "",            # file_path
+                "",            # signature
+                "",            # container_usr
+                "public",      # access_level
+                "indexstore_placeholder",  # origin
+                "true",        # is_generated
+            ])
+    conn.execute(f"COPY Symbol FROM '{p}' (HEADER=false, DELIM=',')")
+    _os.unlink(p)
+    return len(usr_names)
+
+
+def _collect_missing_endpoints(
+    rels: list[RelationRecord],
+    target_id: str,
+    existing_ids: set,
+) -> dict[str, str]:
+    """Return ``{sid: name}`` for endpoint USRs not present in *existing_ids*."""
+    missing: dict[str, str] = {}
+    for rel in rels:
+        for usr, name in [(rel.from_usr, rel.from_usr_name),
+                          (rel.to_usr, rel.to_usr_name)]:
+            sid = make_symbol_id(target_id, usr)
+            if sid not in existing_ids:
+                missing[sid] = name or usr
+    return missing
+
+
 def upsert_indexstore_rels(
     conn,
     rels: list[RelationRecord],
@@ -187,19 +245,28 @@ def upsert_indexstore_rels(
 ) -> int:
     """Upsert IndexStore structural relation edges via COPY FROM CSV.
 
-    Maps IndexStore relation roles to Ladybug table names (see
-    ``_INDEXSTORE_REL_TO_TABLE``).  Each table gets a separate CSV import.
+    Creates placeholder Symbol nodes for any missing endpoints (typically
+    system framework symbols like NSObject, UIView) so that structural
+    edges (Contains, Inherits, Implements, Extends) can be written.
     """
+    import csv, tempfile, os
     t0 = time.monotonic()
-    # Pre-fetch the set of existing Symbol IDs so we only write edges whose
-    # both endpoints exist (COPY FROM rejects missing primary keys).
+    # Pre-fetch existing Symbol IDs.
     id_rows = conn.execute(
         "MATCH (s:Symbol {target_id: $tid}) RETURN s.id",
         {"tid": target_id},
     ).get_all()
     existing_ids = {r[0] for r in id_rows}
-    # Group by target table, filtering to valid pairs.
+
+    # Create placeholder symbols for endpoints we don't have yet (typically
+    # system framework symbols like NSObject, UIView).
+    missing = _collect_missing_endpoints(rels, target_id, existing_ids)
+    placeholder_count = _ensure_symbol_ids_exist(conn, missing, target_id)
+    existing_ids.update(missing.keys())
+
+    # Group by target table.
     by_table: dict[str, list[tuple[str, str]]] = {}
+    dropped = 0
     for rel in rels:
         table = _INDEXSTORE_REL_TO_TABLE.get(rel.role)
         if table is None:
@@ -207,15 +274,16 @@ def upsert_indexstore_rels(
         s_id = make_symbol_id(target_id, rel.from_usr)
         t_id = make_symbol_id(target_id, rel.to_usr)
         if s_id in existing_ids and t_id in existing_ids:
-            # IndexStore roles describe the relationship FROM the related
-            # symbol TO the occurrence symbol. E.g. baseOf: related IS the
-            # base of the occurrence. So occurrence inherits from related.
-            # Inherits(occurrence → related).
-            # Empirically, this is the SWAPPED direction:
-            #   UIViewController --inherits-> ZMClips... is wrong, so
-            #   we write (t_id, s_id) = Inherits(related → occurrence).
+            # Direction: IndexStore role is FROM the related symbol TO the
+            # occurrence symbol.  E.g. baseOf: related IS the base of the
+            # occurrence → Inherits(related → occurrence).
             by_table.setdefault(table, []).append((t_id, s_id))
-    import csv, tempfile, os
+        else:
+            dropped += 1
+    if not by_table:
+        _perf_probes["upsert_struct_s"] = round(time.monotonic() - t0, 3)
+        _perf_probes["upsert_struct_n"] = 0
+        return 0
     count = 0
     for table, pairs in by_table.items():
         csv_path = os.path.join(tempfile.mkdtemp(), f"{table}.csv")
@@ -224,7 +292,13 @@ def upsert_indexstore_rels(
             for s, t in pairs:
                 w.writerow([s, t, source, "0.90", "indexstore"])
         if _progress:
-            sys.stdout.write(f"  importing {len(pairs):,} {table} edges...")
+            summary = f"  importing {len(pairs):,} {table} edges"
+            if dropped:
+                summary += f" ({dropped:,} dropped)"
+            if placeholder_count:
+                summary += f" (placeholder_count={placeholder_count:,})"
+            summary += "..."
+            sys.stdout.write(summary)
             sys.stdout.flush()
         conn.execute(f"COPY {table} FROM '{csv_path}' (HEADER=false, DELIM=',')")
         os.unlink(csv_path)
@@ -258,20 +332,32 @@ def upsert_calls(
     than UNWIND + CREATE for large edge sets (596k edges import in seconds).
     """
     t0 = time.monotonic()
+    # Pre-fetch existing Symbol IDs for placeholder creation.
+    id_rows = conn.execute(
+        "MATCH (s:Symbol {target_id: $tid}) RETURN s.id",
+        {"tid": target_id},
+    ).get_all()
+    existing_ids = {r[0] for r in id_rows}
+
     called: dict[tuple[str, str], str] = {}
     for rel in relations:
         if rel.role != "calledBy":
             continue
         pair = (rel.to_usr, rel.from_usr)
-        existing = called.get(pair)
+        existing_reason = called.get(pair)
         reason = "source_direct" if rel.occurrence_role == "call" else "indexstore_relation_only"
-        if existing == "source_direct":
+        if existing_reason == "source_direct":
             continue
         called[pair] = reason
     if not called:
         _perf_probes["upsert_calls_s"] = 0
         _perf_probes["upsert_calls_n"] = 0
         return 0
+
+    # Create placeholder symbols for caller/callee USRs not yet in the DB.
+    missing = _collect_missing_endpoints(
+        [r for r in relations if r.role == "calledBy"], target_id, existing_ids)
+    _ensure_symbol_ids_exist(conn, missing, target_id)
 
     import csv, tempfile, os
     csv_path = os.path.join(tempfile.mkdtemp(), "calls.csv")
@@ -324,6 +410,29 @@ def upsert_references(
             {"src": src_id, "tgt": tgt_id, "source": source},
         )
         count += 1
+    return count
+
+
+def delete_symbols_for_files(
+    conn,
+    target_id: str,
+    file_paths: list[str],
+) -> int:
+    """Delete Symbol nodes (and cascade edges) for the given file paths.
+
+    Used during incremental ingest to clean up stale symbols before
+    re-inserting fresh data for changed or deleted files.
+    """
+    count = 0
+    for fp in file_paths:
+        r = conn.execute(
+            "MATCH (s:Symbol {target_id: $tid}) "
+            "WHERE s.file_path = $fp "
+            "DETACH DELETE s "
+            "RETURN count(*)",
+            {"tid": target_id, "fp": fp},
+        ).get_all()
+        count += r[0][0] if r else 0
     return count
 
 
