@@ -383,3 +383,11 @@ If the first pass is useful, the next design step should be a dedicated implemen
 - artifact storage for reruns
 
 That next step should be handled separately from this design.
+
+## Implemented By
+
+- [Evaluation Kit](../evals/orchard-vs-gitnexus-ios-client/README.md)
+- [Scenario Cards](../evals/orchard-vs-gitnexus-ios-client/scenarios.md)
+- [Score Sheet](../evals/orchard-vs-gitnexus-ios-client/score-sheet.csv)
+- [Runbook](../evals/orchard-vs-gitnexus-ios-client/runbook.md)
+- [Report Template](../evals/orchard-vs-gitnexus-ios-client/report-template.md)
