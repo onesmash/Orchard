@@ -77,6 +77,7 @@ def init_schema(conn) -> None:
 # (table_name, column_name, column_type).  migrate_schema() adds any that are
 # missing on existing databases via ALTER TABLE ... ADD IF NOT EXISTS.
 _MIGRATION_COLUMNS: list[tuple[str, str, str]] = [
+    ("Symbol", "swift_display_name", "STRING"),
     ("Calls", "reason", "STRING"),
     ("References", "reason", "STRING"),
     ("Contains", "confidence", "DOUBLE"),

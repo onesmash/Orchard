@@ -17,7 +17,8 @@ def get_cross_language_bridges(conn, req: BridgesRequest) -> BaseToolResponse:
     """Return all BridgesTo edges (both directions) for a symbol.
 
     Edges are returned with ``bridge_kind``, ``confidence``, ``provenance``,
-    and the remote symbol's USR (+ name + language).
+    the cross-language name fields, and the remote symbol's USR (+ name +
+    language).
     """
     target_id = req.target_id or ""
     sym_id = make_symbol_id(target_id, req.usr)
@@ -25,6 +26,7 @@ def get_cross_language_bridges(conn, req: BridgesRequest) -> BaseToolResponse:
     rows = conn.execute(
         "MATCH (s:Symbol {id: $id})-[r:BridgesTo]-(other:Symbol) "
         "RETURN r.bridge_kind, r.confidence, r.provenance, "
+        "r.clang_name, r.swift_name, r.definition_language, "
         "other.usr, other.name, other.language",
         {"id": sym_id},
     ).get_all()
@@ -35,9 +37,12 @@ def get_cross_language_bridges(conn, req: BridgesRequest) -> BaseToolResponse:
             "bridge_kind": r[0],
             "confidence": float(r[1]) if r[1] is not None else 0.0,
             "provenance": r[2] or "",
-            "target_usr": r[3],
-            "target_name": r[4],
-            "target_language": r[5],
+            "clang_name": r[3] or "",
+            "swift_name": r[4] or "",
+            "definition_language": r[5] or "",
+            "target_usr": r[6],
+            "target_name": r[7],
+            "target_language": r[8],
         }
         for r in rows
     ]

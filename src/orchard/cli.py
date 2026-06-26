@@ -15,24 +15,35 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
 
 def _find_project_db() -> str | None:
     """Walk up from cwd to find ``.orchard/graph.db`` (GitNexus-style)."""
-    from pathlib import Path
+    found = _find_project_db_with_origin()
+    return found[0] if found else None
+
+
+def _find_project_db_with_origin() -> tuple[str, bool] | None:
+    """Return ``(db_path, from_parent_directory)`` when a project DB is found."""
     cwd = Path.cwd().resolve()
     for directory in [cwd, *cwd.parents]:
         db = directory / ".orchard" / "graph.db"
         if db.exists():
-            return str(db)
+            return str(db), directory != cwd
     return None
 
 
-def _conn(db_path: str = ""):
+def _conn(db_path: str = "", announce_parent: bool = False):
     from orchard.graph.db import get_connection, init_schema
     path = db_path or os.environ.get("ORCHARD_DB_PATH", "")
     if not path:
-        path = _find_project_db()
+        discovered = _find_project_db_with_origin()
+        if discovered:
+            path, from_parent = discovered
+            if from_parent:
+                stream = sys.stdout if announce_parent else sys.stderr
+                print(f"Using database at {path} (found in parent directory)", file=stream)
     if not path:
         path = os.path.expanduser("~/.orchard/graph.db")
     c = get_connection(path)
@@ -44,11 +55,44 @@ def _print_json(obj):
     print(json.dumps(obj, indent=2, ensure_ascii=False, default=str))
 
 
+def _latest_build_snapshot(conn, target_id: str = "") -> dict[str, str] | None:
+    if target_id:
+        rows = conn.execute(
+            "MATCH (b:BuildSnapshot)-[:BuiltTarget]->(t:Target {id: $target_id}) "
+            "RETURN b.id, b.created_at, b.commit_sha, b.index_store_path, b.sdk, b.configuration "
+            "ORDER BY b.created_at DESC LIMIT 1",
+            {"target_id": target_id},
+        ).get_all()
+    else:
+        rows = conn.execute(
+            "MATCH (b:BuildSnapshot) "
+            "RETURN b.id, b.created_at, b.commit_sha, b.index_store_path, b.sdk, b.configuration "
+            "ORDER BY b.created_at DESC LIMIT 1"
+        ).get_all()
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "id": row[0] or "",
+        "created_at": row[1] or "",
+        "commit_sha": row[2] or "",
+        "index_store_path": row[3] or "",
+        "sdk": row[4] or "",
+        "configuration": row[5] or "",
+    }
+
+
+def _default_build_id(conn, target_id: str = "") -> str | None:
+    snapshot = _latest_build_snapshot(conn, target_id)
+    return snapshot["id"] if snapshot else None
+
+
 def cmd_find_callers(args: list[str]):
     usr, target, db = _parse_common(args)
     from orchard.handlers.callers import CallerRequest, find_callers
     conn = _conn(db)
-    r = find_callers(conn, CallerRequest(usr=usr, target_id=target))
+    build_id = _default_build_id(conn, target)
+    r = find_callers(conn, CallerRequest(usr=usr, target_id=target, build_id=build_id))
     _print_json(r.__dict__)
     conn.close()
 
@@ -57,7 +101,8 @@ def cmd_find_callees(args: list[str]):
     usr, target, db = _parse_common(args)
     from orchard.handlers.callees import CalleeRequest, find_callees
     conn = _conn(db)
-    r = find_callees(conn, CalleeRequest(usr=usr, target_id=target))
+    build_id = _default_build_id(conn, target)
+    r = find_callees(conn, CalleeRequest(usr=usr, target_id=target, build_id=build_id))
     _print_json(r.__dict__)
     conn.close()
 
@@ -66,7 +111,8 @@ def cmd_impact(args: list[str]):
     usr, target, db = _parse_common(args)
     from orchard.handlers.impact import ImpactRequest, impact_analysis
     conn = _conn(db)
-    r = impact_analysis(conn, ImpactRequest(usr=usr, target_id=target, max_depth=5))
+    build_id = _default_build_id(conn, target)
+    r = impact_analysis(conn, ImpactRequest(usr=usr, target_id=target, max_depth=5, build_id=build_id))
     _print_json(r.__dict__)
     conn.close()
 
@@ -75,7 +121,8 @@ def cmd_symbol(args: list[str]):
     usr, target, db = _parse_common(args)
     from orchard.handlers.symbol_context import SymbolContextRequest, get_symbol_context
     conn = _conn(db)
-    r = get_symbol_context(conn, SymbolContextRequest(usr=usr, target_id=target))
+    build_id = _default_build_id(conn, target)
+    r = get_symbol_context(conn, SymbolContextRequest(usr=usr, target_id=target, build_id=build_id))
     _print_json(r.__dict__)
     conn.close()
 
@@ -84,7 +131,8 @@ def cmd_hierarchy(args: list[str]):
     usr, target, db = _parse_common(args)
     from orchard.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
     conn = _conn(db)
-    r = get_type_hierarchy(conn, TypeHierarchyRequest(usr=usr, target_id=target))
+    build_id = _default_build_id(conn, target)
+    r = get_type_hierarchy(conn, TypeHierarchyRequest(usr=usr, target_id=target, build_id=build_id))
     _print_json(r.__dict__)
     conn.close()
 
@@ -103,11 +151,6 @@ def cmd_ingest(args: list[str]):
     ap.add_argument("--db", default="",
                     help="Graph database path (default: <project>/.orchard/graph.db)")
     ns = ap.parse_args(args)
-    # Default DB path: <project-dir>/.orchard/graph.db (GitNexus convention).
-    if not ns.db:
-        from pathlib import Path as _Path
-        ns.db = str(_Path(ns.project_dir) / ".orchard" / "graph.db")
-    conn = _conn(ns.db)
     from orchard.ingest.indexstore import read_index_store
     from orchard.normalize.identity import upsert_symbols, upsert_calls, upsert_indexstore_rels
     from orchard.ingest.symbolgraph import SymbolRecord
@@ -116,7 +159,7 @@ def cmd_ingest(args: list[str]):
     from orchard.build.xcode_settings import find_xcode_project, match_derived_data, get_derived_data_path
 
     index_store = ns.index_store
-    source_root = ns.source_root or None
+    source_root = str(Path(ns.source_root).resolve()) if ns.source_root else None
 
     # Auto-detect IndexStore from Xcode project when --index-store is omitted.
     if not index_store:
@@ -136,11 +179,13 @@ def cmd_ingest(args: list[str]):
             print(f"  Hint: Run an Xcode build (Cmd+B) on this project first,", file=sys.stderr)
             print(f"        or pass --index-store <path> to skip auto-detection.", file=sys.stderr)
             sys.exit(2)
+        if not ns.db:
+            ns.db = str(Path(project).parent / ".orchard" / "graph.db")
         # Use the most recently accessed candidate.
         dd_dir, index_store, _ = candidates[0]
         target = ns.target or Path(project).stem  # auto-detect from project name
         if not source_root:
-            source_root = ns.project_dir  # project root from user's --project-dir
+            source_root = str(Path(ns.project_dir).resolve())
         print(f"auto-detected: --index-store {index_store}")
         print(f"auto-detected: --target {target}")
         if source_root:
@@ -149,6 +194,10 @@ def cmd_ingest(args: list[str]):
             print(f"note: {len(candidates)} matching DerivedData dirs found, using newest:")
             for dd, _, acc in candidates[:3]:
                 print(f"  {dd}  (accessed {acc})")
+    elif not ns.db:
+        ns.db = str(Path(ns.project_dir) / ".orchard" / "graph.db")
+
+    conn = _conn(ns.db)
 
     t0 = time.monotonic()
     r = read_index_store(index_store, ns.target, source_root=source_root)
@@ -320,8 +369,20 @@ def _pipe_search(conn, args: dict):
 
 
 def cmd_stats(args: list[str]):
+    from orchard.validation.freshness import freshness_for
     db = _parse_db(args)
-    conn = _conn(db)
+    conn = _conn(db, announce_parent=True)
+    print(f"Database: {db or os.environ.get('ORCHARD_DB_PATH', _find_project_db() or os.path.expanduser('~/.orchard/graph.db'))}")
+    snapshot = _latest_build_snapshot(conn)
+    if snapshot:
+        _, freshness = freshness_for(conn, snapshot["id"], {})
+        print(f"Build ID: {snapshot['id']}")
+        print(f"Created At: {snapshot['created_at']}")
+        print(f"Commit: {snapshot['commit_sha']}")
+        print(f"IndexStore: {snapshot['index_store_path']}")
+        print(f"SDK: {snapshot['sdk']}")
+        print(f"Configuration: {snapshot['configuration']}")
+        print(f"Freshness: {freshness}")
     for e in ["Symbol", "Calls", "Contains", "Inherits", "Implements", "Extends"]:
         n = conn.execute(f"MATCH ()-[r:{e}]->() RETURN count(r)" if e != "Symbol"
                          else "MATCH (s:Symbol) RETURN count(s)").get_all()[0][0]

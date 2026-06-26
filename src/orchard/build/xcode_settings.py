@@ -135,7 +135,7 @@ def match_derived_data(project_path: str) -> list[tuple[str, str, str]]:
     if not dd_root.is_dir():
         return []
 
-    candidates: list[tuple[str, str, str]] = []
+    candidates: list[tuple[str, str, str, int]] = []
     try:
         for entry in dd_root.iterdir():
             if not entry.is_dir() or not entry.name.startswith(f"{project_name}-"):
@@ -155,10 +155,11 @@ def match_derived_data(project_path: str) -> list[tuple[str, str, str]]:
             if not datastore.is_dir():
                 continue
             last_accessed = str(plist.get("LastAccessedDate", ""))
-            candidates.append((str(entry), str(datastore), last_accessed))
+            size_bytes = sum(p.stat().st_size for p in datastore.rglob("*") if p.is_file())
+            candidates.append((str(entry), str(datastore), last_accessed, size_bytes))
     except OSError:
         return []
 
-    # Sort by LastAccessedDate descending (newest first).
-    candidates.sort(key=lambda x: x[2], reverse=True)
-    return candidates
+    # Sort by LastAccessedDate descending, then by datastore size descending.
+    candidates.sort(key=lambda x: (x[2], x[3]), reverse=True)
+    return [(dd, ds, acc) for dd, ds, acc, _ in candidates]

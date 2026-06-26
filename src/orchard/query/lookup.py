@@ -75,38 +75,64 @@ class GraphLookup:
 
     # ---- Callers / callees ------------------------------------------------
 
+    @staticmethod
+    def _prefer_source_direct(rows: list[tuple]) -> list[tuple]:
+        """Prefer source-level call evidence when any is available."""
+        if any((row[8] or "") == "source_direct" for row in rows):
+            return [row for row in rows if (row[8] or "") == "source_direct"]
+        return rows
+
     def callers_of(self, usr: str, target_id: str = "") -> list[dict]:
-        """Return all distinct callers of *usr* (with owner info)."""
+        """Return callers of *usr*, preferring source-level call evidence."""
         sym_id = make_symbol_id(target_id, usr)
         rows = self._conn.execute(
-            "MATCH (caller:Symbol)-[:Calls]->(target:Symbol {id: $id}) "
+            "MATCH (caller:Symbol)-[r:Calls]->(target:Symbol {id: $id}) "
+            "OPTIONAL MATCH (f:File)-[:ContainsOccurrence]->(o:Occurrence {usr: caller.usr}) "
+            "WHERE o.role = 'definition' "
             "RETURN DISTINCT caller.usr, caller.name, caller.module, "
-            "caller.kind, caller.language",
+            "caller.kind, caller.language, caller.file_path, o.line, o.col, r.reason",
             {"id": sym_id},
         ).get_all()
-        return [
-            {
-                "usr": r[0], "name": r[1], "module": r[2],
-                "kind": r[3], "language": r[4],
-                "owner": self.owner_of(r[0]),
-            }
-            for r in rows
-        ]
+        preferred_rows = self._prefer_source_direct(rows)
+        callers: dict[str, dict] = {}
+        for r in preferred_rows:
+            callers.setdefault(
+                r[0],
+                {
+                    "usr": r[0], "name": r[1], "module": r[2],
+                    "kind": r[3], "language": r[4],
+                    "file_path": r[5] or "",
+                    "line": r[6],
+                    "col": r[7],
+                    "reason": r[8] or "indexstore_relation_only",
+                    "owner": self.owner_of(r[0]),
+                },
+            )
+        return list(callers.values())
 
     def callees_of(self, usr: str, target_id: str = "") -> list[dict]:
-        """Return all distinct callees of *usr*."""
+        """Return callees of *usr*, preferring source-level call evidence."""
         sym_id = make_symbol_id(target_id, usr)
         rows = self._conn.execute(
-            "MATCH (src:Symbol {id: $id})-[:Calls]->(callee:Symbol) "
+            "MATCH (src:Symbol {id: $id})-[r:Calls]->(callee:Symbol) "
             "RETURN DISTINCT callee.usr, callee.name, callee.module, "
-            "callee.kind, callee.language",
+            "callee.kind, callee.language, r.reason",
             {"id": sym_id},
         ).get_all()
-        return [
-            {"usr": r[0], "name": r[1], "module": r[2],
-             "kind": r[3], "language": r[4]}
-            for r in rows
-        ]
+        preferred_rows = self._prefer_source_direct(
+            [(r[0], r[1], r[2], r[3], r[4], "", None, None, r[5]) for r in rows]
+        )
+        callees: dict[str, dict] = {}
+        for r in preferred_rows:
+            callees.setdefault(
+                r[0],
+                {
+                    "usr": r[0], "name": r[1], "module": r[2],
+                    "kind": r[3], "language": r[4],
+                    "reason": r[8] or "indexstore_relation_only",
+                },
+            )
+        return list(callees.values())
 
     # ---- Primary definition ------------------------------------------------
 

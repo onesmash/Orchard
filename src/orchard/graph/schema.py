@@ -42,6 +42,7 @@ NODE_TABLES: list[str] = [
         usr STRING,
         precise_id STRING,
         name STRING,
+        swift_display_name STRING,
         language STRING,
         kind STRING,
         module STRING,

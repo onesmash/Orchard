@@ -9,6 +9,7 @@ edge data, so the real ``orchard-indexstore-reader`` Swift CLI and Xcode
 are not required to run these tests.
 """
 import pytest
+import json
 from orchard.graph.db import get_connection, init_schema
 from orchard.ingest.symbolgraph import SymbolRecord
 from orchard.normalize.identity import upsert_symbols, upsert_build_snapshot
@@ -16,6 +17,7 @@ from orchard.build.context import BuildContext, make_build_id
 from orchard.handlers.symbol_context import get_symbol_context, SymbolContextRequest
 from orchard.handlers.callers import find_callers, CallerRequest
 from orchard.validation.freshness import freshness_for
+from orchard.cli import cmd_find_callers, cmd_stats
 
 
 @pytest.fixture
@@ -114,3 +116,233 @@ def test_h_symbol_context_has_open_gaps_field(populated_db):
     assert isinstance(resp.open_gaps, list)
     # No low-confidence bridges present -> nothing recorded as an open gap.
     assert resp.open_gaps == []
+
+
+def test_cli_find_callers_defaults_to_latest_build(tmp_db_path, capsys):
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    ctx = BuildContext(
+        build_id="", build_system="swift_build",
+        workspace_root="/fixtures/swift_only", scheme=None, target="MyLib",
+        configuration="debug", sdk="macosx14.5",
+        triple="arm64-apple-macosx14.5", toolchain_id="swift-5.10",
+        derived_data_path="/tmp/dd", index_store_path=None,
+        symbolgraph_output_path=None, commit_sha="abc", build_config_hash="h1",
+    )
+    ctx.build_id = make_build_id(ctx)
+    upsert_build_snapshot(conn, ctx)
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:callee", precise_id="s:callee", name="callee()",
+                     kind="swift.func", module="MyLib", language="swift",
+                     file_path="/src/MyLib.swift", signature="func callee()",
+                     access_level="public"),
+        SymbolRecord(usr="s:caller", precise_id="s:caller", name="caller()",
+                     kind="swift.func", module="MyLib", language="swift",
+                     file_path="/src/MyLib.swift", signature="func caller()",
+                     access_level="public"),
+    ], target_id="MyLib")
+    conn.execute(
+        "MATCH (a:Symbol {id:'MyLib:s:caller'}), (b:Symbol {id:'MyLib:s:callee'}) "
+        "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'test', build_id:$bid}]->(b)",
+        {"bid": ctx.build_id},
+    )
+    conn.close()
+
+    cmd_find_callers(["--usr", "s:callee", "--target", "MyLib", "--db", tmp_db_path])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["freshness"] == "fresh"
+    assert payload["build_id"] == ctx.build_id
+
+
+def test_cli_find_callers_prefers_latest_build_for_target(tmp_db_path, capsys):
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+
+    ctx1 = BuildContext(
+        build_id="", build_system="swift_build",
+        workspace_root="/fixtures/t1", scheme=None, target="T1",
+        configuration="debug", sdk="macosx14.5",
+        triple="arm64-apple-macosx14.5", toolchain_id="swift-5.10",
+        derived_data_path="/tmp/dd1", index_store_path=None,
+        symbolgraph_output_path=None, commit_sha="abc", build_config_hash="h1",
+    )
+    ctx1.build_id = make_build_id(ctx1)
+    upsert_build_snapshot(conn, ctx1)
+
+    ctx2 = BuildContext(
+        build_id="", build_system="swift_build",
+        workspace_root="/fixtures/t2", scheme=None, target="T2",
+        configuration="debug", sdk="macosx14.5",
+        triple="arm64-apple-macosx14.5", toolchain_id="swift-5.10",
+        derived_data_path="/tmp/dd2", index_store_path=None,
+        symbolgraph_output_path=None, commit_sha="def", build_config_hash="h2",
+    )
+    ctx2.build_id = make_build_id(ctx2)
+    upsert_build_snapshot(conn, ctx2)
+
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:callee", precise_id="s:callee", name="callee()",
+                     kind="swift.func", module="T1", language="swift",
+                     file_path="/src/T1.swift", signature="func callee()",
+                     access_level="public"),
+        SymbolRecord(usr="s:caller", precise_id="s:caller", name="caller()",
+                     kind="swift.func", module="T1", language="swift",
+                     file_path="/src/T1.swift", signature="func caller()",
+                     access_level="public"),
+    ], target_id="T1")
+    conn.execute(
+        "MATCH (a:Symbol {id:'T1:s:caller'}), (b:Symbol {id:'T1:s:callee'}) "
+        "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'test', build_id:$bid}]->(b)",
+        {"bid": ctx1.build_id},
+    )
+    conn.close()
+
+    cmd_find_callers(["--usr", "s:callee", "--target", "T1", "--db", tmp_db_path])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["build_id"] == ctx1.build_id
+
+
+def test_cmd_stats_prints_db_path_and_snapshot_metadata(tmp_db_path, capsys):
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    ctx = BuildContext(
+        build_id="", build_system="swift_build",
+        workspace_root="/fixtures/swift_only", scheme=None, target="MyLib",
+        configuration="debug", sdk="macosx14.5",
+        triple="arm64-apple-macosx14.5", toolchain_id="swift-5.10",
+        derived_data_path="/tmp/dd", index_store_path="/tmp/dd/IndexStore",
+        symbolgraph_output_path=None, commit_sha="abc", build_config_hash="h1",
+    )
+    ctx.build_id = make_build_id(ctx)
+    upsert_build_snapshot(conn, ctx)
+    conn.close()
+
+    cmd_stats(["--db", tmp_db_path])
+    out = capsys.readouterr().out
+    assert f"Database: {tmp_db_path}" in out
+    assert f"Build ID: {ctx.build_id}" in out
+    assert "IndexStore: /tmp/dd/IndexStore" in out
+
+
+def test_cmd_ingest_resolves_relative_source_root(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    captured: dict[str, str | None] = {}
+
+    def fake_read_index_store(index_store_path, target_id, source_root=None):
+        captured["source_root"] = source_root
+        return IndexStoreResult()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+
+    db_path = tmp_path / "graph.db"
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--source-root", ".",
+        "--target", "T",
+        "--db", str(db_path),
+    ])
+
+    assert captured["source_root"] == str(tmp_path.resolve())
+
+
+def test_cmd_stats_reports_parent_database_discovery(tmp_path, capsys, monkeypatch):
+    parent = tmp_path / "parent"
+    child = parent / "child"
+    (parent / ".orchard").mkdir(parents=True)
+    child.mkdir(parents=True)
+
+    db_path = parent / ".orchard" / "graph.db"
+    conn = get_connection(str(db_path))
+    init_schema(conn)
+    conn.close()
+
+    monkeypatch.chdir(child)
+    cmd_stats([])
+    out = capsys.readouterr().out
+    assert f"Using database at {db_path} (found in parent directory)" in out
+
+
+def test_cli_json_output_not_polluted_by_parent_db_notice(tmp_path, capsys, monkeypatch):
+    parent = tmp_path / "parent"
+    child = parent / "child"
+    (parent / ".orchard").mkdir(parents=True)
+    child.mkdir(parents=True)
+    db_path = parent / ".orchard" / "graph.db"
+    conn = get_connection(str(db_path))
+    init_schema(conn)
+    ctx = BuildContext(
+        build_id="", build_system="swift_build",
+        workspace_root="/fixtures/swift_only", scheme=None, target="MyLib",
+        configuration="debug", sdk="macosx14.5",
+        triple="arm64-apple-macosx14.5", toolchain_id="swift-5.10",
+        derived_data_path="/tmp/dd", index_store_path=None,
+        symbolgraph_output_path=None, commit_sha="abc", build_config_hash="h1",
+    )
+    ctx.build_id = make_build_id(ctx)
+    upsert_build_snapshot(conn, ctx)
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:callee", precise_id="s:callee", name="callee()",
+                     kind="swift.func", module="MyLib", language="swift",
+                     file_path="/src/MyLib.swift", signature="", access_level="public"),
+        SymbolRecord(usr="s:caller", precise_id="s:caller", name="caller()",
+                     kind="swift.func", module="MyLib", language="swift",
+                     file_path="/src/MyLib.swift", signature="", access_level="public"),
+    ], target_id="MyLib")
+    conn.execute(
+        "MATCH (a:Symbol {id:'MyLib:s:caller'}), (b:Symbol {id:'MyLib:s:callee'}) "
+        "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'test', build_id:$bid}]->(b)",
+        {"bid": ctx.build_id},
+    )
+    conn.close()
+
+    monkeypatch.chdir(child)
+    cmd_find_callers(["--usr", "s:callee", "--target", "MyLib"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["data"]
+    assert f"Using database at {db_path} (found in parent directory)" in captured.err
+
+
+def test_cmd_ingest_defaults_db_to_real_project_directory(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    project_dir = tmp_path / "ios-client"
+    project_dir.mkdir()
+    project = project_dir / "Zoom.xcworkspace"
+    project.mkdir()
+    cwd_parent = tmp_path / "workspace-root"
+    cwd_parent.mkdir()
+
+    captured: dict[str, object] = {}
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    def fake_conn(db_path=""):
+        captured["db_path"] = db_path
+        return DummyConn()
+
+    monkeypatch.chdir(cwd_parent)
+    monkeypatch.setattr("orchard.cli._conn", fake_conn)
+    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(project))
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.match_derived_data",
+        lambda _: [(str(tmp_path / "dd"), str(tmp_path / "dd/Index.noindex/DataStore"), "2026-06-26T00:00:00Z")]
+    )
+    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", lambda *args, **kwargs: IndexStoreResult())
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+
+    cmd_ingest(["--project-dir", str(cwd_parent), "--target", "Zoom"])
+
+    assert captured["db_path"] == str(project_dir / ".orchard" / "graph.db")

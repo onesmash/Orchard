@@ -27,7 +27,8 @@ def conn_with_bridges(tmp_db_path):
     conn.execute(
         "MATCH (a:Symbol {id: 'T:s:swiftFunc'}), (b:Symbol {id: 'T:c:objcMethod'}) "
         "CREATE (a)-[:BridgesTo {bridge_kind: 'name_match', provenance: 'derive/bridge', "
-        "confidence: 0.85, build_id: 'b1'}]->(b)"
+        "confidence: 0.85, build_id: 'b1', clang_name: '-[ObjCClass swiftFunc]', "
+        "swift_name: 'SwiftClass.swiftFunc()', definition_language: 'swift'}]->(b)"
     )
     yield conn
     conn.close()
@@ -40,6 +41,9 @@ def test_get_bridges_returns_edge(conn_with_bridges):
     assert len(resp.data) == 1
     assert resp.data[0]["bridge_kind"] == "name_match"
     assert resp.data[0]["confidence"] == 0.85
+    assert resp.data[0]["clang_name"] == "-[ObjCClass swiftFunc]"
+    assert resp.data[0]["swift_name"] == "SwiftClass.swiftFunc()"
+    assert resp.data[0]["definition_language"] == "swift"
     assert resp.data[0]["target_usr"] == "c:objcMethod"
 
 

@@ -135,3 +135,57 @@ async def test_pipeline_embedding_projection_handles_ollama_down(ctx, tmp_db_pat
     assert embed_phase.stats["embedded"] == 0
     assert len(embed_phase.warnings) > 0
     assert any("Ollama unavailable" in w for w in embed_phase.warnings)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_merge_prefers_indexstore_path_and_name(ctx, tmp_db_path):
+    from orchard.ingest.indexstore import IndexStoreResult, SymbolLineRecord
+    from orchard.ingest.symbolgraph import SymbolRecord, SymbolGraphResult
+    from orchard.graph.db import get_connection
+
+    sg = SymbolGraphResult(
+        symbols=[
+            SymbolRecord(
+                usr="c:objc(cs)Demo(im)doThing:",
+                precise_id="c:objc(cs)Demo(im)doThing:",
+                name="doThing(_:)",
+                kind="method",
+                module="M",
+                language="objc",
+                file_path="/wrong/Reference.swift",
+                signature="func doThing(_ value: Int)",
+                access_level="public",
+                container_usr=None,
+            )
+        ],
+        relationships=[],
+    )
+    is_result = IndexStoreResult(
+        symbols=[
+            SymbolLineRecord(
+                usr="c:objc(cs)Demo(im)doThing:",
+                name="doThing:",
+                symbol_kind="InstanceMethod",
+                language="objc",
+                module="M",
+                file_path="/right/Demo.m",
+            )
+        ]
+    )
+
+    with (
+        patch("orchard.pipeline.runner.read_index_store", return_value=is_result),
+        patch("orchard.pipeline.runner.parse_symbolgraph", return_value=sg),
+        patch("orchard.pipeline.runner.discover_symbolgraph_paths", return_value=["/x.json"]),
+    ):
+        await run_ingest_pipeline(ctx, db_path=tmp_db_path)
+
+    conn = get_connection(tmp_db_path)
+    rows = conn.execute(
+        "MATCH (s:Symbol {id: $id}) "
+        "RETURN s.name, s.file_path, s.swift_display_name",
+        {"id": "MyLib:c:objc(cs)Demo(im)doThing:"},
+    ).get_all()
+    conn.close()
+
+    assert rows == [["doThing:", "/right/Demo.m", "doThing(_:)"]]

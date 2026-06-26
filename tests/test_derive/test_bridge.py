@@ -70,3 +70,53 @@ def test_bridge_recovery_idempotent(tmp_db_path):
     ).get_all()
     assert rows[0][0] == 2
     conn.close()
+
+
+def test_bridge_recovery_usr_based_when_names_differ(tmp_db_path):
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    target_id = "MyTarget"
+    upsert_symbols(
+        conn,
+        [
+            SymbolRecord(
+                usr="c:objc(cs)PTEntranceViewController(im)handleMoreSelectedWithTag:withParams:",
+                precise_id="",
+                name="handleMoreSelectedWithTag:withParams:",
+                kind="method",
+                module="M",
+                language="objc",
+                file_path="/src/PTEntranceViewController.m",
+                signature="",
+                access_level="public",
+                container_usr=None,
+            ),
+            SymbolRecord(
+                usr="s:PTEntranceViewControllerC18handleMoreSelectedyySi_yptF",
+                precise_id="",
+                name="handleMoreSelected",
+                kind="method",
+                module="M",
+                language="swift",
+                file_path="/src/PTEntranceViewController.swift",
+                signature="func handleMoreSelected(_ tag: Int, _ params: Any)",
+                access_level="public",
+                container_usr=None,
+                swift_display_name="PTEntranceViewController.handleMoreSelected(_:_:)",
+            ),
+        ],
+        target_id,
+    )
+
+    stats = run_bridge_recovery(conn, target_id, build_id="b4")
+    assert stats["bridges_by_usr"] == 2
+    rows = conn.execute(
+        "MATCH (a:Symbol)-[r:BridgesTo]->(b:Symbol) "
+        "RETURN a.usr, b.usr, r.bridge_kind, r.confidence, r.clang_name, r.swift_name"
+    ).get_all()
+    assert len(rows) == 2
+    assert all(r[2] == "usr_correlate" for r in rows)
+    assert all(float(r[3]) >= 0.95 for r in rows)
+    assert any(r[4] == "-[PTEntranceViewController handleMoreSelectedWithTag:withParams:]" for r in rows)
+    assert any(r[5] == "PTEntranceViewController.handleMoreSelected(_:_:)" for r in rows)
+    conn.close()

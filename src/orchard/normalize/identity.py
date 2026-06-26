@@ -45,24 +45,45 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
     t0 = time.monotonic()
     # Pre-fetch existing IDs so we only COPY new symbols (idempotent without
     # IGNORE_ERRORS, which would mask real schema violations).
-    existing = set()
     id_rows = conn.execute(
         "MATCH (s:Symbol {target_id: $tid}) RETURN s.id",
         {"tid": target_id},
     ).get_all()
     existing = {r[0] for r in id_rows}
+    existing_rows = {make_symbol_id(target_id, s.usr): s for s in symbols if make_symbol_id(target_id, s.usr) in existing}
+    for sym_id, s in existing_rows.items():
+        conn.execute(
+            "MATCH (s:Symbol {id: $id}) "
+            "SET s.precise_id=$precise_id, s.name=$name, s.swift_display_name=$swift_display_name, "
+            "s.language=$language, s.kind=$kind, s.module=$module, s.file_path=$file_path, "
+            "s.signature=$signature, s.container_usr=$container_usr, s.access_level=$access_level",
+            {
+                "id": sym_id,
+                "precise_id": s.precise_id or "",
+                "name": s.name,
+                "swift_display_name": s.swift_display_name or "",
+                "language": s.language,
+                "kind": s.kind,
+                "module": s.module,
+                "file_path": s.file_path or "",
+                "signature": s.signature or "",
+                "container_usr": s.container_usr or "",
+                "access_level": s.access_level,
+            },
+        )
     new = [s for s in symbols if make_symbol_id(target_id, s.usr) not in existing]
     if not new:
         _perf_probes.setdefault("upsert_symbols_s", 0.0)
         _perf_probes.setdefault("upsert_symbols_n", 0)
-        return 0
+        return len(existing_rows)
     csv_path = os.path.join(tempfile.mkdtemp(), "symbols.csv")
     with open(csv_path, "w", newline="") as fh:
         w = csv.writer(fh, quoting=csv.QUOTE_ALL)
         for s in new:
             w.writerow([
                 make_symbol_id(target_id, s.usr),
-                s.usr, s.precise_id or "", s.name, s.language, s.kind,
+                s.usr, s.precise_id or "", s.name, s.swift_display_name or "",
+                s.language, s.kind,
                 s.module, target_id, s.file_path or "", s.signature or "",
                 s.container_usr or "", s.access_level, "swift_symbolgraph", "false",
             ])
@@ -75,7 +96,22 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
     t = round(time.monotonic() - t0, 3)
     _perf_probes.setdefault("upsert_symbols_s", t)
     _perf_probes.setdefault("upsert_symbols_n", len(symbols))
-    return len(symbols)
+    return len(new) + len(existing_rows)
+
+
+def prune_missing_symbols(conn, target_id: str, active_usrs: set[str]) -> int:
+    """Delete target-scoped Symbol nodes whose USRs are absent from this build."""
+    rows = conn.execute(
+        "MATCH (s:Symbol {target_id: $tid}) RETURN s.usr",
+        {"tid": target_id},
+    ).get_all()
+    stale_usrs = [r[0] for r in rows if r[0] not in active_usrs]
+    for usr in stale_usrs:
+        conn.execute(
+            "MATCH (s:Symbol {target_id: $tid, usr: $usr}) DETACH DELETE s",
+            {"tid": target_id, "usr": usr},
+        )
+    return len(stale_usrs)
 
 
 # Mapping from symbolgraph relationship kinds to Ladybug rel table names.
@@ -213,11 +249,25 @@ def upsert_calls(
     ``to_usr`` calls ``from_usr``. The CALLER is ``to_usr``, the CALLEE is
     ``from_usr``.  Edge written: ``Calls(caller=to_usr, callee=from_usr)``.
 
+    When the underlying relation was observed from a source-level call-site
+    occurrence, ``reason`` is stored as ``source_direct``. Otherwise the edge
+    remains ``indexstore_relation_only`` so later query layers can distinguish
+    compiler/index relations from source call evidence.
+
     Uses Ladybug's ``COPY FROM`` bulk importer — orders of magnitude faster
     than UNWIND + CREATE for large edge sets (596k edges import in seconds).
     """
     t0 = time.monotonic()
-    called = [(r.to_usr, r.from_usr) for r in relations if r.role == "calledBy"]
+    called: dict[tuple[str, str], str] = {}
+    for rel in relations:
+        if rel.role != "calledBy":
+            continue
+        pair = (rel.to_usr, rel.from_usr)
+        existing = called.get(pair)
+        reason = "source_direct" if rel.occurrence_role == "call" else "indexstore_relation_only"
+        if existing == "source_direct":
+            continue
+        called[pair] = reason
     if not called:
         _perf_probes["upsert_calls_s"] = 0
         _perf_probes["upsert_calls_n"] = 0
@@ -227,11 +277,11 @@ def upsert_calls(
     csv_path = os.path.join(tempfile.mkdtemp(), "calls.csv")
     with open(csv_path, "w", newline="") as fh:
         w = csv.writer(fh, quoting=csv.QUOTE_ALL)
-        for to_u, fm_u in called:
+        for (to_u, fm_u), reason in called.items():
             w.writerow([
                 make_symbol_id(target_id, to_u),
                 make_symbol_id(target_id, fm_u),
-                source, "1.0", "indexstore", build_id, "indexstore",
+                source, "1.0", "indexstore", build_id, reason,
             ])
     if _progress:
         sys.stdout.write(f"  csv {os.path.getsize(csv_path)/1024/1024:.0f}MB, importing...")
@@ -309,5 +359,20 @@ def upsert_build_snapshot(conn, ctx: BuildContext) -> None:
             "sdk": ctx.sdk,
             "configuration": ctx.configuration,
             "created_at": created_at,
+        },
+    )
+    conn.execute(
+        "MERGE (t:Target {id: $target_id}) "
+        "SET t.name = $target_name, t.sdk = $sdk, t.configuration = $configuration, t.triple = $triple "
+        "WITH t "
+        "MATCH (b:BuildSnapshot {id: $build_id}) "
+        "MERGE (b)-[:BuiltTarget]->(t)",
+        {
+            "target_id": ctx.target,
+            "target_name": ctx.target,
+            "sdk": ctx.sdk,
+            "configuration": ctx.configuration,
+            "triple": ctx.triple,
+            "build_id": ctx.build_id,
         },
     )

@@ -20,6 +20,10 @@ class RelationRecord:
     from_usr: str
     to_usr: str
     role: str
+    occurrence_role: str = ""
+    file_path: str = ""
+    line: int = 0
+    col: int = 0
 
 
 @dataclass
@@ -93,6 +97,10 @@ def read_index_store(
                     from_usr=obj["from_usr"],
                     to_usr=obj["to_usr"],
                     role=obj["role"],
+                    occurrence_role=obj.get("occurrence_role", ""),
+                    file_path=obj.get("file", ""),
+                    line=obj.get("line", 0) or 0,
+                    col=obj.get("column", 0) or 0,
                 ))
             elif obj["kind"] == "symbol":
                 result.symbols.append(SymbolLineRecord(

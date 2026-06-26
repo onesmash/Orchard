@@ -240,9 +240,9 @@ for file in filePaths {
       writeLine(symLine)
     }
 
-    // Occurrence rows are symbol-definition records. Emit only
-    // definitions/declarations to keep the stream lean.
-    if roles.contains(.definition) || roles.contains(.declaration) {
+    // Keep direct source call-site occurrences so Python can distinguish
+    // source-level calls from relation-only call edges later on.
+    if roles.contains(.definition) || roles.contains(.declaration) || roles.contains(.call) {
       writeLine(
         "{\"kind\":\"occurrence\",\"usr\":\(js(usr)),"
         + "\"file\":\(js(path)),\"line\":\(line),\"column\":\(col),"
@@ -252,11 +252,14 @@ for file in filePaths {
 
     for rel in occ.relations {
       for roleName in relationRoleNames(rel.roles) {
-        let key = "\(usr)\u{1}\(rel.symbol.usr)\u{1}\(roleName)"
+        let occRoleName = occurrenceRoleName(roles)
+        let key = "\(usr)\u{1}\(rel.symbol.usr)\u{1}\(roleName)\u{1}\(occRoleName)"
         if emittedRels.insert(key).inserted {
           writeLine(
             "{\"kind\":\"relation\",\"from_usr\":\(js(usr)),"
-            + "\"to_usr\":\(js(rel.symbol.usr)),\"role\":\(js(roleName))}"
+            + "\"to_usr\":\(js(rel.symbol.usr)),\"role\":\(js(roleName)),"
+            + "\"occurrence_role\":\(js(occRoleName)),"
+            + "\"file\":\(js(path)),\"line\":\(line),\"column\":\(col)}"
           )
         }
       }

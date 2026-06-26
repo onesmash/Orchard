@@ -10,8 +10,9 @@ from orchard.derive.bridge import run_bridge_recovery
 from orchard.derive.swiftui import run_swiftui_derivation
 from orchard.graph.db import get_connection, init_schema
 from orchard.ingest.indexstore import read_index_store
-from orchard.ingest.symbolgraph import parse_symbolgraph
+from orchard.ingest.symbolgraph import SymbolRecord, parse_symbolgraph
 from orchard.normalize.identity import (
+    prune_missing_symbols,
     upsert_build_snapshot,
     upsert_symbols,
     upsert_symbol_rels,
@@ -46,6 +47,55 @@ def _map_indexstore_kind(kind: str) -> str:
     if k in ("var", "variable", "local", "parameter"):
         return "var"
     return k  # pass through unknown kinds
+
+
+def _symbol_from_indexstore(line) -> SymbolRecord:
+    return SymbolRecord(
+        usr=line.usr,
+        precise_id="",
+        name=line.name,
+        kind=_map_indexstore_kind(line.symbol_kind),
+        module=line.module,
+        language=line.language,
+        file_path=line.file_path or "",
+        signature="",
+        access_level="public",
+        container_usr=None,
+        swift_display_name=None,
+    )
+
+
+def _merge_symbol_sources(
+    symbolgraph_symbols: list[SymbolRecord],
+    indexstore_symbols: list,
+) -> list[SymbolRecord]:
+    by_usr: dict[str, SymbolRecord] = {}
+    for sym in symbolgraph_symbols:
+        by_usr[sym.usr] = SymbolRecord(
+            usr=sym.usr,
+            precise_id=sym.precise_id,
+            name=sym.name,
+            kind=sym.kind,
+            module=sym.module,
+            language=sym.language,
+            file_path=sym.file_path,
+            signature=sym.signature,
+            access_level=sym.access_level,
+            container_usr=sym.container_usr,
+            swift_display_name=sym.name or None,
+        )
+    for line in indexstore_symbols:
+        merged = by_usr.get(line.usr)
+        if merged is None:
+            by_usr[line.usr] = _symbol_from_indexstore(line)
+            continue
+        merged.name = line.name or merged.name
+        merged.file_path = line.file_path or merged.file_path
+        merged.module = line.module or merged.module
+        merged.language = line.language or merged.language
+        if not merged.precise_id:
+            merged.precise_id = line.usr
+    return list(by_usr.values())
 
 
 async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResult]:
@@ -96,29 +146,18 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     results.append(is_phase)
     results.append(sg_phase)
 
-    # Fallback: when no .symbols.json files are found, use IndexStore symbol
-    # descriptors.  These carry real name / kind / module from the compiler,
-    # just without inter-symbol structure edges (inherits, conforms, etc.).
-    if not all_symbols and is_result and is_result.symbols:
-        from orchard.ingest.indexstore import SymbolLineRecord
-        is_syms = [
-            SymbolRecord(
-                usr=s.usr, precise_id="", name=s.name,
-                kind=_map_indexstore_kind(s.symbol_kind),
-                module=s.module, language=s.language,
-                file_path=s.file_path or "", signature="", access_level="public",
-                container_usr=None,
-            )
-            for s in is_result.symbols
-        ]
-        all_symbols = is_syms
+    if is_result and is_result.symbols:
+        all_symbols = _merge_symbol_sources(all_symbols, is_result.symbols)
 
     # identity_normalization
     inserted = upsert_symbols(conn, all_symbols, ctx.target)
+    pruned = 0
+    if is_result and is_result.symbols:
+        pruned = prune_missing_symbols(conn, ctx.target, {s.usr for s in all_symbols})
     upsert_symbol_rels(conn, all_rels, ctx.target, source="swift_symbolgraph")
     results.append(PhaseResult(
         phase="identity_normalization", build_id=ctx.build_id, data=None,
-        stats={"symbols_upserted": inserted},
+        stats={"symbols_upserted": inserted, "symbols_pruned": pruned},
     ))
 
     # swiftinterface_conformances — extract ConformsTo edges from .swiftinterface

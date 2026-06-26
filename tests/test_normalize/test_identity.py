@@ -1,6 +1,7 @@
 import pytest
 from orchard.normalize.identity import (
     make_symbol_id,
+    prune_missing_symbols,
     upsert_symbols,
     upsert_symbol_rels,
     upsert_calls,
@@ -50,6 +51,25 @@ def test_upsert_symbols_idempotent(conn):
     assert rows[0][0] == 1
 
 
+def test_upsert_symbols_updates_existing_node_fields(conn):
+    original = [
+        SymbolRecord(usr="s:A", precise_id="s:A", name="swiftName(_:)", kind="method",
+                     module="M", language="objc", file_path="/wrong/Ref.swift", signature="",
+                     access_level="public", swift_display_name="swiftName(_:)")
+    ]
+    corrected = [
+        SymbolRecord(usr="s:A", precise_id="s:A", name="objcName:", kind="method",
+                     module="M", language="objc", file_path="/right/A.m", signature="",
+                     access_level="public", swift_display_name="swiftName(_:)")
+    ]
+    upsert_symbols(conn, original, target_id="T1")
+    upsert_symbols(conn, corrected, target_id="T1")
+    rows = conn.execute(
+        "MATCH (s:Symbol {id: 'T1:s:A'}) RETURN s.name, s.file_path, s.swift_display_name"
+    ).get_all()
+    assert rows == [["objcName:", "/right/A.m", "swiftName(_:)"]]
+
+
 def test_upsert_different_targets_no_collision(conn):
     sym = SymbolRecord(usr="s:Shared", precise_id="s:Shared", name="Shared",
                        kind="swift.struct", module="M", language="swift",
@@ -88,9 +108,30 @@ def test_upsert_calls_writes_calledby_edge_with_caller_as_to(conn):
                            build_id="build-1")
     assert written == 1
     rows = conn.execute(
-        "MATCH (a:Symbol)-[:Calls]->(b:Symbol) RETURN a.usr, b.usr"
+        "MATCH (a:Symbol)-[r:Calls]->(b:Symbol) RETURN a.usr, b.usr, r.reason"
     ).get_all()
-    assert [tuple(r) for r in rows] == [("c:caller()", "c:callee()")]
+    assert [tuple(r) for r in rows] == [("c:caller()", "c:callee()", "indexstore_relation_only")]
+
+
+def test_upsert_calls_marks_source_direct_when_call_occurrence_present(conn):
+    target_id = "T"
+    _seed_two_symbols(conn, target_id)
+    rels = [
+        RelationRecord(
+            from_usr="c:callee()",
+            to_usr="c:caller()",
+            role="calledBy",
+            occurrence_role="call",
+            file_path="/src/Test.swift",
+            line=12,
+            col=4,
+        )
+    ]
+    upsert_calls(conn, rels, target_id, source="indexstore", build_id="b1")
+    rows = conn.execute(
+        "MATCH (:Symbol {usr:'c:caller()'})-[r:Calls]->(:Symbol {usr:'c:callee()'}) RETURN r.reason"
+    ).get_all()
+    assert rows == [["source_direct"]]
 
 
 def test_upsert_calls_skips_unknown_role(conn):
@@ -112,3 +153,39 @@ def test_upsert_references_writes_edge(conn):
         "MATCH (a:Symbol)-[:References]->(b:Symbol) RETURN a.usr, b.usr"
     ).get_all()
     assert [tuple(r) for r in rows] == [("c:caller()", "c:callee()")]
+
+
+def test_prune_missing_symbols_removes_symbols_not_in_current_build(conn):
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:old", precise_id="s:old", name="old", kind="swift.func",
+                     module="M", language="swift", file_path="/src/old.swift",
+                     signature="", access_level="public"),
+        SymbolRecord(usr="s:new", precise_id="s:new", name="new", kind="swift.func",
+                     module="M", language="swift", file_path="/src/new.swift",
+                     signature="", access_level="public"),
+    ], target_id="T1")
+
+    removed = prune_missing_symbols(conn, "T1", {"s:new"})
+    rows = conn.execute("MATCH (s:Symbol {target_id: 'T1'}) RETURN s.usr ORDER BY s.usr").get_all()
+
+    assert removed == 1
+    assert rows == [["s:new"]]
+
+
+def test_prune_missing_symbols_keeps_other_targets(conn):
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:shared", precise_id="s:shared", name="shared", kind="swift.func",
+                     module="M", language="swift", file_path="/src/shared.swift",
+                     signature="", access_level="public"),
+    ], target_id="T1")
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:shared", precise_id="s:shared", name="shared", kind="swift.func",
+                     module="M", language="swift", file_path="/src/shared.swift",
+                     signature="", access_level="public"),
+    ], target_id="T2")
+
+    removed = prune_missing_symbols(conn, "T1", set())
+    rows = conn.execute("MATCH (s:Symbol) RETURN s.id ORDER BY s.id").get_all()
+
+    assert removed == 1
+    assert rows == [["T2:s:shared"]]

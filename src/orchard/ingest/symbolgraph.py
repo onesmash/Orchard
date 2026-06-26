@@ -14,6 +14,7 @@ class SymbolRecord:
     signature: str | None
     access_level: str
     container_usr: str | None = None
+    swift_display_name: str | None = None
 
 
 @dataclass

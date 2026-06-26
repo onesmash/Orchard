@@ -7,7 +7,8 @@ _SAMPLE_LINES = [
     json.dumps({"kind": "occurrence", "usr": "s:MyFunc", "file": "/src/f.swift",
                 "line": 10, "column": 5, "role": "definition"}),
     json.dumps({"kind": "relation", "from_usr": "s:MyFunc", "to_usr": "s:OtherFunc",
-                "role": "calledBy"}),
+                "role": "calledBy", "occurrence_role": "call",
+                "file": "/src/f.swift", "line": 10, "column": 12}),
 ]
 
 def _mock_cli(lines):
@@ -34,6 +35,10 @@ def test_read_index_store_parses_relations():
     assert rel.from_usr == "s:MyFunc"
     assert rel.to_usr == "s:OtherFunc"
     assert rel.role == "calledBy"
+    assert rel.occurrence_role == "call"
+    assert rel.file_path == "/src/f.swift"
+    assert rel.line == 10
+    assert rel.col == 12
 
 def test_read_index_store_empty_store():
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli([])):
