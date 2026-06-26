@@ -15,7 +15,6 @@ dist/
 .superpowers/
 AGENTS.md
 CLAUDE.md
-apple-semantic-grapgh.md
 
 # Swift CLI build artifacts and installed binary (build via swift/build-cli.sh)
 swift/orchard-indexstore-reader/.build/
