@@ -79,18 +79,56 @@ def cmd_hierarchy(args: list[str]):
 def cmd_ingest(args: list[str]):
     import argparse
     ap = argparse.ArgumentParser(prog="orchard ingest")
-    ap.add_argument("--index-store", required=True)
-    ap.add_argument("--source-root", default="")
-    ap.add_argument("--target", default="Zoom")
-    ap.add_argument("--db", default="")
+    ap.add_argument("--index-store", default="",
+                    help="Path to IndexStore/DataStore (auto-detected if omitted)")
+    ap.add_argument("--project-dir", default=os.getcwd(),
+                    help="Xcode project directory for auto-detection (default: cwd)")
+    ap.add_argument("--source-root", default="",
+                    help="Only emit symbols under this directory")
+    ap.add_argument("--target", default="Zoom",
+                    help="Build target identifier")
+    ap.add_argument("--db", default="",
+                    help="Graph database path")
     ns = ap.parse_args(args)
     conn = _conn(ns.db)
     from orchard.ingest.indexstore import read_index_store
     from orchard.normalize.identity import upsert_symbols, upsert_calls, upsert_indexstore_rels
     from orchard.ingest.symbolgraph import SymbolRecord
     from orchard.pipeline.runner import _map_indexstore_kind
+    from pathlib import Path
+    from orchard.build.xcode_settings import find_xcode_project, match_derived_data
+
+    index_store = ns.index_store
+    source_root = ns.source_root or None
+
+    # Auto-detect IndexStore from Xcode project when --index-store is omitted.
+    if not index_store:
+        project = find_xcode_project(ns.project_dir)
+        if project is None:
+            print("error: no --index-store given and no .xcodeproj/.xcworkspace found "
+                  "from current directory", file=sys.stderr)
+            sys.exit(2)
+        candidates = match_derived_data(project)
+        if not candidates:
+            print(f"error: no DerivedData found for project '{project}'. "
+                  "Run an Xcode build first or pass --index-store.", file=sys.stderr)
+            sys.exit(2)
+        # Use the most recently accessed candidate.
+        dd_dir, index_store, _ = candidates[0]
+        target = ns.target if ns.target != "Zoom" else Path(project).stem
+        if not source_root:
+            source_root = ns.project_dir  # project root from user's --project-dir
+        print(f"auto-detected: --index-store {index_store}")
+        print(f"auto-detected: --target {target}")
+        if source_root:
+            print(f"auto-detected: --source-root {source_root}")
+        if len(candidates) > 1:
+            print(f"note: {len(candidates)} matching DerivedData dirs found, using newest:")
+            for dd, _, acc in candidates[:3]:
+                print(f"  {dd}  (accessed {acc})")
+
     t0 = time.monotonic()
-    r = read_index_store(ns.index_store, ns.target, source_root=ns.source_root or None)
+    r = read_index_store(index_store, ns.target, source_root=source_root)
     print(f"ingest: {r.elapsed_s}s  {len(r.symbols):,} syms  {len(r.relations):,} rels")
     syms = [SymbolRecord(usr=s.usr, precise_id="", name=s.name,
                          kind=_map_indexstore_kind(s.symbol_kind),
