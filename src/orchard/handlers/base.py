@@ -34,3 +34,4 @@ class BaseToolResponse:
     evidence_sources: list[str] = field(default_factory=list)
     confidence: float | None = None
     open_gaps: list[str] = field(default_factory=list)
+    noise_removed: int = 0

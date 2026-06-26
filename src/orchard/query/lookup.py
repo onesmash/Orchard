@@ -5,8 +5,44 @@ Inspired by SourceKit-LSP's ``CheckedIndex`` wrapper around IndexStoreDB.
 
 from __future__ import annotations
 
+import re
+
 from orchard.normalize.identity import make_symbol_id
 from orchard.validation.freshness import freshness_for, GraphFreshness
+
+# ---------------------------------------------------------------------------
+# Framework callback detection
+# ---------------------------------------------------------------------------
+
+# Anchored regex patterns matching known Apple framework callback selectors.
+# Each pattern is tested with re.match() so it is implicitly anchored at ^.
+_FRAMEWORK_CALLBACK_PATTERNS: list[str] = [
+    # UIApplicationDelegate
+    r"^(application|userNotificationCenter):",
+    # UISceneDelegate
+    r"^(scene|windowScene):",
+    # UIViewController lifecycle (allow optional trailing colon for ObjC selectors)
+    r"^(viewDidLoad|viewWillAppear|viewDidAppear|viewWillDisappear|"
+    r"viewDidDisappear|viewWillLayoutSubviews|viewDidLayoutSubviews|"
+    r"loadView|awakeFromNib|prepareForSegue:sender:|didReceiveMemoryWarning):?$",
+    # UITableViewDataSource
+    r"^(tableView:numberOfRows|tableView:cellForRow|tableView:numberOfSections|"
+    r"numberOfSectionsIn)",
+    # UICollectionViewDataSource
+    r"^(collectionView:numberOfItems|collectionView:cellForItem|"
+    r"numberOfSectionsIn)",
+]
+
+_compiled_patterns: list[re.Pattern] = [re.compile(p) for p in _FRAMEWORK_CALLBACK_PATTERNS]
+
+
+def is_framework_callback(name: str) -> bool:
+    """Return True if *name* matches a known Apple framework callback selector.
+
+    Uses anchored regex patterns to avoid false positives (e.g. ``^application:``
+    will NOT match ``configureApplication:``).
+    """
+    return any(p.match(name) for p in _compiled_patterns)
 
 
 class GraphLookup:
@@ -133,6 +169,46 @@ class GraphLookup:
                 },
             )
         return list(callees.values())
+
+    # ---- Class methods (Contains edge traversal) ---------------------------
+
+    def methods_of(self, usr: str, target_id: str = "") -> list[dict]:
+        """Return all method symbols contained by the given class/struct/enum/protocol.
+
+        Traverses ``Contains`` edges from the parent symbol to child symbols
+        where ``child.kind = 'method'``.  Returns a list of dicts with keys
+        ``usr``, ``name``, ``kind``, ``language``.
+        """
+        sym_id = make_symbol_id(target_id, usr)
+        rows = self._conn.execute(
+            "MATCH (parent:Symbol {id: $id})-[:Contains]->(child:Symbol) "
+            "WHERE child.kind = 'method' "
+            "RETURN DISTINCT child.usr, child.name, child.kind, child.language "
+            "ORDER BY child.name",
+            {"id": sym_id},
+        ).get_all()
+        return [
+            {"usr": r[0], "name": r[1], "kind": r[2], "language": r[3]}
+            for r in rows
+        ]
+
+    # ---- Module statistics --------------------------------------------------
+
+    def module_stats(self) -> list[dict]:
+        """Return per-module symbol counts grouped by kind.
+
+        Returns a list of dicts with keys ``module``, ``kind``, ``count``,
+        sorted by total symbols per module descending.
+        """
+        rows = self._conn.execute(
+            "MATCH (s:Symbol) "
+            "RETURN s.module AS module, s.kind AS kind, count(*) AS c "
+            "ORDER BY module, c DESC"
+        ).get_all()
+        return [
+            {"module": r[0], "kind": r[1], "count": r[2]}
+            for r in rows
+        ]
 
     # ---- Primary definition ------------------------------------------------
 

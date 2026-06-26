@@ -57,17 +57,17 @@ def _get_conn():
 TOOLS = [
     Tool(
         name="orchard_search",
-        description="Search for symbols by name (substring match). Returns USR, name, kind, language, and module for each match.",
+        description="Search for symbols by name (substring match) or find all methods of a class. When class_name is provided, finds matching classes and lists their methods. Returns USR, name, kind, language, and module for each match.",
         inputSchema={
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Substring to search for in symbol names (case-sensitive)"},
+                "name": {"type": "string", "description": "Substring to search for in symbol names (case-sensitive). Use this OR class_name."},
+                "class_name": {"type": "string", "description": "Search for a class/struct/enum/protocol by name and list all its methods."},
                 "target": {"type": "string", "description": "Filter by module/target name (e.g. TheModuleName)"},
-                "kind": {"type": "string", "description": "Filter by symbol kind (class, method, function, etc.)"},
+                "kind": {"type": "string", "description": "Filter by symbol kind (class, method, function, etc.). In class mode, filters returned methods."},
                 "language": {"type": "string", "description": "Filter by language (swift, objc, c)"},
                 "limit": {"type": "integer", "description": "Max results (default 20)"},
             },
-            "required": ["name"],
         },
     ),
     Tool(
@@ -78,6 +78,7 @@ TOOLS = [
             "properties": {
                 "usr": {"type": "string", "description": "USR (Unified Symbol Resolution) of the target symbol"},
                 "target_id": {"type": "string", "description": "Build target for disambiguation (e.g. TheModuleName)"},
+                "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
             },
             "required": ["usr", "target_id"],
         },
@@ -90,6 +91,7 @@ TOOLS = [
             "properties": {
                 "usr": {"type": "string", "description": "USR of the source symbol"},
                 "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
+                "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
             },
             "required": ["usr", "target_id"],
         },
@@ -139,6 +141,17 @@ TOOLS = [
             "properties": {},
         },
     ),
+    Tool(
+        name="orchard_audit",
+        description="Module coverage report: per-module symbol counts by kind. When project_dir is given, compares graph modules against Xcode workspace targets and flags gaps (< 100 symbols for a framework target).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project_dir": {"type": "string", "description": "Xcode project directory for target discovery (optional)"},
+                "format": {"type": "string", "description": "Output format: table or json (default table)"},
+            },
+        },
+    ),
 ]
 
 
@@ -147,9 +160,17 @@ TOOLS = [
 # ---------------------------------------------------------------------------
 
 def _do_search(args: dict) -> str:
+    """Search symbols by name or find class methods."""
+    class_name = args.get("class_name", "")
+    if class_name:
+        return _do_search_class(args)
+    return _do_search_name(args)
+
+
+def _do_search_name(args: dict) -> str:
     """Search symbols by name — inline Cypher, no handler overhead."""
     import re as _re
-    raw = args["name"]
+    raw = args.get("name", "")
     if _re.search(r'[.*+?^$\[\](){}\\|]', raw):
         pattern = raw
     else:
@@ -183,8 +204,64 @@ def _do_search(args: dict) -> str:
     return json.dumps({"count": len(results), "results": results}, ensure_ascii=False, indent=2)
 
 
-def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict) -> str:
-    """Generic dispatch: import → build request → call handler → JSON."""
+def _do_search_class(args: dict) -> str:
+    """Class search: find matching classes and list their methods."""
+    import re as _re
+    from orchard.query.lookup import GraphLookup
+
+    raw = args["class_name"]
+    if _re.search(r'[.*+?^$\[\](){}\\|]', raw):
+        class_pattern = raw
+    else:
+        class_pattern = f".*{raw}.*"
+
+    target = args.get("target", "")
+    kind_filter = args.get("kind", "")
+    limit = args.get("limit", 20)
+
+    conn = _get_conn()
+    gl = GraphLookup(conn)
+
+    where = [
+        "s.name =~ $pattern",
+        "s.kind IN ['class', 'struct', 'enum', 'protocol']",
+    ]
+    params: dict = {"pattern": class_pattern, "limit": limit}
+    if target:
+        where.append("s.module = $target")
+        params["target"] = target
+
+    rows = conn.execute(
+        f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
+        "RETURN s.usr, s.name, s.kind, s.module "
+        "ORDER BY s.name LIMIT $limit",
+        params,
+    ).get_all()
+
+    owners = []
+    for r in rows:
+        owner = {"usr": r[0], "name": r[1], "kind": r[2], "module": r[3]}
+        methods = gl.methods_of(r[0], target)
+        if kind_filter:
+            methods = [m for m in methods if m["kind"] == kind_filter]
+        owners.append({"owner": owner, "methods": methods})
+
+    total_methods = 0
+    for entry in owners:
+        if total_methods >= limit:
+            entry["methods"] = []
+        elif total_methods + len(entry["methods"]) > limit:
+            entry["methods"] = entry["methods"][:limit - total_methods]
+        total_methods += len(entry["methods"])
+
+    return json.dumps({
+        "owners": owners,
+        "total_methods": sum(len(e["methods"]) for e in owners),
+    }, ensure_ascii=False, indent=2)
+
+
+def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, include_noise: bool = True) -> str:
+    """Generic dispatch: import → build request → call handler → noise filter → JSON."""
     import importlib
     mod = importlib.import_module(f"orchard.handlers.{module_name}")
     fn = getattr(mod, attr)
@@ -196,6 +273,11 @@ def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict) 
     )
     conn = _get_conn()
     result = fn(conn, req)
+    if not include_noise:
+        from orchard.query.noise_filter import filter_noise
+        filtered, removed = filter_noise(result.data)
+        result.data = filtered
+        result.noise_removed = removed
     return json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=str)
 
 
@@ -211,14 +293,47 @@ def _do_stats(_args: dict) -> str:
     return "\n".join(lines)
 
 
+def _do_audit(args: dict) -> str:
+    """Module coverage report: symbol counts by kind, Xcode target gap detection."""
+    from orchard.query.lookup import GraphLookup
+    from orchard.cli import _discover_xcode_targets, _detect_gaps, _format_audit_table, ANOMALY_THRESHOLD
+
+    conn = _get_conn()
+    gl = GraphLookup(conn)
+    stats = gl.module_stats()
+
+    project_dir = args.get("project_dir", "")
+    fmt = args.get("format", "table")
+    xcode_targets = None
+    if project_dir:
+        xcode_targets = _discover_xcode_targets(project_dir)
+
+    if fmt == "json":
+        result = {
+            "modules": stats,
+            "xcode_targets": xcode_targets,
+            "anomaly_threshold": ANOMALY_THRESHOLD,
+        }
+        if xcode_targets:
+            result["gaps"] = _detect_gaps(stats, xcode_targets)
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    else:
+        table = _format_audit_table(stats, xcode_targets)
+        total_symbols = sum(r["count"] for r in stats)
+        unique_modules = len({r["module"] for r in stats})
+        unique_kinds = len({r["kind"] for r in stats})
+        return table + f"\n\nTotal: {total_symbols:,} symbols across {unique_modules} modules ({unique_kinds} kinds)"
+
+
 HANDLERS: dict[str, callable] = {
     "orchard_search": _do_search,
-    "orchard_find_callers": lambda a: _do_handler("callers", "find_callers", "CallerRequest", a),
-    "orchard_find_callees": lambda a: _do_handler("callees", "find_callees", "CalleeRequest", a),
+    "orchard_find_callers": lambda a: _do_handler("callers", "find_callers", "CallerRequest", a, include_noise=a.get("include_noise", False)),
+    "orchard_find_callees": lambda a: _do_handler("callees", "find_callees", "CalleeRequest", a, include_noise=a.get("include_noise", False)),
     "orchard_impact": lambda a: _do_handler("impact", "impact_analysis", "ImpactRequest", a),
     "orchard_symbol": lambda a: _do_handler("symbol_context", "get_symbol_context", "SymbolContextRequest", a),
     "orchard_hierarchy": lambda a: _do_handler("type_hierarchy", "get_type_hierarchy", "TypeHierarchyRequest", a),
     "orchard_stats": _do_stats,
+    "orchard_audit": _do_audit,
 }
 
 

@@ -88,22 +88,44 @@ def _default_build_id(conn, target_id: str = "") -> str | None:
     return snapshot["id"] if snapshot else None
 
 
+def _parse_caller_callee_args(args: list[str]) -> tuple[str, str, str, bool]:
+    """Parse --usr, --target, --db, --include-noise for caller/callee commands."""
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--usr", required=True)
+    ap.add_argument("--target", default="")
+    ap.add_argument("--db", default="")
+    ap.add_argument("--include-noise", action="store_true", default=False)
+    ns = ap.parse_args(args)
+    return ns.usr, ns.target, ns.db, ns.include_noise
+
+
 def cmd_find_callers(args: list[str]):
-    usr, target, db = _parse_common(args)
+    usr, target, db, include_noise = _parse_caller_callee_args(args)
     from orchard.handlers.callers import CallerRequest, find_callers
     conn = _conn(db)
     build_id = _default_build_id(conn, target)
     r = find_callers(conn, CallerRequest(usr=usr, target_id=target, build_id=build_id))
+    if not include_noise:
+        from orchard.query.noise_filter import filter_noise
+        filtered, removed = filter_noise(r.data)
+        r.data = filtered
+        r.noise_removed = removed
     _print_json(r.__dict__)
     conn.close()
 
 
 def cmd_find_callees(args: list[str]):
-    usr, target, db = _parse_common(args)
+    usr, target, db, include_noise = _parse_caller_callee_args(args)
     from orchard.handlers.callees import CalleeRequest, find_callees
     conn = _conn(db)
     build_id = _default_build_id(conn, target)
     r = find_callees(conn, CalleeRequest(usr=usr, target_id=target, build_id=build_id))
+    if not include_noise:
+        from orchard.query.noise_filter import filter_noise
+        filtered, removed = filter_noise(r.data)
+        r.data = filtered
+        r.noise_removed = removed
     _print_json(r.__dict__)
     conn.close()
 
@@ -148,7 +170,8 @@ def cmd_ingest(args: list[str]):
     ap.add_argument("--source-root", default="",
                     help="Only emit symbols under this directory")
     ap.add_argument("--target", default="",
-                    help="Build target identifier (auto-detected from project name)")
+                    help="Build target identifier(s), comma-separated for multiple. "
+                         "Auto-detected from project name if omitted.")
     ap.add_argument("--db", default="",
                     help="Graph database path (default: <project>/.orchard/graph.db)")
     ap.add_argument("--incremental", action="store_true",
@@ -167,6 +190,9 @@ def cmd_ingest(args: list[str]):
 
     index_store = ns.index_store
     source_root = str(Path(ns.source_root).resolve()) if ns.source_root else None
+
+    # Parse comma-separated targets.
+    targets: list[str] = [t.strip() for t in ns.target.split(",") if t.strip()] if ns.target else []
 
     # Auto-detect IndexStore from Xcode project when --index-store is omitted.
     if not index_store:
@@ -190,11 +216,12 @@ def cmd_ingest(args: list[str]):
             ns.db = str(Path(project).parent / ".orchard" / "graph.db")
         # Use the most recently accessed candidate.
         dd_dir, index_store, _ = candidates[0]
-        ns.target = ns.target or Path(project).stem  # auto-detect from project name
+        if not targets:
+            targets = [Path(project).stem]  # auto-detect from project name
         if not source_root:
             source_root = str(Path(ns.project_dir).resolve())
         print(f"auto-detected: --index-store {index_store}")
-        print(f"auto-detected: --target {ns.target}")
+        print(f"auto-detected: --target {','.join(targets)}")
         if source_root:
             print(f"auto-detected: --source-root {source_root}")
         if len(candidates) > 1:
@@ -203,9 +230,14 @@ def cmd_ingest(args: list[str]):
                 print(f"  {dd}  (accessed {acc})")
     elif not ns.db:
         ns.db = str(Path(ns.project_dir) / ".orchard" / "graph.db")
+    if not targets:
+        print("error: --target is required when no Xcode project is auto-detected",
+              file=sys.stderr)
+        sys.exit(2)
 
     conn = _conn(ns.db)
     project_dir = str(Path(ns.project_dir).resolve())
+    index_store_paths = {t: index_store for t in targets}
 
     # Resolve incremental mode.
     incremental_since: float | None = None
@@ -215,78 +247,177 @@ def cmd_ingest(args: list[str]):
         if old_state:
             incremental_since = old_state.get("last_ingest_ts")
             print(f"incremental: last ingest was {incremental_since}")
+            prev_targets = old_state.get("targets", [])
+            if prev_targets:
+                print(f"incremental: previously ingested targets: "
+                      f"{','.join(prev_targets)}")
         else:
             print("incremental: no previous state found, falling back to full ingest")
 
-    # L1: target-level fast path — if no unit files changed since last ingest,
-    # skip the entire CLI scan (~100ms vs ~90s).
+    # L1: IndexStore-level fast path — if no unit files changed since last
+    # ingest, skip the entire scan (~100ms vs ~90s).  The unit directory mtime
+    # is shared across all targets in the same IndexStore.
     if ns.incremental and incremental_since is not None:
         unit_ts = _unit_dir_mtime(index_store)
         if unit_ts <= incremental_since:
-            print(f"incremental: no new units (unit mtime {unit_ts} <= {incremental_since})")
+            print(f"incremental: no new units (unit mtime {unit_ts} <= "
+                  f"{incremental_since})")
             conn.close()
             return
 
     t0 = time.monotonic()
     r, file_status = read_index_store(
-        index_store, ns.target, source_root=source_root,
+        index_store, targets[0], source_root=source_root,
         incremental_since=incremental_since,
     )
 
-    # Incremental cleanup: delete stale symbols for changed and deleted files.
-    deleted_count = 0
+    # Incremental cleanup: delete stale symbols for changed and deleted files
+    # across ALL previously ingested targets.
+    deleted_total = 0
     if file_status:
         changed = file_status.get("changed", [])
         all_files = file_status.get("all", [])
         old_files = set(old_state.get("files", []) if old_state else [])
+        old_targets = old_state.get("targets", targets) if old_state else targets
         deleted_files = old_files - set(all_files)
         to_clean = changed + list(deleted_files)
         if to_clean:
-            print(f"incremental: cleaning {len(changed)} changed + {len(deleted_files)} deleted files...")
-            deleted_count = delete_symbols_for_files(conn, ns.target, to_clean)
-            print(f"incremental: {deleted_count:,} old symbols deleted")
+            print(f"incremental: cleaning {len(changed)} changed + "
+                  f"{len(deleted_files)} deleted files across "
+                  f"{len(old_targets)} target(s)...")
+            for tgt in old_targets:
+                c = delete_symbols_for_files(conn, tgt, to_clean)
+                deleted_total += c
+            print(f"incremental: {deleted_total:,} old symbols deleted")
         if not r.symbols and not r.relations:
             # No changes — update state and exit.
             all_list = file_status.get("all", []) if file_status else []
-            save_state(project_dir, touch_timestamp(), ns.target, index_store, all_list)
+            save_state(project_dir, touch_timestamp(), targets,
+                       index_store_paths, files=all_list)
             print("incremental: no changes detected")
             conn.close()
             return
 
-    print(f"ingest: {r.elapsed_s}s  {len(r.symbols):,} syms  {len(r.relations):,} rels")
-    syms = [SymbolRecord(usr=s.usr, precise_id="", name=s.name,
-                         kind=_map_indexstore_kind(s.symbol_kind),
-                         module=s.module or ns.target, language=s.language,
-                         file_path=s.file_path or "", signature="", access_level="public",
-                         container_usr=None) for s in r.symbols]
-    upsert_symbols(conn, syms, ns.target); print("symbols done")
-    upsert_calls(conn, r.relations, ns.target, source="indexstore", build_id="cli")
-    print("calls done")
-    upsert_indexstore_rels(conn, r.relations, ns.target, source="indexstore", build_id="cli")
+    print(f"ingest: {r.elapsed_s}s  {len(r.symbols):,} syms  "
+          f"{len(r.relations):,} rels  {len(targets)} target(s)")
+
+    # Upsert all symbols and relations for each target.
+    # The IndexStore contains records for all built targets; each target gets
+    # its own scoped copy in the graph keyed by ``{target}:{usr}``.
+    for i, target in enumerate(targets):
+        syms = [SymbolRecord(usr=s.usr, precise_id="", name=s.name,
+                             kind=_map_indexstore_kind(s.symbol_kind),
+                             module=s.module or target, language=s.language,
+                             file_path=s.file_path or "", signature="",
+                             access_level="public", container_usr=None)
+                for s in r.symbols]
+        upsert_symbols(conn, syms, target)
+        upsert_calls(conn, r.relations, target, source="indexstore",
+                     build_id="cli")
+        upsert_indexstore_rels(conn, r.relations, target, source="indexstore",
+                               build_id="cli")
+        print(f"  [{i+1}/{len(targets)}] {target}: {len(syms):,} syms, "
+              f"{len(r.relations):,} rels")
+
     print(f"done  {time.monotonic()-t0:.0f}s")
 
     # Persist state for next incremental run.
     # Full ingest: only save timestamp (no file list — we don't need it).
     # Incremental: save timestamp + file list from CLI output.
     if file_status and "all" in file_status:
-        save_state(project_dir, touch_timestamp(), ns.target, index_store,
+        save_state(project_dir, touch_timestamp(), targets, index_store_paths,
                    files=file_status["all"])
     else:
-        save_state(project_dir, touch_timestamp(), ns.target, index_store)
+        save_state(project_dir, touch_timestamp(), targets, index_store_paths)
 
 
 def cmd_search(args: list[str]):
-    """Search symbols by name pattern (regex, case-sensitive)."""
+    """Search symbols by name pattern (regex, case-sensitive).
+
+    Two modes:
+
+    * **Name search** (default): ``--name <pattern>`` matches symbol names.
+    * **Class search**: ``--class <ClassName>`` finds all methods of matching
+      class/struct/enum/protocol symbols.  Combines with ``--target``,
+      ``--kind`` (filters returned methods), and ``--limit``.
+    """
     import argparse
     ap = argparse.ArgumentParser(prog="orchard search")
-    ap.add_argument("--name", required=True, help="Regex pattern for symbol name (case-sensitive)")
+    ap.add_argument("--name", default="", help="Regex pattern for symbol name (case-sensitive)")
+    ap.add_argument("--class", "-c", dest="class_name", default="",
+                    help="Search for a class/struct/enum/protocol by name and list its methods")
     ap.add_argument("--target", default="", help="Filter by target/module")
     ap.add_argument("--kind", default="", help="Filter by kind (class, method, function, etc.)")
     ap.add_argument("--language", default="", help="Filter by language (swift, objc, c, etc.)")
     ap.add_argument("--limit", type=int, default=20)
     ap.add_argument("--db", default="")
     ns = ap.parse_args(args)
+
+    if not ns.name and not ns.class_name:
+        ap.error("either --name or --class is required")
+
     conn = _conn(ns.db)
+
+    if ns.class_name:
+        _cmd_search_class(conn, ns)
+    else:
+        _cmd_search_name(conn, ns)
+
+    conn.close()
+
+
+def _cmd_search_class(conn, ns):
+    """Search for a class by name and list its methods."""
+    from orchard.query.lookup import GraphLookup
+
+    gl = GraphLookup(conn)
+    class_pattern = _compile_search_pattern(ns.class_name)
+
+    # Step 1: find matching class/struct/enum/protocol symbols.
+    where = [
+        "s.name =~ $pattern",
+        "s.kind IN ['class', 'struct', 'enum', 'protocol']",
+    ]
+    params: dict = {"pattern": class_pattern, "limit": ns.limit}
+    if ns.target:
+        where.append("s.module = $target")
+        params["target"] = ns.target
+
+    rows = conn.execute(
+        f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
+        "RETURN s.usr, s.name, s.kind, s.module "
+        "ORDER BY s.name LIMIT $limit",
+        params,
+    ).get_all()
+
+    owners = []
+    for r in rows:
+        owner = {"usr": r[0], "name": r[1], "kind": r[2], "module": r[3]}
+        # Step 2: get methods for each matching class.
+        methods = gl.methods_of(r[0], ns.target)
+        # Step 3: apply --kind filter to returned methods (if given).
+        if ns.kind:
+            methods = [m for m in methods if m["kind"] == ns.kind]
+        # Step 4: apply --limit to total methods across all owners.
+        owners.append({"owner": owner, "methods": methods})
+
+    # Trim total method count across all owners to --limit.
+    total_methods = 0
+    for entry in owners:
+        if total_methods >= ns.limit:
+            entry["methods"] = []
+        elif total_methods + len(entry["methods"]) > ns.limit:
+            entry["methods"] = entry["methods"][:ns.limit - total_methods]
+        total_methods += len(entry["methods"])
+
+    _print_json({
+        "owners": owners,
+        "total_methods": sum(len(e["methods"]) for e in owners),
+    })
+
+
+def _cmd_search_name(conn, ns):
+    """Existing name-based symbol search."""
     pattern = _compile_search_pattern(ns.name)
     where = ["s.name =~ $pattern"]
     params: dict = {"pattern": pattern, "limit": ns.limit}
@@ -307,7 +438,6 @@ def cmd_search(args: list[str]):
     ).get_all()
     results = [{"usr": r[0], "name": r[1], "kind": r[2], "language": r[3], "module": r[4]} for r in rows]
     _print_json({"count": len(results), "results": results})
-    conn.close()
 
 
 def cmd_pipe(args: list[str]):
@@ -322,6 +452,9 @@ def cmd_pipe(args: list[str]):
         {"cmd":"search","args":{"name":"initWithProvider","target":"YourModule"}}
         {"cmd":"find_callers","args":{"usr":"c:objc...(im)initWithProvider:","target_id":"YourModule"}}
         {"cmd":"find_callees","args":{"usr":"c:objc...(im)initWithProvider:","target_id":"YourModule"}}
+
+    For find_callers / find_callees, add ``"include_noise": true`` to keep
+    C++ operator/logging noise in the output (filtered by default).
 
     Results are written as JSONL to stdout (one line per input).
     Errors are caught per-line — one bad query won't kill the session.
@@ -358,15 +491,27 @@ def _execute_pipe_cmd(conn, cmd: str, args: dict):
 
     if cmd == "find_callers":
         from orchard.handlers.callers import CallerRequest, find_callers
-        return find_callers(conn, CallerRequest(
+        r = find_callers(conn, CallerRequest(
             usr=args.get("usr", ""), target_id=args.get("target_id", "")
-        )).__dict__
+        ))
+        if not args.get("include_noise", False):
+            from orchard.query.noise_filter import filter_noise
+            filtered, removed = filter_noise(r.data)
+            r.data = filtered
+            r.noise_removed = removed
+        return r.__dict__
 
     if cmd == "find_callees":
         from orchard.handlers.callees import CalleeRequest, find_callees
-        return find_callees(conn, CalleeRequest(
+        r = find_callees(conn, CalleeRequest(
             usr=args.get("usr", ""), target_id=args.get("target_id", "")
-        )).__dict__
+        ))
+        if not args.get("include_noise", False):
+            from orchard.query.noise_filter import filter_noise
+            filtered, removed = filter_noise(r.data)
+            r.data = filtered
+            r.noise_removed = removed
+        return r.__dict__
 
     if cmd == "impact":
         from orchard.handlers.impact import ImpactRequest, impact_analysis
@@ -387,6 +532,9 @@ def _execute_pipe_cmd(conn, cmd: str, args: dict):
             usr=args.get("usr", ""), target_id=args.get("target_id", "")
         )).__dict__
 
+    if cmd == "audit":
+        return _execute_pipe_audit(conn, args)
+
     raise ValueError(f"unknown pipe command: {cmd}")
 
 
@@ -403,7 +551,68 @@ def _compile_search_pattern(raw: str) -> str:
 
 
 def _pipe_search(conn, args: dict):
-    """Direct search query — no handler overhead for this path."""
+    """Direct search query — no handler overhead for this path.
+
+    Two modes:
+    * ``class`` provided → class-search: find matching classes and list their methods.
+    * ``name`` provided  → name-search: match symbol names by regex.
+    """
+    class_name = args.get("class", "")
+    if class_name:
+        return _pipe_search_class(conn, args)
+    return _pipe_search_name(conn, args)
+
+
+def _pipe_search_class(conn, args: dict):
+    """Pipe-mode class search: find class by name and list its methods."""
+    from orchard.query.lookup import GraphLookup
+
+    gl = GraphLookup(conn)
+    class_pattern = _compile_search_pattern(args["class"])
+    target = args.get("target", "")
+    kind_filter = args.get("kind", "")
+    limit = args.get("limit", 20)
+
+    where = [
+        "s.name =~ $pattern",
+        "s.kind IN ['class', 'struct', 'enum', 'protocol']",
+    ]
+    params: dict = {"pattern": class_pattern, "limit": limit}
+    if target:
+        where.append("s.module = $target")
+        params["target"] = target
+
+    rows = conn.execute(
+        f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
+        "RETURN s.usr, s.name, s.kind, s.module "
+        "ORDER BY s.name LIMIT $limit",
+        params,
+    ).get_all()
+
+    owners = []
+    for r in rows:
+        owner = {"usr": r[0], "name": r[1], "kind": r[2], "module": r[3]}
+        methods = gl.methods_of(r[0], target)
+        if kind_filter:
+            methods = [m for m in methods if m["kind"] == kind_filter]
+        owners.append({"owner": owner, "methods": methods})
+
+    total_methods = 0
+    for entry in owners:
+        if total_methods >= limit:
+            entry["methods"] = []
+        elif total_methods + len(entry["methods"]) > limit:
+            entry["methods"] = entry["methods"][:limit - total_methods]
+        total_methods += len(entry["methods"])
+
+    return {
+        "owners": owners,
+        "total_methods": sum(len(e["methods"]) for e in owners),
+    }
+
+
+def _pipe_search_name(conn, args: dict):
+    """Pipe-mode name search: match symbol names by regex."""
     pattern = _compile_search_pattern(args.get("name", ""))
     target = args.get("target", "")
     kind = args.get("kind", "")
@@ -452,6 +661,236 @@ def cmd_stats(args: list[str]):
 
 
 # ---------------------------------------------------------------------------
+# Audit command
+# ---------------------------------------------------------------------------
+
+ANOMALY_THRESHOLD = 100
+"""Modules with fewer than this many symbols are flagged as potential gaps."""
+
+
+def _discover_xcode_targets(project_dir: str) -> list[str]:
+    """Discover Xcode workspace/project targets via ``xcodebuild -list``.
+
+    Returns a list of target names, or an empty list on failure.
+    """
+    import subprocess
+    from pathlib import Path
+
+    root = Path(project_dir).resolve()
+    # Prefer workspace over project.
+    workspace = None
+    project = None
+    for entry in root.iterdir():
+        if entry.suffix == ".xcworkspace" and not entry.name.startswith("."):
+            workspace = str(entry)
+            break
+        if entry.suffix == ".xcodeproj" and not entry.name.startswith("."):
+            project = str(entry)
+
+    list_args: list[str] = []
+    if workspace:
+        list_args = ["xcodebuild", "-list", "-workspace", workspace]
+    elif project:
+        list_args = ["xcodebuild", "-list", "-project", project]
+    else:
+        return []
+
+    try:
+        result = subprocess.run(
+            list_args,
+            capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    # Parse targets from xcodebuild -list output:
+    #     Targets:
+    #         TargetA
+    #         TargetB
+    targets: list[str] = []
+    in_targets = False
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped == "Targets:":
+            in_targets = True
+            continue
+        if in_targets:
+            if stripped == "" or stripped.startswith("Build Configurations:") or stripped.startswith("Schemes:"):
+                break
+            targets.append(stripped)
+
+    return targets
+
+
+def _format_audit_table(stats: list[dict], xcode_targets: list[str] | None = None) -> str:
+    """Format per-module symbol counts as a text table.
+
+    Pivots per-kind counts into columns.  Returns a multi-line string.
+    """
+    from collections import defaultdict
+
+    # Pivot: {module: {kind: count}}.  Treat None module as "(unknown)".
+    modules: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    all_kinds: set[str] = set()
+    for row in stats:
+        mod = row["module"] or "(unknown)"
+        kind = row["kind"]
+        cnt = row["count"]
+        modules[mod][kind] += cnt
+        all_kinds.add(kind)
+
+    # Total per module.
+    total_by_module = {mod: sum(d.values()) for mod, d in modules.items()}
+
+    # Sort modules by total symbols descending.
+    sorted_modules = sorted(modules, key=lambda m: total_by_module[m], reverse=True)
+
+    # Build column order: Symbols, then non-standard alphabetically.
+    priority_kinds = {"class", "method", "protocol", "struct", "enum", "extension",
+                      "function", "property", "variable", "typealias"}
+    kind_cols = [k for k in priority_kinds if k in all_kinds]
+    kind_cols += sorted(all_kinds - set(priority_kinds))
+    col_headers = ["Module", "Symbols"] + [k.capitalize() for k in kind_cols]
+    all_cols = ["module", "total"] + kind_cols
+
+    # Determine anomaly flags.
+    anomaly_mods: set[str] = set()
+    if xcode_targets:
+        xcode_set = set(xcode_targets)
+        for mod in sorted_modules:
+            if mod in xcode_set and total_by_module[mod] < ANOMALY_THRESHOLD:
+                anomaly_mods.add(mod)
+
+    # Collect rows.
+    rows: list[list[str]] = []
+    for mod in sorted_modules:
+        flag = " ⚠ UNEXPECTED GAP" if mod in anomaly_mods else ""
+        row = [mod + flag, str(total_by_module[mod])]
+        for k in kind_cols:
+            row.append(str(modules[mod].get(k, 0)))
+        rows.append(row)
+
+    # Compute column widths.
+    widths = [len(h) for h in col_headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    # Build output.
+    def fmt_row(cells: list[str]) -> str:
+        return " | ".join(cell.ljust(w) for cell, w in zip(cells, widths))
+
+    lines = [fmt_row(col_headers), "-|-".join("-" * w for w in widths)]
+    for row in rows:
+        lines.append(fmt_row(row))
+
+    if anomaly_mods:
+        lines.append("")
+        lines.append(f"⚠  {len(anomaly_mods)} module(s) below threshold ({ANOMALY_THRESHOLD} symbols):")
+        for m in sorted(anomaly_mods):
+            lines.append(f"   {m} ({total_by_module[m]:,} symbols)")
+
+    return "\n".join(lines)
+
+
+def cmd_audit(args: list[str]):
+    """Audit the graph database: module coverage, symbol counts by kind, gap detection.
+
+    When ``--project-dir`` is given, the command compares graph modules against
+    Xcode workspace targets and flags any framework target with fewer than
+    ``ANOMALY_THRESHOLD`` (100) symbols as a potential gap.
+    """
+    import argparse
+    ap = argparse.ArgumentParser(prog="orchard audit")
+    ap.add_argument("--project-dir", default="",
+                    help="Xcode project directory for target discovery and gap detection")
+    ap.add_argument("--format", choices=["table", "json"], default="table",
+                    help="Output format (default: table)")
+    ap.add_argument("--db", default="",
+                    help="Graph database path")
+    ns = ap.parse_args(args)
+
+    conn = _conn(ns.db)
+    from orchard.query.lookup import GraphLookup
+    gl = GraphLookup(conn)
+    stats = gl.module_stats()
+
+    # Discover Xcode targets if project-dir is given.
+    xcode_targets: list[str] | None = None
+    if ns.project_dir:
+        xcode_targets = _discover_xcode_targets(ns.project_dir)
+        if xcode_targets and ns.format == "table":
+            print(f"Xcode targets discovered: {len(xcode_targets)}")
+            print()
+
+    if ns.format == "json":
+        result = {
+            "modules": stats,
+            "xcode_targets": xcode_targets,
+            "anomaly_threshold": ANOMALY_THRESHOLD,
+        }
+        if xcode_targets:
+            result["gaps"] = _detect_gaps(stats, xcode_targets)
+        _print_json(result)
+    else:
+        table = _format_audit_table(stats, xcode_targets)
+        print(table)
+        # Print summary line.
+        total_symbols = sum(r["count"] for r in stats)
+        unique_modules = len({r["module"] for r in stats})
+        unique_kinds = len({r["kind"] for r in stats})
+        print()
+        print(f"Total: {total_symbols:,} symbols across {unique_modules} modules ({unique_kinds} kinds)")
+
+    conn.close()
+
+
+def _detect_gaps(stats: list[dict], xcode_targets: list[str]) -> list[dict]:
+    """Detect modules with suspiciously low symbol counts relative to Xcode targets."""
+    from collections import defaultdict
+    total_by_module: dict[str, int] = defaultdict(int)
+    for row in stats:
+        total_by_module[row["module"]] += row["count"]
+
+    xcode_set = set(xcode_targets)
+    gaps = []
+    for target in sorted(xcode_targets):
+        count = total_by_module.get(target, 0)
+        if count < ANOMALY_THRESHOLD:
+            gaps.append({
+                "target": target,
+                "symbols": count,
+                "status": "UNEXPECTED GAP" if count > 0 else "MISSING",
+                "threshold": ANOMALY_THRESHOLD,
+            })
+    return gaps
+
+
+def _execute_pipe_audit(conn, args: dict) -> dict:
+    """Handle ``{"cmd": "audit", ...}`` in pipe mode."""
+    from orchard.query.lookup import GraphLookup
+    gl = GraphLookup(conn)
+    stats = gl.module_stats()
+
+    project_dir = args.get("project_dir", "")
+    xcode_targets = None
+    if project_dir:
+        xcode_targets = _discover_xcode_targets(project_dir)
+
+    result: dict = {
+        "modules": stats,
+        "xcode_targets": xcode_targets,
+        "anomaly_threshold": ANOMALY_THRESHOLD,
+    }
+    if xcode_targets:
+        result["gaps"] = _detect_gaps(stats, xcode_targets)
+    return result
+
+
+# ---------------------------------------------------------------------------
 
 def _parse_common(args: list[str]) -> tuple[str, str, str]:
     import argparse
@@ -481,6 +920,7 @@ COMMANDS: dict[str, tuple] = {
     "hierarchy":     (cmd_hierarchy,     "Show type hierarchy (supertypes/subtypes)"),
     "ingest":        (cmd_ingest,        "Build the graph from Xcode IndexStore data"),
     "stats":         (cmd_stats,         "Database overview and freshness check"),
+    "audit":         (cmd_audit,         "Module coverage report with Xcode target gap detection"),
     "pipe":          (cmd_pipe,          "Batch queries via stdin JSONL (3+ queries)"),
     "setup":         (cmd_setup,         "Install MCP config + skill + download model"),
 }
