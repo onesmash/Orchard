@@ -17,9 +17,22 @@ import sys
 import time
 
 
+def _find_project_db() -> str | None:
+    """Walk up from cwd to find ``.orchard/graph.db`` (GitNexus-style)."""
+    from pathlib import Path
+    cwd = Path.cwd().resolve()
+    for directory in [cwd, *cwd.parents]:
+        db = directory / ".orchard" / "graph.db"
+        if db.exists():
+            return str(db)
+    return None
+
+
 def _conn(db_path: str = ""):
     from orchard.graph.db import get_connection, init_schema
     path = db_path or os.environ.get("ORCHARD_DB_PATH", "")
+    if not path:
+        path = _find_project_db()
     if not path:
         path = os.path.expanduser("~/.orchard/graph.db")
     c = get_connection(path)
@@ -88,8 +101,12 @@ def cmd_ingest(args: list[str]):
     ap.add_argument("--target", default="Zoom",
                     help="Build target identifier")
     ap.add_argument("--db", default="",
-                    help="Graph database path")
+                    help="Graph database path (default: <project>/.orchard/graph.db)")
     ns = ap.parse_args(args)
+    # Default DB path: <project-dir>/.orchard/graph.db (GitNexus convention).
+    if not ns.db:
+        from pathlib import Path as _Path
+        ns.db = str(_Path(ns.project_dir) / ".orchard" / "graph.db")
     conn = _conn(ns.db)
     from orchard.ingest.indexstore import read_index_store
     from orchard.normalize.identity import upsert_symbols, upsert_calls, upsert_indexstore_rels

@@ -40,7 +40,10 @@ def _get_conn():
     global _conn
     if _conn is None:
         from orchard.graph.db import get_connection
+        from orchard.cli import _find_project_db
         path = _DB_PATH or os.environ.get("ORCHARD_DB_PATH", "")
+        if not path:
+            path = _find_project_db() or ""
         if not path:
             path = os.path.expanduser("~/.orchard/graph.db")
         _conn = get_connection(path)
