@@ -20,21 +20,21 @@ def test_m5_full_flow_with_conforms_and_calls(tmp_db_path):
     tid = "M5"
 
     # Views.
-    _sym(conn, f"{tid}:s:Root", "s:Root", "AppRootView")
-    _sym(conn, f"{tid}:s:Home", "s:Home", "HomeView")
-    _sym(conn, f"{tid}:s:Settings", "s:Settings", "SettingsNav")
+    _sym(conn, f"s:Root", "s:Root", "AppRootView")
+    _sym(conn, f"s:Home", "s:Home", "HomeView")
+    _sym(conn, f"s:Settings", "s:Settings", "SettingsNav")
     # View protocol.
-    _sym(conn, f"{tid}:v:View", "v:View", "View", "protocol", "SwiftUI")
+    _sym(conn, f"v:View", "v:View", "View", "protocol", "SwiftUI")
     for u in ("s:Root", "s:Home", "s:Settings"):
-        conn.execute(f"MATCH (a:Symbol {{id: '{tid}:{u}'}}), (b:Symbol {{id: '{tid}:v:View'}}) CREATE (a)-[:ConformsTo]->(b)")
+        conn.execute(f"MATCH (a:Symbol {{id: '{u}'}}), (b:Symbol {{id: 'v:View'}}) CREATE (a)-[:ConformsTo]->(b)")
 
     # Body member of AppRootView calls HomeView.
-    _sym(conn, f"{tid}:s:Root:body", "s:Root:body", "body", "instanceProperty")
-    conn.execute(f"MATCH (a:Symbol {{id: '{tid}:s:Root:body'}}), (b:Symbol {{id: '{tid}:s:Home'}}) CREATE (a)-[:Calls]->(b)")
+    _sym(conn, f"s:Root:body", "s:Root:body", "body", "instanceProperty")
+    conn.execute(f"MATCH (a:Symbol {{id: 's:Root:body'}}), (b:Symbol {{id: 's:Home'}}) CREATE (a)-[:Calls]->(b)")
 
     # Body member of AppRootView also calls NavigationLink.
-    conn.execute(f"CREATE (n:Symbol {{id: '{tid}:s:NavLink', usr: 's:NavLink', name: 'NavigationLink', language: 'swift', kind: 'struct', module: 'SwiftUI', target_id: '{tid}'}})")
-    conn.execute(f"MATCH (a:Symbol {{id: '{tid}:s:Root:body'}}), (b:Symbol {{id: '{tid}:s:NavLink'}}) CREATE (a)-[:Calls]->(b)")
+    conn.execute(f"CREATE (n:Symbol {{id: 's:NavLink', usr: 's:NavLink', name: 'NavigationLink', language: 'swift', kind: 'struct', module: 'SwiftUI', target_id: '{tid}'}})")
+    conn.execute(f"MATCH (a:Symbol {{id: 's:Root:body'}}), (b:Symbol {{id: 's:NavLink'}}) CREATE (a)-[:Calls]->(b)")
 
     stats = run_swiftui_derivation(conn, tid, build_id="m5")
     assert stats["view_tree_edges"] >= 1

@@ -117,3 +117,6 @@ def migrate_schema(conn) -> None:
             if "already has property" in msg or "does not exist" in msg:
                 continue
             raise
+
+
+

@@ -21,7 +21,7 @@ def conn(tmp_db_path):
 
 
 def test_make_symbol_id():
-    assert make_symbol_id("MyTarget", "s:MyFunc") == "MyTarget:s:MyFunc"
+    assert make_symbol_id("MyTarget", "s:MyFunc") == "s:MyFunc"
 
 
 def test_upsert_symbols_inserts_nodes(conn):
@@ -35,7 +35,7 @@ def test_upsert_symbols_inserts_nodes(conn):
     ]
     count = upsert_symbols(conn, symbols, target_id="T1")
     assert count == 1
-    rows = conn.execute("MATCH (s:Symbol {id: 'T1:s:MyFunc'}) RETURN s.name").get_all()
+    rows = conn.execute("MATCH (s:Symbol {id: 's:MyFunc'}) RETURN s.name").get_all()
     assert rows[0][0] == "MyFunc()"
 
 
@@ -65,22 +65,22 @@ def test_upsert_symbols_updates_existing_node_fields(conn):
     upsert_symbols(conn, original, target_id="T1")
     upsert_symbols(conn, corrected, target_id="T1")
     rows = conn.execute(
-        "MATCH (s:Symbol {id: 'T1:s:A'}) RETURN s.name, s.file_path, s.swift_display_name"
+        "MATCH (s:Symbol {id: 's:A'}) RETURN s.name, s.file_path, s.swift_display_name"
     ).get_all()
     assert rows == [["objcName:", "/right/A.m", "swiftName(_:)"]]
 
 
 def test_upsert_different_targets_no_collision(conn):
+    """USR-only IDs mean one symbol per USR globally; second upsert updates metadata."""
     sym = SymbolRecord(usr="s:Shared", precise_id="s:Shared", name="Shared",
                        kind="swift.struct", module="M", language="swift",
                        file_path=None, signature=None, access_level="public")
     upsert_symbols(conn, [sym], target_id="TargetA")
     upsert_symbols(conn, [sym], target_id="TargetB")
-    rows = conn.execute("MATCH (s:Symbol) RETURN s.id ORDER BY s.id").get_all()
-    ids = [r[0] for r in rows]
-    assert "TargetA:s:Shared" in ids
-    assert "TargetB:s:Shared" in ids
-    assert len(ids) == 2
+    rows = conn.execute("MATCH (s:Symbol) RETURN s.id, s.target_id ORDER BY s.id").get_all()
+    assert len(rows) == 1
+    assert rows[0][0] == "s:Shared"  # USR-only ID
+    assert rows[0][1] == "TargetA"   # target_id set at first insert, not updated
 
 
 def _seed_two_symbols(conn, target_id):
@@ -173,19 +173,26 @@ def test_prune_missing_symbols_removes_symbols_not_in_current_build(conn):
 
 
 def test_prune_missing_symbols_keeps_other_targets(conn):
+    """With USR-only IDs, same USR under different targets is one symbol (last write wins).
+    Pruning T1 should not delete the symbol since its target_id is now T2."""
     upsert_symbols(conn, [
         SymbolRecord(usr="s:shared", precise_id="s:shared", name="shared", kind="swift.func",
                      module="M", language="swift", file_path="/src/shared.swift",
                      signature="", access_level="public"),
     ], target_id="T1")
     upsert_symbols(conn, [
-        SymbolRecord(usr="s:shared", precise_id="s:shared", name="shared", kind="swift.func",
-                     module="M", language="swift", file_path="/src/shared.swift",
+        SymbolRecord(usr="s:a", precise_id="s:a", name="a", kind="swift.func",
+                     module="M", language="swift", file_path="/src/a.swift",
+                     signature="", access_level="public"),
+    ], target_id="T1")
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:b", precise_id="s:b", name="b", kind="swift.func",
+                     module="M", language="swift", file_path="/src/b.swift",
                      signature="", access_level="public"),
     ], target_id="T2")
 
-    removed = prune_missing_symbols(conn, "T1", set())
+    removed = prune_missing_symbols(conn, "T1", {"s:shared"})
     rows = conn.execute("MATCH (s:Symbol) RETURN s.id ORDER BY s.id").get_all()
 
-    assert removed == 1
-    assert rows == [["T2:s:shared"]]
+    assert removed == 1  # s:a is in T1 but not in the keep set
+    assert rows == [["s:b"], ["s:shared"]]

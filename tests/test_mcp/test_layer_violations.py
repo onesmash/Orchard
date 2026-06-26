@@ -15,13 +15,13 @@ def conn_with_layered_calls(tmp_db_path):
 
     # Seed symbols in UI, Data, and Service modules.
     syms = [
-        ("T:s:ui1", "s:ui1", "renderButton", "UIKit", "swift"),
-        ("T:s:ui2", "s:ui2", "showAlert", "WidgetKit", "swift"),
-        ("T:s:data1", "s:data1", "fetchUsers", "DataLayer", "swift"),
-        ("T:s:data2", "s:data2", "saveUser", "Repository", "swift"),
-        ("T:s:svc1", "s:svc1", "authenticate", "AuthService", "swift"),
-        ("T:s:svc2", "s:svc2", "sendRequest", "NetworkAPI", "swift"),
-        ("T:s:common", "s:common", "formatString", "CommonUtil", "swift"),
+        ("s:ui1", "s:ui1", "renderButton", "UIKit", "swift"),
+        ("s:ui2", "s:ui2", "showAlert", "WidgetKit", "swift"),
+        ("s:data1", "s:data1", "fetchUsers", "DataLayer", "swift"),
+        ("s:data2", "s:data2", "saveUser", "Repository", "swift"),
+        ("s:svc1", "s:svc1", "authenticate", "AuthService", "swift"),
+        ("s:svc2", "s:svc2", "sendRequest", "NetworkAPI", "swift"),
+        ("s:common", "s:common", "formatString", "CommonUtil", "swift"),
     ]
     for sid, usr, name, mod, lang in syms:
         conn.execute(
@@ -36,32 +36,32 @@ def conn_with_layered_calls(tmp_db_path):
     # Create Calls edges:
     # Violation: UI -> Data
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:ui1'}), (b:Symbol {id: 'T:s:data1'}) "
+        "MATCH (a:Symbol {id: 's:ui1'}), (b:Symbol {id: 's:data1'}) "
         "MERGE (a)-[:Calls {source: 'test', build_id: 'b1'}]->(b)"
     )
     # Violation: UI -> Data (second one)
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:ui2'}), (b:Symbol {id: 'T:s:data2'}) "
+        "MATCH (a:Symbol {id: 's:ui2'}), (b:Symbol {id: 's:data2'}) "
         "MERGE (a)-[:Calls {source: 'test', build_id: 'b1'}]->(b)"
     )
     # Violation: Data -> Service
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:data1'}), (b:Symbol {id: 'T:s:svc1'}) "
+        "MATCH (a:Symbol {id: 's:data1'}), (b:Symbol {id: 's:svc1'}) "
         "MERGE (a)-[:Calls {source: 'test', build_id: 'b1'}]->(b)"
     )
     # OK: Service -> Data (normal downward flow)
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:svc1'}), (b:Symbol {id: 'T:s:data2'}) "
+        "MATCH (a:Symbol {id: 's:svc1'}), (b:Symbol {id: 's:data2'}) "
         "MERGE (a)-[:Calls {source: 'test', build_id: 'b1'}]->(b)"
     )
     # OK: within same layer
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:ui1'}), (b:Symbol {id: 'T:s:ui2'}) "
+        "MATCH (a:Symbol {id: 's:ui1'}), (b:Symbol {id: 's:ui2'}) "
         "MERGE (a)-[:Calls {source: 'test', build_id: 'b1'}]->(b)"
     )
     # OK: unknown module -> anything
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:common'}), (b:Symbol {id: 'T:s:data1'}) "
+        "MATCH (a:Symbol {id: 's:common'}), (b:Symbol {id: 's:data1'}) "
         "MERGE (a)-[:Calls {source: 'test', build_id: 'b1'}]->(b)"
     )
     yield conn

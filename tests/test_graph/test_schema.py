@@ -17,7 +17,7 @@ def test_init_schema_creates_tables(tmp_db_path):
     init_schema(conn)
     # Verify Symbol table exists by inserting and querying
     conn.execute(
-        "CREATE (:Symbol {id: 'MyTarget:s:MyFunc', usr: 's:MyFunc', "
+        "CREATE (:Symbol {id: 's:MyFunc', usr: 's:MyFunc', "
         "precise_id: '', name: 'MyFunc', language: 'swift', kind: 'function', "
         "module: 'MyModule', target_id: 'MyTarget', file_path: '/src/f.swift', "
         "signature: '', container_usr: '', access_level: 'internal', "
@@ -25,7 +25,7 @@ def test_init_schema_creates_tables(tmp_db_path):
     )
     result = conn.execute("MATCH (s:Symbol) RETURN s.id").get_all()
     assert len(result) == 1
-    assert result[0][0] == "MyTarget:s:MyFunc"
+    assert result[0][0] == "s:MyFunc"
     conn.close()
 
 

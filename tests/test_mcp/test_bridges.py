@@ -13,9 +13,9 @@ def conn_with_bridges(tmp_db_path):
     init_schema(conn)
     # Seed two Symbol nodes (swift + objc) and a BridgesTo edge.
     for sid, name, usr, lang in [
-        ("T:s:swiftFunc", "swiftFunc", "s:swiftFunc", "swift"),
-        ("T:c:objcMethod", "objcMethod", "c:objcMethod", "objc"),
-        ("T:s:noBridge", "noBridge", "s:noBridge", "swift"),
+        ("s:swiftFunc", "swiftFunc", "s:swiftFunc", "swift"),
+        ("c:objcMethod", "objcMethod", "c:objcMethod", "objc"),
+        ("s:noBridge", "noBridge", "s:noBridge", "swift"),
     ]:
         conn.execute(
             f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', "
@@ -25,7 +25,7 @@ def conn_with_bridges(tmp_db_path):
             f"origin: 'symbolgraph', is_generated: false}})"
         )
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:swiftFunc'}), (b:Symbol {id: 'T:c:objcMethod'}) "
+        "MATCH (a:Symbol {id: 's:swiftFunc'}), (b:Symbol {id: 'c:objcMethod'}) "
         "CREATE (a)-[:BridgesTo {bridge_kind: 'name_match', provenance: 'derive/bridge', "
         "confidence: 0.85, build_id: 'b1', clang_name: '-[ObjCClass swiftFunc]', "
         "swift_name: 'SwiftClass.swiftFunc()', definition_language: 'swift'}]->(b)"

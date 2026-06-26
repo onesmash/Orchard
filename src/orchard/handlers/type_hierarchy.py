@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from orchard.handlers.base import BaseToolRequest, BaseToolResponse
+from orchard.normalize.identity import make_symbol_id
 from orchard.validation.freshness import freshness_for
 
 
@@ -32,7 +33,7 @@ def get_type_hierarchy(conn, req: TypeHierarchyRequest) -> BaseToolResponse:
         Response containing parents, protocols, and children lists.
     """
     target_id = req.target_id or ""
-    sym_id = f"{target_id}:{req.usr}"
+    sym_id = make_symbol_id(target_id, req.usr)
     _, freshness_status = freshness_for(conn, req.build_id or "", {})
 
     parents = conn.execute(

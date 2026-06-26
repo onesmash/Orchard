@@ -12,9 +12,9 @@ def impact_graph(tmp_db_path):
     T = "T"
     # Create 3 symbols: targetFunc (queried), directCaller, indirectCaller.
     for sid, name, usr in [
-        ("T:s:targetFn", "targetFn", "s:targetFn"),
-        ("T:s:directCaller", "directCaller", "s:directCaller"),
-        ("T:s:indirectCaller", "indirectCaller", "s:indirectCaller"),
+        ("s:targetFn", "targetFn", "s:targetFn"),
+        ("s:directCaller", "directCaller", "s:directCaller"),
+        ("s:indirectCaller", "indirectCaller", "s:indirectCaller"),
     ]:
         conn.execute(
             f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', "
@@ -25,12 +25,12 @@ def impact_graph(tmp_db_path):
         )
     # directCaller -> targetFn (Calls)
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:directCaller'}), (b:Symbol {id: 'T:s:targetFn'}) "
+        "MATCH (a:Symbol {id: 's:directCaller'}), (b:Symbol {id: 's:targetFn'}) "
         "CREATE (a)-[:Calls {source: 'test', confidence: 1.0}]->(b)"
     )
     # indirectCaller -> directCaller (Calls)
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:indirectCaller'}), (b:Symbol {id: 'T:s:directCaller'}) "
+        "MATCH (a:Symbol {id: 's:indirectCaller'}), (b:Symbol {id: 's:directCaller'}) "
         "CREATE (a)-[:Calls {source: 'test', confidence: 1.0}]->(b)"
     )
     yield conn
@@ -75,7 +75,7 @@ def bridges_graph(tmp_db_path):
     T = "T"
     # Create swift target and objc caller connected via BridgesTo.
     for sid, name, usr, lang in [
-        ("T:s:swiftFn", "swiftFn", "s:swiftFn", "swift"),
+        ("s:swiftFn", "swiftFn", "s:swiftFn", "swift"),
         ("T:c:objcCaller", "objcCaller", "c:objcCaller", "objc"),
     ]:
         conn.execute(
@@ -87,7 +87,7 @@ def bridges_graph(tmp_db_path):
         )
     # objcCaller -[BridgesTo]-> swiftFn
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:c:objcCaller'}), (b:Symbol {id: 'T:s:swiftFn'}) "
+        "MATCH (a:Symbol {id: 'T:c:objcCaller'}), (b:Symbol {id: 's:swiftFn'}) "
         "CREATE (a)-[:BridgesTo {bridge_kind: 'name_match', provenance: 'derive/bridge', "
         "confidence: 0.85, build_id: 'b1'}]->(b)"
     )
@@ -102,8 +102,8 @@ def fresh_graph(tmp_db_path):
     init_schema(conn)
     T = "T"
     for sid, name, usr in [
-        ("T:s:targetFn", "targetFn", "s:targetFn"),
-        ("T:s:directCaller", "directCaller", "s:directCaller"),
+        ("s:targetFn", "targetFn", "s:targetFn"),
+        ("s:directCaller", "directCaller", "s:directCaller"),
     ]:
         conn.execute(
             f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', "
@@ -113,7 +113,7 @@ def fresh_graph(tmp_db_path):
             f"origin: 'symbolgraph', is_generated: false}})"
         )
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:directCaller'}), (b:Symbol {id: 'T:s:targetFn'}) "
+        "MATCH (a:Symbol {id: 's:directCaller'}), (b:Symbol {id: 's:targetFn'}) "
         "CREATE (a)-[:Calls {source: 'test', confidence: 1.0}]->(b)"
     )
     # Create BuildSnapshot so freshness_for returns "fresh".

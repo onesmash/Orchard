@@ -184,7 +184,7 @@ async def test_pipeline_merge_prefers_indexstore_path_and_name(ctx, tmp_db_path)
     rows = conn.execute(
         "MATCH (s:Symbol {id: $id}) "
         "RETURN s.name, s.file_path, s.swift_display_name",
-        {"id": "MyLib:c:objc(cs)Demo(im)doThing:"},
+        {"id": "c:objc(cs)Demo(im)doThing:"},
     ).get_all()
     conn.close()
 

@@ -19,7 +19,7 @@ def _seed_two_symbols(conn):
 
 def _check_rel_table(conn, table_name: str):
     conn.execute(f"""
-        MATCH (a:Symbol {{id: 'Test:s:A'}}), (b:Symbol {{id: 'Test:s:B'}})
+        MATCH (a:Symbol {{id: 's:A'}}), (b:Symbol {{id: 's:B'}})
         CREATE (a)-[:{table_name} {{source: 'test', confidence: 0.85, reason: 'unit_test'}}]->(b)
     """)
     rows = conn.execute(f"""

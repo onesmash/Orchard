@@ -51,7 +51,7 @@ def populated_db(tmp_db_path):
     upsert_symbols(conn, symbols, target_id="MyLib")
     # topLevelFunc calls myMethod
     conn.execute(
-        "MATCH (a:Symbol {id:'MyLib:s:topLevel'}), (b:Symbol {id:'MyLib:s:myMethod'}) "
+        "MATCH (a:Symbol {id:'s:topLevel'}), (b:Symbol {id:'s:myMethod'}) "
         "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'test', build_id:'b1'}]->(b)"
     )
     yield conn, ctx
@@ -142,7 +142,7 @@ def test_cli_find_callers_defaults_to_latest_build(tmp_db_path, capsys):
                      access_level="public"),
     ], target_id="MyLib")
     conn.execute(
-        "MATCH (a:Symbol {id:'MyLib:s:caller'}), (b:Symbol {id:'MyLib:s:callee'}) "
+        "MATCH (a:Symbol {id:'s:caller'}), (b:Symbol {id:'s:callee'}) "
         "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'test', build_id:$bid}]->(b)",
         {"bid": ctx.build_id},
     )
@@ -297,7 +297,7 @@ def test_cli_json_output_not_polluted_by_parent_db_notice(tmp_path, capsys, monk
                      file_path="/src/MyLib.swift", signature="", access_level="public"),
     ], target_id="MyLib")
     conn.execute(
-        "MATCH (a:Symbol {id:'MyLib:s:caller'}), (b:Symbol {id:'MyLib:s:callee'}) "
+        "MATCH (a:Symbol {id:'s:caller'}), (b:Symbol {id:'s:callee'}) "
         "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'test', build_id:$bid}]->(b)",
         {"bid": ctx.build_id},
     )

@@ -28,7 +28,7 @@ def test_primary_definition_returns_symbol_id():
     g = GraphLookup(conn)
     result = g.primary_definition_usr("s:single", "Test")
     assert result is not None
-    assert "Test" in result
+    assert result == "s:single"
 
 
 def test_primary_definition_deterministic_across_targets():

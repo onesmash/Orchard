@@ -31,8 +31,8 @@ def enable_progress() -> None:
 
 
 def make_symbol_id(target_id: str, usr: str) -> str:
-    """Return a target-scoped composite symbol ID: '{target_id}:{usr}'."""
-    return f"{target_id}:{usr}"
+    """Return a USR-based symbol ID (sourcekit-lsp convention)."""
+    return usr
 
 
 _SYMBOL_BATCH_SIZE = 2000
@@ -45,9 +45,9 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
     t0 = time.monotonic()
     # Pre-fetch existing IDs so we only COPY new symbols (idempotent without
     # IGNORE_ERRORS, which would mask real schema violations).
+    # IDs are now USR-only (sourcekit-lsp convention), so fetch all IDs.
     id_rows = conn.execute(
-        "MATCH (s:Symbol {target_id: $tid}) RETURN s.id",
-        {"tid": target_id},
+        "MATCH (s:Symbol) RETURN s.id",
     ).get_all()
     existing = {r[0] for r in id_rows}
     existing_rows = {make_symbol_id(target_id, s.usr): s for s in symbols if make_symbol_id(target_id, s.usr) in existing}

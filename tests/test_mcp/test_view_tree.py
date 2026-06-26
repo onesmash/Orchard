@@ -18,7 +18,7 @@ def conn_with_views(tmp_db_path):
             "s.kind='struct', s.module='MyApp', s.target_id='T', s.file_path='', "
             "s.signature='', s.container_usr='', s.access_level='public', "
             "s.origin='test', s.is_generated=false",
-            {"id": f"T:{usr}", "usr": usr, "name": name},
+            {"id": usr, "usr": usr, "name": name},
         )
 
     # Create ViewTree rel table + edges.
@@ -27,11 +27,11 @@ def conn_with_views(tmp_db_path):
         "  FROM Symbol TO Symbol, derived_from STRING, confidence DOUBLE, build_id STRING)"
     )
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:RootView'}), (b:Symbol {id: 'T:s:SubView'}) "
+        "MATCH (a:Symbol {id: 's:RootView'}), (b:Symbol {id: 's:SubView'}) "
         "MERGE (a)-[:ViewTree {derived_from:'derive/swiftui', confidence:0.70, build_id:'b1'}]->(b)"
     )
     conn.execute(
-        "MATCH (a:Symbol {id: 'T:s:RootView'}), (b:Symbol {id: 'T:s:OtherView'}) "
+        "MATCH (a:Symbol {id: 's:RootView'}), (b:Symbol {id: 's:OtherView'}) "
         "MERGE (a)-[:ViewTree {derived_from:'derive/swiftui', confidence:0.70, build_id:'b1'}]->(b)"
     )
     yield conn

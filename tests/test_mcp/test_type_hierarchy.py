@@ -8,9 +8,9 @@ def conn_with_hierarchy(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
     for sym_id, name, kind in [
-        ("T1:s:Base", "Base", "swift.class"),
-        ("T1:s:Child", "Child", "swift.class"),
-        ("T1:s:Proto", "MyProtocol", "swift.protocol"),
+        ("s:Base", "Base", "swift.class"),
+        ("s:Child", "Child", "swift.class"),
+        ("s:Proto", "MyProtocol", "swift.protocol"),
     ]:
         conn.execute(
             f"CREATE (:Symbol {{id: '{sym_id}', usr: 's:{name}', precise_id: '', "
@@ -19,11 +19,11 @@ def conn_with_hierarchy(tmp_db_path):
             f"access_level: 'public', origin: 'swift_symbolgraph', is_generated: false}})"
         )
     conn.execute(
-        "MATCH (c:Symbol {id:'T1:s:Child'}), (b:Symbol {id:'T1:s:Base'}) "
+        "MATCH (c:Symbol {id:'s:Child'}), (b:Symbol {id:'s:Base'}) "
         "CREATE (c)-[:Inherits {source:'swift_symbolgraph'}]->(b)"
     )
     conn.execute(
-        "MATCH (c:Symbol {id:'T1:s:Child'}), (p:Symbol {id:'T1:s:Proto'}) "
+        "MATCH (c:Symbol {id:'s:Child'}), (p:Symbol {id:'s:Proto'}) "
         "CREATE (c)-[:ConformsTo {source:'swift_symbolgraph'}]->(p)"
     )
     yield conn

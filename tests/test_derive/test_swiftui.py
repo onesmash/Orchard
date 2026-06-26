@@ -31,13 +31,13 @@ def test_viewtree_from_body_callee(tmp_db_path):
     init_schema(conn)
     tid = "T"
 
-    _sym(conn, f"{tid}:s:C", "s:C", "ContentView")
-    _sym(conn, f"{tid}:s:H", "s:H", "HeaderView")
-    _sym(conn, f"{tid}:v:V", "v:V", "View", "protocol", "SwiftUI")
-    _sym(conn, f"{tid}:s:Cbody", "s:Cbody", "body", "instanceProperty")
-    _conforms(conn, f"{tid}:s:C", f"{tid}:v:V")
-    _conforms(conn, f"{tid}:s:H", f"{tid}:v:V")
-    _calls(conn, f"{tid}:s:Cbody", f"{tid}:s:H")
+    _sym(conn, f"s:C", "s:C", "ContentView")
+    _sym(conn, f"s:H", "s:H", "HeaderView")
+    _sym(conn, f"v:V", "v:V", "View", "protocol", "SwiftUI")
+    _sym(conn, f"s:Cbody", "s:Cbody", "body", "instanceProperty")
+    _conforms(conn, f"s:C", f"v:V")
+    _conforms(conn, f"s:H", f"v:V")
+    _calls(conn, f"s:Cbody", f"s:H")
 
     stats = run_swiftui_derivation(conn, tid, build_id="b1")
     assert stats["view_tree_edges"] == 1
@@ -56,15 +56,15 @@ def test_excludes_non_view_callee(tmp_db_path):
     init_schema(conn)
     tid = "T"
 
-    _sym(conn, f"{tid}:s:R", "s:R", "RootView")
-    _sym(conn, f"{tid}:s:S", "s:S", "SubView")
-    _sym(conn, f"{tid}:s:fmt", "s:fmt", "fmt", "function")
-    _sym(conn, f"{tid}:v:V", "v:V", "View", "protocol", "SwiftUI")
-    _sym(conn, f"{tid}:s:Rbody", "s:Rbody", "body", "instanceProperty")
-    _conforms(conn, f"{tid}:s:R", f"{tid}:v:V")
-    _conforms(conn, f"{tid}:s:S", f"{tid}:v:V")
-    _calls(conn, f"{tid}:s:Rbody", f"{tid}:s:S")
-    _calls(conn, f"{tid}:s:Rbody", f"{tid}:s:fmt")
+    _sym(conn, f"s:R", "s:R", "RootView")
+    _sym(conn, f"s:S", "s:S", "SubView")
+    _sym(conn, f"s:fmt", "s:fmt", "fmt", "function")
+    _sym(conn, f"v:V", "v:V", "View", "protocol", "SwiftUI")
+    _sym(conn, f"s:Rbody", "s:Rbody", "body", "instanceProperty")
+    _conforms(conn, f"s:R", f"v:V")
+    _conforms(conn, f"s:S", f"v:V")
+    _calls(conn, f"s:Rbody", f"s:S")
+    _calls(conn, f"s:Rbody", f"s:fmt")
 
     stats = run_swiftui_derivation(conn, tid, build_id="b1")
     assert stats["view_tree_edges"] == 1  # SubView only
@@ -75,13 +75,13 @@ def test_idempotent(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
     tid = "T"
-    _sym(conn, f"{tid}:s:A", "s:A", "AView")
-    _sym(conn, f"{tid}:s:B", "s:B", "BView")
-    _sym(conn, f"{tid}:v:V", "v:V", "View", "protocol", "SwiftUI")
-    _sym(conn, f"{tid}:s:A:body", "s:A:body", "body", "instanceProperty")
-    _conforms(conn, f"{tid}:s:A", f"{tid}:v:V")
-    _conforms(conn, f"{tid}:s:B", f"{tid}:v:V")
-    _calls(conn, f"{tid}:s:A:body", f"{tid}:s:B")
+    _sym(conn, f"s:A", "s:A", "AView")
+    _sym(conn, f"s:B", "s:B", "BView")
+    _sym(conn, f"v:V", "v:V", "View", "protocol", "SwiftUI")
+    _sym(conn, f"s:A:body", "s:A:body", "body", "instanceProperty")
+    _conforms(conn, f"s:A", f"v:V")
+    _conforms(conn, f"s:B", f"v:V")
+    _calls(conn, f"s:A:body", f"s:B")
 
     s1 = run_swiftui_derivation(conn, tid, build_id="b1")
     assert s1["view_tree_edges"] == 1

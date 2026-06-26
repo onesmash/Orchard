@@ -8,7 +8,7 @@ from orchard.handlers.callees import find_callees, CalleeRequest
 def conn_with_calls(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    for sym_id, name in [("T1:s:A", "A"), ("T1:s:B", "B"), ("T1:s:C", "C")]:
+    for sym_id, name in [("s:A", "A"), ("s:B", "B"), ("s:C", "C")]:
         conn.execute(
             f"CREATE (:Symbol {{id: '{sym_id}', usr: 's:{name}', precise_id: '', "
             f"name: '{name}', language: 'swift', kind: 'swift.func', module: 'M', "
@@ -22,16 +22,16 @@ def conn_with_calls(tmp_db_path):
     )
     # B calls A, C calls A
     conn.execute(
-        "MATCH (b:Symbol {id:'T1:s:B'}), (a:Symbol {id:'T1:s:A'}) "
+        "MATCH (b:Symbol {id:'s:B'}), (a:Symbol {id:'s:A'}) "
         "CREATE (b)-[:Calls {source:'derived', confidence:1.0, provenance:'symbolgraph', build_id:'b1'}]->(a)"
     )
     conn.execute(
-        "MATCH (c:Symbol {id:'T1:s:C'}), (a:Symbol {id:'T1:s:A'}) "
+        "MATCH (c:Symbol {id:'s:C'}), (a:Symbol {id:'s:A'}) "
         "CREATE (c)-[:Calls {source:'derived', confidence:1.0, provenance:'symbolgraph', build_id:'b1'}]->(a)"
     )
     # A calls B (for callees test)
     conn.execute(
-        "MATCH (a:Symbol {id:'T1:s:A'}), (b:Symbol {id:'T1:s:B'}) "
+        "MATCH (a:Symbol {id:'s:A'}), (b:Symbol {id:'s:B'}) "
         "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'symbolgraph', build_id:'b1'}]->(b)"
     )
     yield conn
@@ -63,7 +63,7 @@ def test_find_callees_returns_callees(conn_with_calls):
 
 def test_find_callers_prefers_source_direct_when_available(conn_with_calls):
     conn_with_calls.execute(
-        "MATCH (b:Symbol {id:'T1:s:B'}), (a:Symbol {id:'T1:s:A'}) "
+        "MATCH (b:Symbol {id:'s:B'}), (a:Symbol {id:'s:A'}) "
         "CREATE (b)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', build_id:'b1', "
         "reason:'source_direct'}]->(a)"
     )
@@ -75,7 +75,7 @@ def test_find_callers_prefers_source_direct_when_available(conn_with_calls):
 
 def test_find_callees_prefers_source_direct_when_available(conn_with_calls):
     conn_with_calls.execute(
-        "MATCH (a:Symbol {id:'T1:s:A'}), (b:Symbol {id:'T1:s:B'}) "
+        "MATCH (a:Symbol {id:'s:A'}), (b:Symbol {id:'s:B'}) "
         "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', build_id:'b1', "
         "reason:'source_direct'}]->(b)"
     )
