@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-import httpx
+import os
+from pathlib import Path
+
+from llama_cpp import Llama
 
 
 class EmbeddingError(Exception):
@@ -8,40 +11,57 @@ class EmbeddingError(Exception):
 
 
 class Embedder:
-    """Thin client for Ollama /api/embed endpoint.
+    """Self-contained embedder backed by llama.cpp.
 
-    Produces 1024-dimensional embedding vectors using a local Ollama model
-    (default: qwen3-embedding:0.6b).
+    Loads a GGUF embedding model directly in-process — no external server
+    or HTTP call needed.  Produces 1024‑dimensional vectors.
+
+    Default model path: ``$ORCHARD_EMBED_MODEL`` env var, falling back to
+    ``~/.orchard/models/Qwen3-Embedding-0.6B-Q8_0.gguf``.
     """
 
     def __init__(
         self,
-        base_url: str = "http://localhost:11434",
-        model: str = "qwen3-embedding:0.6b",
-        timeout: float = 30,
+        model_path: str | None = None,
+        n_threads: int | None = None,
+        verbose: bool = False,
     ) -> None:
-        self._url = f"{base_url.rstrip('/')}/api/embed"
-        self._model = model
-        self._client = httpx.Client(timeout=timeout)
+        if model_path is None:
+            model_path = os.environ.get(
+                "ORCHARD_EMBED_MODEL",
+                str(Path.home() / ".orchard" / "models" / "Qwen3-Embedding-0.6B-Q8_0.gguf"),
+            )
+        if not Path(model_path).exists():
+            raise EmbeddingError(
+                f"Model not found: {model_path}. "
+                "Download a GGUF embedding model or set ORCHARD_EMBED_MODEL "
+                "to point to a valid .gguf file."
+            )
+
+        self._model_path = model_path
+        self._model = Llama(
+            model_path=model_path,
+            embedding=True,
+            verbose=verbose,
+            n_threads=n_threads,
+        )
 
     def embed(self, text: str) -> list[float]:
-        """Embed a single text string into a 1024-dimensional vector."""
+        """Embed a single text string into a 1024‑dimensional vector."""
         try:
-            r = self._client.post(
-                self._url, json={"model": self._model, "input": [text]}
-            )
-            r.raise_for_status()
-            return r.json()["embeddings"][0]
-        except httpx.ConnectError as e:
-            raise EmbeddingError(f"Ollama unreachable: {e}") from e
+            result = self._model.embed(text)
+            # llama-cpp-python returns list[float] for a single string.
+            if result and isinstance(result[0], list):
+                # Older versions may wrap in an extra list.
+                return result[0]
+            return result
+        except Exception as e:
+            raise EmbeddingError(f"embed failed: {e}") from e
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed a batch of text strings into 1024-dimensional vectors."""
+        """Embed a batch of text strings into 1024‑dimensional vectors."""
         try:
-            r = self._client.post(
-                self._url, json={"model": self._model, "input": texts}
-            )
-            r.raise_for_status()
-            return r.json()["embeddings"]
+            result = self._model.embed(texts)
+            return result
         except Exception as e:
-            raise EmbeddingError(f"batch failed: {e}") from e
+            raise EmbeddingError(f"batch embed failed: {e}") from e

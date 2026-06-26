@@ -29,7 +29,7 @@ def semantic_search(conn, req: SemanticSearchRequest) -> BaseToolResponse:
     """Hybrid semantic search over code chunks.
 
     1. Tries to vector-embed the query via :class:`Embedder`.
-       Falls back to substring FTS if Ollama is unreachable.
+       Falls back to substring FTS if the embedder is unreachable.
     2. Vector path: finds Chunks with non-NULL embedding, computes
        cosine similarity in Python, returns top-k.
     3. FTS path: substring match on ``Chunk.content`` (case-insensitive).

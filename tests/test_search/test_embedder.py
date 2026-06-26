@@ -1,97 +1,98 @@
-"""Tests for the Ollama Embedder client."""
+"""Tests for the llama.cpp Embedder client."""
 
 from __future__ import annotations
 
 from unittest import mock
 
-import httpx
 import pytest
 
 from orchard.search.embedder import Embedder, EmbeddingError
 
 
-def _mock_embed_response_1024d() -> mock.Mock:
-    """Return a mock httpx.Response that simulates a 1024-dim embedding."""
-    resp = mock.Mock(spec=httpx.Response)
-    resp.status_code = 200
-    resp.json.return_value = {
-        "embeddings": [[float(i) for i in range(1024)]],
-    }
-    resp.raise_for_status = mock.Mock()
-    return resp
+def _make_vec1024(base: float = 0.0, step: float = 0.0) -> list[float]:
+    """Return a 1024-dimensional float vector for testing."""
+    return [base + i * step for i in range(1024)]
 
 
 class TestEmbedder:
-    """Test suite for Embedder."""
+    """Test suite for Embedder (llama.cpp backend)."""
 
-    def test_embedder_returns_1024d_vector(self) -> None:
+    @mock.patch("orchard.search.embedder.Llama")
+    @mock.patch("pathlib.Path.exists", return_value=True)
+    def test_embed_returns_1024d_vector(self, mock_exists, mock_llama_cls) -> None:
         """embed() returns a list of exactly 1024 floats."""
-        embedder = Embedder()
-        with mock.patch.object(embedder._client, "post") as mock_post:
-            mock_post.return_value = _mock_embed_response_1024d()
+        mock_llama = mock_llama_cls.return_value
+        mock_llama.embed.return_value = _make_vec1024(step=0.001)
 
-            vec = embedder.embed("hello world")
+        embedder = Embedder()
+        vec = embedder.embed("hello world")
 
         assert len(vec) == 1024
         assert isinstance(vec, list)
         assert all(isinstance(v, float) for v in vec)
 
-    def test_embedder_unreachable_raises(self) -> None:
-        """ConnectError is wrapped in EmbeddingError."""
+    @mock.patch("orchard.search.embedder.Llama")
+    @mock.patch("pathlib.Path.exists", return_value=True)
+    def test_embed_wraps_errors(self, mock_exists, mock_llama_cls) -> None:
+        """llama.cpp errors are wrapped in EmbeddingError."""
+        mock_llama = mock_llama_cls.return_value
+        mock_llama.embed.side_effect = RuntimeError("GGML error")
+
         embedder = Embedder()
-        with mock.patch.object(embedder._client, "post") as mock_post:
-            mock_post.side_effect = httpx.ConnectError(
-                "Connection refused"
-            )
+        with pytest.raises(EmbeddingError) as excinfo:
+            embedder.embed("hello world")
 
-            with pytest.raises(EmbeddingError) as excinfo:
-                embedder.embed("hello world")
+        assert "embed failed" in str(excinfo.value)
 
-        assert "Ollama unreachable" in str(excinfo.value)
-
-    def test_embed_batch_returns_list_of_1024d_vectors(self) -> None:
+    @mock.patch("orchard.search.embedder.Llama")
+    @mock.patch("pathlib.Path.exists", return_value=True)
+    def test_embed_batch_returns_list_of_1024d_vectors(
+        self, mock_exists, mock_llama_cls
+    ) -> None:
         """embed_batch() returns a list of 1024-dim vectors, one per input."""
-        embedder = Embedder()
+        mock_llama = mock_llama_cls.return_value
         texts = ["hello", "world", "foo"]
-        with mock.patch.object(embedder._client, "post") as mock_post:
-            mock_resp = mock.Mock(spec=httpx.Response)
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {
-                "embeddings": [
-                    [float(j) for j in range(1024)] for _ in texts
-                ]
-            }
-            mock_resp.raise_for_status = mock.Mock()
-            mock_post.return_value = mock_resp
+        mock_llama.embed.return_value = [_make_vec1024(step=0.001) for _ in texts]
 
-            result = embedder.embed_batch(texts)
+        embedder = Embedder()
+        result = embedder.embed_batch(texts)
 
         assert len(result) == len(texts)
         for vec in result:
             assert len(vec) == 1024
 
-    def test_embed_batch_unreachable_raises(self) -> None:
-        """embed_batch() wraps exceptions in EmbeddingError."""
+    @mock.patch("orchard.search.embedder.Llama")
+    @mock.patch("pathlib.Path.exists", return_value=True)
+    def test_embed_batch_wraps_errors(self, mock_exists, mock_llama_cls) -> None:
+        """embed_batch() wraps llama.cpp errors in EmbeddingError."""
+        mock_llama = mock_llama_cls.return_value
+        mock_llama.embed.side_effect = RuntimeError("GGML batch error")
+
         embedder = Embedder()
-        with mock.patch.object(embedder._client, "post") as mock_post:
-            mock_post.side_effect = httpx.ConnectError(
-                "Connection refused"
-            )
+        with pytest.raises(EmbeddingError) as excinfo:
+            embedder.embed_batch(["hello", "world"])
 
-            with pytest.raises(EmbeddingError) as excinfo:
-                embedder.embed_batch(["hello", "world"])
+        assert "batch embed failed" in str(excinfo.value)
 
-        assert "batch failed" in str(excinfo.value)
+    @mock.patch("pathlib.Path.exists", return_value=False)
+    def test_missing_model_raises_embedding_error(self, mock_exists) -> None:
+        """When the model file is missing, EmbeddingError is raised."""
+        with pytest.raises(EmbeddingError) as excinfo:
+            Embedder(model_path="/nonexistent/model.gguf")
 
-    def test_embed_batch_http_error_raises_embedding_error(self) -> None:
-        """Non-2xx status code triggers EmbeddingError in embed_batch."""
+        assert "Model not found" in str(excinfo.value)
+
+    @mock.patch("orchard.search.embedder.Llama")
+    @mock.patch("pathlib.Path.exists", return_value=True)
+    def test_embed_handles_nested_list_result(
+        self, mock_exists, mock_llama_cls
+    ) -> None:
+        """Older llama-cpp-python versions may wrap embed() result in extra list."""
+        mock_llama = mock_llama_cls.return_value
+        mock_llama.embed.return_value = [_make_vec1024(step=0.001)]
+
         embedder = Embedder()
-        with mock.patch.object(embedder._client, "post") as mock_post:
-            mock_resp = mock.Mock(spec=httpx.Response)
-            mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-                "400 Bad Request", request=mock.Mock(), response=mock_resp
-            )
-            mock_post.return_value = mock_resp
+        vec = embedder.embed("test")
 
-            with pytest.raises(EmbeddingError):
-                embedder.embed_batch(["hello"])
+        assert len(vec) == 1024
+        assert isinstance(vec[0], float)
