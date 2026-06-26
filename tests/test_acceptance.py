@@ -230,12 +230,13 @@ def test_cmd_ingest_resolves_relative_source_root(tmp_path, monkeypatch):
 
     captured: dict[str, str | None] = {}
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None):
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
         captured["source_root"] = source_root
-        return IndexStoreResult()
+        return IndexStoreResult(), None
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
+    monkeypatch.setattr("orchard.ingest.indexstore.list_source_files", lambda *a, **kw: [])
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
@@ -338,7 +339,8 @@ def test_cmd_ingest_defaults_db_to_real_project_directory(tmp_path, monkeypatch)
         "orchard.build.xcode_settings.match_derived_data",
         lambda _: [(str(tmp_path / "dd"), str(tmp_path / "dd/Index.noindex/DataStore"), "2026-06-26T00:00:00Z")]
     )
-    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", lambda *args, **kwargs: IndexStoreResult())
+    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", lambda *args, **kwargs: (IndexStoreResult(), None))
+    monkeypatch.setattr("orchard.ingest.indexstore.list_source_files", lambda *a, **kw: [])
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)

@@ -115,8 +115,8 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     # They don't write to the graph, so no connection contention.
     async def _run_indexstore() -> tuple[PhaseResult, object]:
         if ctx.index_store_path:
-            is_res = read_index_store(ctx.index_store_path, ctx.target,
-                                      source_root=ctx.workspace_root)
+            is_res, _ = read_index_store(ctx.index_store_path, ctx.target,
+                                          source_root=ctx.workspace_root)
             return PhaseResult(
                 phase="indexstore_ingest", build_id=ctx.build_id, data=is_res,
                 stats={"occurrences": len(is_res.occurrences),
@@ -233,7 +233,7 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
                 )
                 embed_written += 1
     except EmbeddingError as e:
-        embed_warnings.append(f"Ollama unavailable: {e}")
+        embed_warnings.append(f"Embedding unavailable: {e}")
 
     results.append(PhaseResult(
         phase="embedding_projection", build_id=ctx.build_id, data=None,

@@ -2,8 +2,9 @@
 Swift CLI end-to-end (no mocking).
 
 Skips unless:
-  - the built CLI exists at <repo-root>/bin/orchard-indexstore-reader (run
-    `swift/build-cli.sh` first), AND
+  - a built CLI exists either at the SwiftPM release path or at
+    <repo-root>/bin/orchard-indexstore-reader (run `swift/build-cli.sh`
+    first), AND
   - `swiftc` is available to generate a real IndexStore fixture.
 
 Verifies the full unmocked path:
@@ -67,6 +68,11 @@ def _build_index(src_dir: Path, index_path: Path) -> str:
     return str(src)
 
 
+def _built_wheel() -> Path | None:
+    wheels = sorted((REPO_ROOT / "dist").glob("orchard-*.whl"))
+    return wheels[0] if wheels else None
+
+
 def test_real_cli_read_index_store_produces_calledby(tmp_path):
     src_dir = tmp_path / "src"
     src_dir.mkdir()
@@ -74,7 +80,7 @@ def test_real_cli_read_index_store_produces_calledby(tmp_path):
     lib_path = _build_index(src_dir, index_path)
 
     # Real CLI run + real parse (no mock).
-    result = read_index_store(str(index_path), target_id="T")
+    result, _ = read_index_store(str(index_path), target_id="T")
 
     # Our source defines caller() and callee(); find their USRs.
     our_usrs = {occ.usr for occ in result.occurrences if occ.file_path == lib_path}
@@ -118,3 +124,75 @@ def test_real_cli_read_index_store_produces_calledby(tmp_path):
     callees = find_callees(conn, CalleeRequest(usr=caller_usr, target_id="T", build_id="b-real"))
     assert any(d["usr"] == callee_usr for d in callees.data)
     conn.close()
+
+
+def test_installed_wheel_cli_can_ingest_minimal_index(tmp_path):
+    wheel = _built_wheel()
+    if wheel is None:
+        pytest.skip("no built wheel found under dist/; run `uv build` first")
+    if shutil.which("uv") is None:
+        pytest.skip("uv is required for installed-wheel blackbox validation")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    index_path = tmp_path / "idx"
+    lib_path = _build_index(src_dir, index_path)
+    assert Path(lib_path).exists()
+
+    venv_dir = tmp_path / "venv"
+    python_bin = venv_dir / "bin" / "python"
+    orchard_bin = venv_dir / "bin" / "orchard"
+    subprocess.run(["uv", "venv", str(venv_dir)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["uv", "pip", "install", "--python", str(python_bin), str(wheel)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    cli_path = subprocess.run(
+        [
+            str(python_bin),
+            "-c",
+            "from orchard.ingest.indexstore import _cli_path; print(_cli_path())",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert "site-packages/orchard/_bin/" in cli_path
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    db_path = tmp_path / "graph.db"
+    ingest = subprocess.run(
+        [
+            str(orchard_bin),
+            "ingest",
+            "--index-store",
+            str(index_path),
+            "--project-dir",
+            str(project_dir),
+            "--source-root",
+            str(src_dir),
+            "--target",
+            "T",
+            "--db",
+            str(db_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "syms" in ingest.stdout
+    assert "calls done" in ingest.stdout
+    assert db_path.exists()
+
+    stats = subprocess.run(
+        [str(orchard_bin), "stats", "--db", str(db_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "Symbol:" in stats
+    assert "Calls:" in stats

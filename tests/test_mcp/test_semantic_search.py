@@ -112,7 +112,7 @@ class TestDotNorm:
 def conn_for_fts(tmp_db_path):
     """Same as conn_with_chunks but with Embedder mocked to fail (forces FTS path)."""
     from orchard.handlers.semantic_search import semantic_search as _ss
-    with patch("orchard.search.embedder.Embedder", side_effect=RuntimeError("no Ollama")):
+    with patch("orchard.search.embedder.Embedder", side_effect=RuntimeError("no embedder")):
         conn = get_connection(tmp_db_path)
         init_schema(conn)
         # Seed same data as conn_with_chunks.
@@ -133,7 +133,7 @@ def conn_for_fts(tmp_db_path):
 
 
 class TestSemanticSearchFTS:
-    """Tests for FTS fallback path (no Ollama / no embedding)."""
+    """Tests for FTS fallback path (no embedding model available)."""
 
     def test_fts_finds_matching_chunk(self, conn_for_fts):
         """Substring match should find the Foo chunk."""
@@ -207,7 +207,7 @@ class TestSemanticSearchVector:
             autospec=True,
         ) as mock_embedder_cls:
             mock_embedder = mock_embedder_cls.return_value
-            mock_embedder.embed.side_effect = RuntimeError("Ollama down")
+            mock_embedder.embed.side_effect = RuntimeError("embedder down")
 
             req = SemanticSearchRequest(query="struct Foo", top_k=10)
             resp = semantic_search(conn_with_chunks, req)

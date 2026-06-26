@@ -46,7 +46,7 @@ def test_m4_semantic_search_fts_fallback(tmp_db_path):
         "chunk_kind: 'method', content: 'function renderView: draws the UI'})"
     )
 
-    # semantic_search (FTS path, no Ollama)
+    # semantic_search (FTS path, no embedding model)
     resp = semantic_search(conn, SemanticSearchRequest(query="loadData", build_id="m4"))
     assert len(resp.data) >= 1
     assert resp.data[0]["usr"] == "s:loadData"

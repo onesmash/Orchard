@@ -34,7 +34,7 @@ async def test_run_ingest_pipeline_returns_results(ctx, tmp_db_path):
     ):
         from orchard.ingest.indexstore import IndexStoreResult
         from orchard.ingest.symbolgraph import SymbolGraphResult
-        mock_is.return_value = IndexStoreResult()
+        mock_is.return_value = (IndexStoreResult(), None)
         mock_sg.return_value = SymbolGraphResult()
         results = await run_ingest_pipeline(ctx, db_path=tmp_db_path)
     phases = [r.phase for r in results]
@@ -71,7 +71,7 @@ async def test_pipeline_writes_calls_then_handlers_return_data(ctx, tmp_db_path)
         relationships=[],
     )
     with (
-        patch.object(is_mod, "_run_cli", side_effect=lambda *a, **kw: (line for line in indexstore_jsonl.split("\n"))),
+        patch.object(is_mod, "_run_cli", side_effect=lambda *a, **kw: ([l for l in indexstore_jsonl.split("\n") if l.strip()], "")),
         patch("orchard.pipeline.runner.parse_symbolgraph", return_value=sg),
         patch("orchard.pipeline.runner.discover_symbolgraph_paths",
               return_value=["/x.json"]),
@@ -101,7 +101,7 @@ async def test_pipeline_includes_bridge_recovery_phase(ctx, tmp_db_path):
     from orchard.ingest.indexstore import IndexStoreResult
     from orchard.ingest.symbolgraph import SymbolGraphResult
     with (
-        patch("orchard.pipeline.runner.read_index_store", return_value=IndexStoreResult()),
+        patch("orchard.pipeline.runner.read_index_store", return_value=(IndexStoreResult(), None)),
         patch("orchard.pipeline.runner.parse_symbolgraph", return_value=SymbolGraphResult()),
         patch("orchard.pipeline.runner.discover_symbolgraph_paths", return_value=[]),
     ):
@@ -111,8 +111,8 @@ async def test_pipeline_includes_bridge_recovery_phase(ctx, tmp_db_path):
 
 
 @pytest.mark.asyncio
-async def test_pipeline_embedding_projection_handles_ollama_down(ctx, tmp_db_path):
-    """When Ollama is unreachable, embedding_projection phase still appears
+async def test_pipeline_embedding_projection_handles_embedder_down(ctx, tmp_db_path):
+    """When the embedder is unreachable, embedding_projection phase still appears
     with embedded=0 and a warning."""
     from unittest.mock import patch
     from orchard.ingest.indexstore import IndexStoreResult
@@ -120,7 +120,7 @@ async def test_pipeline_embedding_projection_handles_ollama_down(ctx, tmp_db_pat
     from orchard.search.embedder import EmbeddingError
 
     with (
-        patch("orchard.pipeline.runner.read_index_store", return_value=IndexStoreResult()),
+        patch("orchard.pipeline.runner.read_index_store", return_value=(IndexStoreResult(), None)),
         patch("orchard.pipeline.runner.parse_symbolgraph", return_value=SymbolGraphResult()),
         patch("orchard.pipeline.runner.discover_symbolgraph_paths", return_value=[]),
         patch("orchard.pipeline.runner.Embedder.__init__",
@@ -134,7 +134,7 @@ async def test_pipeline_embedding_projection_handles_ollama_down(ctx, tmp_db_pat
     embed_phase = next(r for r in results if r.phase == "embedding_projection")
     assert embed_phase.stats["embedded"] == 0
     assert len(embed_phase.warnings) > 0
-    assert any("Ollama unavailable" in w for w in embed_phase.warnings)
+    assert any("Embedding unavailable" in w for w in embed_phase.warnings)
 
 
 @pytest.mark.asyncio
@@ -174,7 +174,7 @@ async def test_pipeline_merge_prefers_indexstore_path_and_name(ctx, tmp_db_path)
     )
 
     with (
-        patch("orchard.pipeline.runner.read_index_store", return_value=is_result),
+        patch("orchard.pipeline.runner.read_index_store", return_value=(is_result, None)),
         patch("orchard.pipeline.runner.parse_symbolgraph", return_value=sg),
         patch("orchard.pipeline.runner.discover_symbolgraph_paths", return_value=["/x.json"]),
     ):
