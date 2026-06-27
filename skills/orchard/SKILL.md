@@ -5,152 +5,103 @@ description: >
   indexed Xcode projects. Use this skill whenever the user asks about
   function callers or callees, impact / blast-radius analysis, type
   hierarchies, symbol lookups, code dependencies, "who calls X", "what
-  does Y depend on", "trace this call", "find references to", or wants to
-  understand how iOS / macOS components relate to each other.  Also use
-  it when the user mentions "orchard" directly, asks for a graph-based
-  view of their ObjC / Swift codebase, or wants compiler-level call-graph
-  data from IndexStore.  The skill works against a per-project graph
-  database at ``<project>/.orchard/graph.db`` built from Xcode IndexStore
-  data — edges are compiler-verified, not heuristic.
+  does Y depend on", ObjC notification/delegate wiring, safe renaming,
+  or wants to understand how iOS / macOS components relate to each other.
+  Also use it when the user mentions "orchard" directly, or asks for a
+  graph-based view of their Objective-C / Swift codebase. Every edge is
+  compiler-verified via Xcode IndexStore — "confidence" labels tell you
+  whether a call edge is source-level evidence or compiler-inferred.
 ---
 
 # Orchard — Semantic Graph CLI
 
 The `orchard` CLI queries a semantic code graph (Ladybug/KuzuDB) built from
-Xcode IndexStore data.  The database lives at ``<project>/.orchard/graph.db``
-(GitNexus convention) and is auto-discovered by walking up from the current
-directory.
+Xcode IndexStore data — every edge is compiler-verified.  The database lives at
+``<project>/.orchard/graph.db`` and is auto-discovered by walking up from cwd.
 
-## Installation
+## Quick check
 
 ```bash
-# Install from git
-pip install git+https://github.com/xxx/orchard2.git
-
-# Or install from local source
-pip install -e /path/to/orchard2
-
-# One-time setup: install skill + MCP config
-orchard setup
-
-# Verify
 orchard --help
 ```
 
-## Ingest — building the graph
-
-The ingest command auto-detects the IndexStore from an Xcode project:
-
-```bash
-# Zero-parameter: auto-detects everything from project directory
-orchard ingest --project-dir /path/to/YourProject
-
-# What it does:
-# 1. Finds .xcworkspace/.xcodeproj → derives target name
-# 2. Matches DerivedData via info.plist WorkspacePath
-# 3. Auto-discovers IndexStore path
-# 4. Defaults source-root to project directory
-# 5. Writes DB to <project>/.orchard/graph.db
-
-# Manual override (compatible with old workflow):
-orchard ingest --index-store /path/to/Index.noindex/DataStore --db /path/to/graph.db
-```
-
-After ingest, the DB is at ``<project>/.orchard/graph.db`` and queries from
-any subdirectory automatically find it.
-
 ## DB discovery
 
-Commands find the database automatically with this priority:
+Commands find the database automatically:
 
 1. `--db <path>` flag
 2. `ORCHARD_DB_PATH` environment variable
-3. Walk up from cwd → first `.orchard/graph.db` found (project-level)
+3. Walk up from cwd → first `.orchard/graph.db` found
 4. `~/.orchard/graph.db` (global fallback)
 
-This means you **rarely need `--db`** — just run queries from anywhere under
-the project.
+**Rarely need `--db`** — just run queries from anywhere under the project.
 
 ## Finding symbols (search)
 
-Every query needs a USR (Unified Symbol Resolution string). Find USRs with
-the `search` command:
-
 ```bash
-orchard search --name "<text>" [--target <Module>] [--kind <kind>] \
-  [--language <swift|objc|c>] [--limit 20]
+orchard search --name "<text>" [--kind <kind>] [--language <swift|objc>] [--limit 20]
 ```
 
-The `--name` flag does **substring matching by default** — `--name "viewDidLoad"`
-matches any symbol whose name contains "viewDidLoad".  For regex matching,
-use Cypher syntax explicitly:
+The `--name` flag does substring matching. Regex works too:
 
-- Substring (default): `--name "release"` → auto-wraps to `.*release.*`
+- Substring (default): `--name "release"` → `.*release.*`
 - Exact match: `--name "^viewDidLoad$"`
 - Prefix match: `--name "^MyClass.*"`
 
-Filters help narrow large result sets:
-- `--kind method` / `--kind class` / `--kind protocol`
-- `--language swift` / `--language objc`
-- `--target <Module>` — only symbols in that module
+Results include `by_kind` grouping (field / method / class / protocol / …)
+alongside a flat `results` list.
 
-Present the top matches to the user when there are multiple candidates.
-If ambiguous, ask which symbol they meant before running deeper queries.
+If ambiguous, ask the user which symbol they meant before running deeper queries.
 
 ## Query commands
 
 ### find_callers — Who calls this symbol?
 
 ```bash
-orchard find_callers --usr "<USR>" --target <Module>
+orchard find_callers --usr "<USR>"
 ```
 
-Returns caller objects with `usr`, `name`, `module`, `kind`, `language`,
-`reason` (source provenance), and `owner` (containing class/struct/extension).
-Present as a table.
-
-**Signal filtering** — two independent controls:
-
-| Flag | Default | What it controls |
-|------|---------|-----------------|
-| (no flag) | on | C++ operators, logging helpers hidden |
-| `--include-noise` | off | Show C++ operators/helpers in results |
-| (no flag) | on | Compiler-inferred edges hidden |
-| `--include-inferred` | off | Show `indexstore_relation_only` edges |
-
-```bash
-# Default — clean business-logic view
-orchard find_callers --usr "<USR>" --target <Module>
-
-# Show everything (C++ operators + inferred edges)
-orchard find_callers --usr "<USR>" --target <Module> \
-  --include-noise --include-inferred
-```
-
-**Note on data quality**: IndexStore records compiler-verified call sites.
-Unlike AST-based tools (e.g. GitNexus), orchard edges are not "maybe true"
-heuristics — the compiler confirmed every call.  C++ operators and
-`indexstore_relation_only` edges are real calls that are simply uninteresting
-for business-logic tracing; they're hidden by default, not discarded.
+Each caller includes:
+- `confidence`: `compiler-verified` (source_direct) or `inferred` (indexstore_relation_only)
+- `provenance`: raw reason from the IndexStore edge
+- `file_path`, `line`, `col` — when occurrence data is available
 
 ### find_callees — What does this symbol call?
 
 ```bash
-orchard find_callees --usr "<USR>" --target <Module>
+orchard find_callees --usr "<USR>"
 ```
 
-Same arguments and filtering as `find_callers`.  Returns callee objects with
-`reason` provenance.
+Each callee includes the same `confidence` + `provenance` fields.  **ObjC callees
+also carry `semantic_role`** — the selector classified into one of:
 
-### impact — Blast-radius analysis (includes subtype closure + freshness)
+| semantic_role | Example selector |
+|---------------|-----------------|
+| `notification_observer` | `addObserver:selector:name:object:` |
+| `notification_poster` | `postNotificationName:object:` |
+| `delegate_setter` | `setDelegate:` |
+| `data_source` | `setDataSource:` |
+| `target_action` | `addTarget:action:forControlEvents:` |
+| `framework_callback` | `viewDidLoad`, `application:didFinish…` |
+| `unknown` | anything else |
+
+This tells you at a glance whether a symbol registers for notifications, sets
+up delegate wiring, or is an Apple framework entry point.
+
+### find_references — Incoming + outgoing in one call
 
 ```bash
-orchard impact --usr "<USR>" --target <Module>
+orchard find_references --usr "<USR>"
 ```
 
-Returns dependents grouped by depth and a risk level.  Now includes:
-- **Subtype conformers** via Inherits/ConformsTo/Extends/Implements closure
-- **Freshness annotations** in `open_gaps` when index may be stale
+### impact — Blast-radius analysis
+
+```bash
+orchard impact --usr "<USR>" [--max-depth 5]
+```
+
+Returns dependents grouped by depth and a risk level.  Includes **subtype
+closure** (protocol conformers, subclasses) in d1.
 
 **Depth groups:**
 
@@ -164,26 +115,49 @@ Returns dependents grouped by depth and a risk level.  Now includes:
 
 | Level | Condition |
 |-------|-----------|
-| `critical` | Graph index is stale — re-ingest before trusting results |
-| `high` | ≥10 direct dependents, or cross-language bridges with ≥4 dependents |
+| `critical` | Graph index is stale |
+| `high` | ≥10 direct dependents, or cross-language bridges with ≥4 |
 | `medium` | 4–9 direct dependents |
 | `low` | <4 direct dependents |
 
-**Always warn the user** before proposing changes to HIGH or CRITICAL risk
-symbols. For HIGH risk, suggest extra testing. For CRITICAL, suggest
-re-running `orchard ingest` first.
+**Always warn the user** before proposing changes to HIGH or CRITICAL risk symbols.
 
-### symbol — Metadata for a single symbol
+### symbol — Metadata
 
 ```bash
-orchard symbol --usr "<USR>" --target <Module>
+orchard symbol --usr "<USR>"
 ```
+
+Returns name, kind, language, module, file_path, signature, access_level.
 
 ### hierarchy — Type hierarchy
 
 ```bash
-orchard hierarchy --usr "<USR>" --target <Module>
+orchard hierarchy --usr "<USR>"
 ```
+
+Returns parents, protocols, and children/subclasses.
+
+### rename — USR-precise symbol rename
+
+```bash
+# Dry-run preview (default):
+orchard rename --usr "<USR>" --new-name "<newName>"
+
+# Actually apply:
+orchard rename --usr "<USR>" --new-name "<newName>" --no-dry-run
+```
+
+**How it works:**
+
+1. Finds the symbol's file_path + callers' file_paths from the *Symbol* and
+   *Calls* tables (no re-ingest needed).
+2. When precise occurrence data (line/col) exists, edits are surgical.
+3. When only file-level info is available, does a word-boundary text
+   search-and-replace in each affected file.
+4. `--no-dry-run` writes to disk; dry-run (default) shows the plan as a diff.
+
+**Protip:** always dry-run first.  Changes can be reverted with `git checkout`.
 
 ### stats — Database overview
 
@@ -191,32 +165,56 @@ orchard hierarchy --usr "<USR>" --target <Module>
 orchard stats
 ```
 
-Shows counts: Symbol, Calls, Contains, Inherits, Implements, Extends.
+### audit — Module coverage
 
-## Pipe mode — batch queries in one process
+```bash
+orchard audit [--project-dir <path>]
+```
 
-**Prefer pipe when running 3+ queries.** One DB connection, no cold start.
+Shows per-module symbol counts and flags gaps (< 100 symbols for a framework
+target).
+
+## Ingest — building the graph
+
+```bash
+orchard ingest --project-dir /path/to/YourProject
+```
+
+Auto-detects the Xcode workspace, DerivedData, IndexStore path, source root,
+and target name.  Writes the DB to `<project>/.orchard/graph.db`.
+
+Now also populates **File** and **Occurrence** tables (via COPY FROM bulk
+import), enabling precise line/col editing in rename.
+
+## Pipe mode — batch queries
+
+Prefer pipe when running 3+ queries:
 
 ```bash
 echo '{"cmd":"search","args":{"name":"viewDidLoad","limit":5}}
-{"cmd":"find_callers","args":{"usr":"<USR>","target_id":"<Module>"}}
-{"cmd":"find_callees","args":{"usr":"<USR>","target_id":"<Module>",
-  "include_noise": true, "include_inferred": true}}
-{"cmd":"impact","args":{"usr":"<USR>","target_id":"<Module>"}}' \
-  | orchard pipe
+{"cmd":"find_callers","args":{"usr":"<USR>"}}
+{"cmd":"impact","args":{"usr":"<USR>"}}' | orchard pipe
 ```
 
-Each output line: `{"cmd":"...", "ok":true, "data":{...}}`.
-Signal-filtering args (`include_noise`, `include_inferred`) default to false.
+## MCP server
 
-## MCP server — zero-latency for Claude Code
+All orchard tools are available as MCP tools with session-scoped DB connection.
+The skill should prefer MCP tools when available; fall back to CLI pipe for
+batch queries.
 
-When the MCP server is configured (run `orchard setup` to auto-configure), all
-orchard tools are available as MCP tools with **session-scoped DB connection**
-(~21ms per call vs ~170ms CLI cold start).  The skill should prefer MCP tools
-when available; fall back to CLI pipe for batch queries.
+## Confidence labels
 
-## Typical workflow for a user question
+Every caller/callee now carries a `confidence` field:
+
+| confidence | Edge reason | Meaning |
+|-----------|-------------|---------|
+| `compiler-verified` | `source_direct` | Observed at a source-level call-site |
+| `compiler-verified` | `NULL` | Edges from symbolgraph (explicitly declared) |
+| `inferred` | `indexstore_relation_only` | Compiler type-inference (protocol dispatch, overrides) |
+
+The `include_inferred` flag controls whether inferred edges appear.
+
+## Typical workflow
 
 1. **Search** for the symbol by name:
    ```bash
@@ -225,16 +223,16 @@ when available; fall back to CLI pipe for batch queries.
 2. **Confirm** the USR with the user (show top matches, let them pick).
 3. **Look up** symbol metadata:
    ```bash
-   orchard symbol --usr "<chosen USR>" --target <Module>
+   orchard symbol --usr "<chosen USR>"
    ```
 4. **Run the requested query** (callers, callees, impact, hierarchy).
    When 3+ queries are needed, use **pipe mode**.
 5. **Synthesize** results into a human-readable summary. Highlight:
+   - Confidence labels — which edges are compiler-verified vs inferred
    - How many dependents at each depth (d1 = WILL BREAK)
    - Risk level and what it means
-   - Subtype closure results (protocol conformers, subclasses)
-   - Freshness warnings from `open_gaps`
-   - Cross-language bridges (ObjC ↔ Swift callers)
+   - ObjC semantic roles (notification wiring, delegate patterns)
+   - Cross-language bridges (ObjC ↔ Swift)
 
 ## Interpreting USR formats
 
@@ -243,37 +241,15 @@ when available; fall back to CLI pipe for batch queries.
 | ObjC class | `c:objc(cs)MyViewController` |
 | ObjC instance method | `c:objc(cs)MyViewController(im)viewDidLoad` |
 | ObjC class method | `c:objc(cs)MyViewController(cm)sharedInstance` |
-| Swift symbol | `s:So17OS_dispatch_queueC8DispatchE5label3qos:...` |
-| C function | `c:@F@_Block_release` |
+| ObjC property backing | `c:objc(cs)MyViewController@_myProperty` |
+| Swift symbol | `s:So17OS_dispatch_queueC8DispatchE5label3qos:…` |
 
-Swift USRs are mangled. The `search` command works regardless of language
-— always search by human-readable name, not USR.
-
-## MCP tool parameters
-
-Prefer MCP tools when the server is running.  Key parameters:
-
-| Tool | Extra params |
-|------|-------------|
-| `orchard_find_callers` | `include_noise` (bool), `include_inferred` (bool), `depth` (int) |
-| `orchard_find_callees` | `include_noise` (bool), `include_inferred` (bool), `depth` (int) |
-| `orchard_search` | `name`, `target`, `kind`, `language`, `limit` |
+Swift USRs are mangled — always search by human-readable name, not USR.
 
 ## Important constraints
 
-- **Read-only**: The CLI only queries the graph, never modifies it.
-  To rebuild, the user must run `orchard ingest --project-dir <path>`.
-- **Stale data warning**: If `impact` returns risk `critical`, the graph
-  index is out of date. Suggest re-running `orchard ingest`.
-- **DB discovery**: No `--db` needed — walks up from cwd to find
-  `.orchard/graph.db`. Override with `--db` if needed.
-- **Data quality**: IndexStore edges are compiler-verified — every CALLS
-  edge represents a real call the compiler confirmed.  Unlike AST-based
-  tools, orchard does not need heuristic filtering for "false" edges.
-  The built-in noise filter only removes C++ operators/helpers that are
-  technically correct but uninteresting for business-logic tracing.
-- **Dynamic dispatch**: ObjC `release`/`retain`/`alloc`-style selectors
-  may have duplicate callers due to IndexStore's dynamic dispatch
-  limitations.
-- **Schema migration**: Existing databases are auto-migrated on first
-  `init_schema()` call (ALTER TABLE ADD with duplicate detection).
+- **Read-only** (except `rename --no-dry-run`): the CLI queries the graph, never
+  modifies it.  To rebuild, run `orchard ingest --project-dir <path>`.
+- **No target_id needed**: USR alone provides unambiguous symbol identity.
+- **Stale data warning**: if impact returns risk `critical`, re-run ingest.
+- **DB discovery**: auto-walks up from cwd; `--db` overrides.
