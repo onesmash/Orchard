@@ -45,11 +45,11 @@ def build_rename_plan(conn, usr: str, new_name: str) -> list[dict]:
 
     # Resolve the symbol's current name from the Symbol table.
     name_rows = conn.execute(
-        "MATCH (s:Symbol {id: $id}) RETURN s.name LIMIT 1",
+        "MATCH (s:Symbol {id: $id}) RETURN s.name, s.language LIMIT 1",
         {"id": sym_id},
     ).get_all()
     if not name_rows:
-        return []
+        return None  # symbol not in graph at all
     current_name = name_rows[0][0]
 
     # Collect all occurrence sites.
@@ -169,13 +169,23 @@ def rename_symbol(conn, req: RenameRequest) -> BaseToolResponse:
 
     plan = build_rename_plan(conn, req.usr, new_name)
 
+    if plan is None:
+        return BaseToolResponse(
+            data=None,
+            freshness="stale",
+            build_id=req.build_id,
+            evidence_sources=[],
+            open_gaps=[f"symbol '{req.usr}' not found in graph"],
+        )
+
     if not plan:
         return BaseToolResponse(
             data=None,
             freshness="stale",
             build_id=req.build_id,
             evidence_sources=[],
-            open_gaps=[f"symbol '{req.usr}' not found in graph — cannot rename"],
+            open_gaps=[f"symbol '{req.usr}' exists but has no occurrence data — "
+                       "re-ingest with occurrence tracking enabled to use rename"],
         )
 
     diff_text = rename_diff(plan)

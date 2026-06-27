@@ -125,9 +125,46 @@ def test_rename_diff_generates_human_readable_output(conn_with_rename_data):
 
 # ── AC-R3: USR not found ──────────────────────────────────────────
 def test_build_rename_plan_usr_not_found(conn_with_rename_data):
-    """AC-R3: Unknown USR returns empty plan."""
+    """AC-R3: Unknown USR returns None (distinct from empty plan)."""
     plan = build_rename_plan(conn_with_rename_data, "s:doesNotExist", "newFunc")
-    assert plan == []
+    assert plan is None
+
+
+# ── AC-R3.1: symbol exists, no occurrence data ────────────────────
+def test_build_rename_plan_symbol_exists_no_occurrences(tmp_db_path):
+    """Symbol in graph but zero occurrence nodes → empty plan (not None)."""
+    from orchard.graph.db import get_connection
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    conn.execute(
+        "CREATE (:Symbol {id: 's:noOcc', usr: 's:noOcc', precise_id: '', "
+        "name: 'noOccurrenceSymbol', language: 'swift', kind: 'swift.func', "
+        "module: 'M', target_id: 'T1', file_path: '/src/none.swift', "
+        "signature: '', container_usr: '', access_level: 'internal', "
+        "origin: 'derived', is_generated: false})"
+    )
+    plan = build_rename_plan(conn, "s:noOcc", "newFunc")
+    assert plan == []  # empty, not None
+    conn.close()
+
+
+def test_rename_symbol_no_occurrence_gives_helpful_message(tmp_db_path):
+    """Symbol exists but no occurrence data → clear message about re-ingest."""
+    from orchard.graph.db import get_connection
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    conn.execute(
+        "CREATE (:Symbol {id: 's:noOcc', usr: 's:noOcc', precise_id: '', "
+        "name: 'noOccurrenceSymbol', language: 'swift', kind: 'swift.func', "
+        "module: 'M', target_id: 'T1', file_path: '/src/none.swift', "
+        "signature: '', container_usr: '', access_level: 'internal', "
+        "origin: 'derived', is_generated: false})"
+    )
+    req = RenameRequest(usr="s:noOcc", new_name="newFunc", dry_run=True)
+    resp = rename_symbol(conn, req)
+    assert resp.data is None
+    assert "occurrence" in " ".join(resp.open_gaps).lower()
+    conn.close()
 
 
 # ── AC-R4: no references ──────────────────────────────────────────
