@@ -877,14 +877,43 @@ def _format_audit_table(stats: list[dict], xcode_targets: list[str] | None = Non
 
 
 def cmd_process_list(args: list[str]):
+    # Subcommand dispatch: "orchard process show <id>"
+    if args and args[0] == "show":
+        cmd_process_show(args[1:])
+        return
     db = _parse_db(args)
     conn = _conn(db)
     rows = conn.execute(
-        "MATCH (p:Process) RETURN p.id, p.entry_name, p.entry_kind "
-        "ORDER BY p.id"
+        "MATCH (p:Process) RETURN p.id, p.entry_name, p.entry_kind, "
+        "p.label, p.process_type, p.step_count ORDER BY p.id"
     ).get_all()
-    procs = [{"id": r[0], "entry_name": r[1], "entry_kind": r[2]} for r in rows]
+    procs = [{"id": r[0], "entry_name": r[1], "entry_kind": r[2],
+              "label": r[3], "process_type": r[4], "step_count": r[5]}
+             for r in rows]
     _print_json({"count": len(procs), "processes": procs})
+    conn.close()
+
+
+def cmd_process_show(args: list[str]):
+    """Show a single process with its full step chain."""
+    pid = args[0] if args else ""
+    db = _parse_db(args[1:])
+    conn = _conn(db)
+    rows = conn.execute(
+        "MATCH (s:Symbol)-[r:STEP_IN_PROCESS]->(p:Process {id: $id}) "
+        "RETURN s.name, s.usr, s.kind, r.step ORDER BY r.step",
+        {"id": pid},
+    ).get_all()
+    steps = [{"step": r[3], "name": r[0], "usr": r[1], "kind": r[2]} for r in rows]
+    proc_row = conn.execute(
+        "MATCH (p:Process {id: $id}) RETURN p.entry_name, p.label, p.process_type, p.step_count",
+        {"id": pid},
+    ).get_all()
+    proc_info = {}
+    if proc_row:
+        proc_info = {"entry_name": proc_row[0][0], "label": proc_row[0][1],
+                     "process_type": proc_row[0][2], "step_count": proc_row[0][3]}
+    _print_json({"process": proc_info, "steps": steps, "step_count": len(steps)})
     conn.close()
 
 

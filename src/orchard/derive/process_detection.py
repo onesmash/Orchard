@@ -192,7 +192,8 @@ def detect_processes(
     with open(proc_path, "w", newline="") as fh:
         w = csv.writer(fh, quoting=csv.QUOTE_ALL)
         for proc in processes:
-            w.writerow([proc.id, proc.entry_name, proc.entry_kind])
+            w.writerow([proc.id, proc.entry_name, proc.entry_kind,
+                        proc.label, proc.process_type, proc.step_count])
     conn.execute(f"COPY Process FROM '{proc_path}' (HEADER=false)")
 
     step_path = os.path.join(csv_dir, "steps.csv")

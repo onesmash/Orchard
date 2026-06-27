@@ -83,7 +83,10 @@ NODE_TABLES: list[str] = [
     """CREATE NODE TABLE IF NOT EXISTS Process(
         id STRING PRIMARY KEY,
         entry_name STRING,
-        entry_kind STRING
+        entry_kind STRING,
+        label STRING,
+        process_type STRING,
+        step_count INT64
     )""",
 ]
 

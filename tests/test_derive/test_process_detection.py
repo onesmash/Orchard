@@ -43,6 +43,71 @@ def test_process_detection_empty_graph():
     assert len(procs) == 0
 
 
+def test_process_node_has_label_and_type():
+    """Process nodes should carry label, process_type, and step_count."""
+    conn = get_connection(":memory:")
+    init_schema(conn)
+    syms = [
+        SymbolRecord(usr="s:entry", name="handleStart", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:ca", name="ca", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:cb", name="cb", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:cc", name="cc", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+    ]
+    upsert_symbols(conn, syms, "T")
+    for t in ("s:ca", "s:cb", "s:cc"):
+        conn.execute(f"MATCH (a:Symbol {{usr:'s:entry'}}),(b:Symbol {{usr:'{t}'}}) CREATE (a)-[:Calls {{source:'test',confidence:0.9}}]->(b)")
+    procs = detect_processes(conn, "T")
+    assert len(procs) >= 1
+    p = procs[0]
+    assert p.label, "process should have a label"
+    assert p.process_type in ("intra_community", "cross_community")
+    assert p.step_count >= 1
+
+
+def test_process_show_returns_steps():
+    """STEP_IN_PROCESS edges link symbols to Process nodes with step numbers."""
+    conn = get_connection(":memory:")
+    init_schema(conn)
+    syms = [
+        SymbolRecord(usr="s:entry", name="handleStart", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:c1", name="c1", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:c2", name="c2", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:c3", name="c3", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+    ]
+    upsert_symbols(conn, syms, "T")
+    for t in ("s:c1", "s:c2", "s:c3"):
+        conn.execute(f"MATCH (a:Symbol {{usr:'s:entry'}}),(b:Symbol {{usr:'{t}'}}) CREATE (a)-[:Calls {{source:'test',confidence:0.9}}]->(b)")
+    procs = detect_processes(conn, "T")
+    assert len(procs) >= 1
+    pid = procs[0].id
+
+    rows = conn.execute(
+        "MATCH (s:Symbol)-[r:STEP_IN_PROCESS]->(p:Process {id: $id}) "
+        "RETURN s.name, r.step ORDER BY r.step",
+        {"id": pid},
+    ).get_all()
+    assert len(rows) >= 3, "should have at least 3 steps"
+    names = {r[0] for r in rows}
+    assert names >= {"c1", "c2", "c3"}, f"should contain c1,c2,c3, got {names}"
+    assert min(r[1] for r in rows) == 1, "first step number should be 1"
+
+
 def test_entry_scoring_boosts_known_patterns():
     """handle*/application: patterns should score higher than generic names."""
     from orchard.derive.process_detection import _entry_point_score
