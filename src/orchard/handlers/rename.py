@@ -52,7 +52,7 @@ def build_rename_plan(conn, usr: str, new_name: str) -> list[dict]:
         return None  # symbol not in graph at all
     current_name = name_rows[0][0]
 
-    # Collect all occurrence sites.
+    # Try the Occurrence table first (precise line/col).
     rows = conn.execute(
         "MATCH (f:File)-[:ContainsOccurrence]->(o:Occurrence {usr: $usr}) "
         "RETURN o.file_path, o.line, o.col, o.role "
@@ -60,18 +60,50 @@ def build_rename_plan(conn, usr: str, new_name: str) -> list[dict]:
         {"usr": usr},
     ).get_all()
 
-    plan: list[dict] = []
-    for r in rows:
-        role = r[3] or "reference"
-        edit_type = "declaration" if role == "definition" else "reference"
-        plan.append({
-            "file_path": r[0] or "",
-            "line": r[1] or 0,
-            "col": r[2] or 0,
-            "edit_type": edit_type,
-            "old_name": current_name,
-            "new_name": new_name,
-        })
+    if rows:
+        plan: list[dict] = []
+        for r in rows:
+            role = r[3] or "reference"
+            edit_type = "declaration" if role == "definition" else "reference"
+            plan.append({
+                "file_path": r[0] or "",
+                "line": r[1] or 0,
+                "col": r[2] or 0,
+                "edit_type": edit_type,
+                "old_name": current_name,
+                "new_name": new_name,
+            })
+        return plan
+
+    # Fallback: no Occurrence data — build plan from Symbol + Calls tables.
+    sym_rows = conn.execute(
+        "MATCH (s:Symbol {id: $id}) RETURN s.file_path LIMIT 1",
+        {"id": sym_id},
+    ).get_all()
+    if not sym_rows or not sym_rows[0][0]:
+        return []
+
+    plan = []
+    seen_files = {sym_rows[0][0]}
+    plan.append({
+        "file_path": sym_rows[0][0], "line": 0, "col": 0,
+        "edit_type": "declaration", "old_name": current_name, "new_name": new_name,
+    })
+
+    # Add caller file paths as reference sites.
+    ref_rows = conn.execute(
+        "MATCH (caller:Symbol)-[:Calls]->(target:Symbol {id: $id}) "
+        "RETURN DISTINCT caller.file_path",
+        {"id": sym_id},
+    ).get_all()
+    for r in ref_rows:
+        fp = r[0] or ""
+        if fp and fp not in seen_files:
+            seen_files.add(fp)
+            plan.append({
+                "file_path": fp, "line": 0, "col": 0,
+                "edit_type": "reference", "old_name": current_name, "new_name": new_name,
+            })
 
     return plan
 
@@ -102,8 +134,12 @@ def rename_diff(plan: list[dict]) -> str:
     for file_path, entries in sorted(by_file.items()):
         lines.append(f"  {file_path}")
         for e in sorted(entries, key=lambda x: (-x["line"], -x["col"])):
+            if e["line"] == 0:
+                loc = "search"
+            else:
+                loc = f"line {e['line']:>5}, col {e['col']:>3}"
             lines.append(
-                f"    line {e['line']:>5}, col {e['col']:>3}  [{e['edit_type']}]"
+                f"    {loc:>16}  [{e['edit_type']}]"
                 f"  {e['old_name']} → {e['new_name']}"
             )
         lines.append("")
@@ -129,20 +165,33 @@ def _apply_plan(plan: list[dict]) -> int:
         path = Path(file_path)
         if not path.is_file():
             continue
-        lines_list = path.read_text().splitlines(keepends=True)
-        # Sort by descending line so earlier-line edits don't shift later ones.
-        for e in sorted(entries, key=lambda x: -x["line"]):
-            line_idx = e["line"] - 1  # 1-based → 0-based
-            if line_idx < 0 or line_idx >= len(lines_list):
-                continue
-            line_text = lines_list[line_idx]
-            col = e["col"] - 1  # 1-based → 0-based
-            old = e["old_name"]
-            new = e["new_name"]
-            # Replace the symbol name at the specific column.
-            if col >= 0 and line_text[col:col + len(old)] == old:
-                lines_list[line_idx] = line_text[:col] + new + line_text[col + len(old):]
-        path.write_text("".join(lines_list))
+        content = path.read_text()
+        old = entries[0]["old_name"]
+        new = entries[0]["new_name"]
+
+        # Check if any entry has precise location data.
+        has_precise = any(e["line"] > 0 for e in entries)
+
+        if has_precise:
+            lines_list = content.splitlines(keepends=True)
+            for e in sorted(entries, key=lambda x: -x["line"]):
+                if e["line"] <= 0:
+                    continue
+                line_idx = e["line"] - 1
+                if line_idx < 0 or line_idx >= len(lines_list):
+                    continue
+                line_text = lines_list[line_idx]
+                col = e["col"] - 1
+                if col >= 0 and line_text[col:col + len(old)] == old:
+                    lines_list[line_idx] = line_text[:col] + new + line_text[col + len(old):]
+            path.write_text("".join(lines_list))
+        else:
+            # Fallback: full-text replace — treat as identifier, match word boundaries.
+            import re
+            pattern = re.compile(r'\b' + re.escape(old) + r'\b')
+            content = pattern.sub(new, content)
+            path.write_text(content)
+
         files_modified += 1
 
     return files_modified
@@ -184,8 +233,7 @@ def rename_symbol(conn, req: RenameRequest) -> BaseToolResponse:
             freshness="stale",
             build_id=req.build_id,
             evidence_sources=[],
-            open_gaps=[f"symbol '{req.usr}' exists but has no occurrence data — "
-                       "re-ingest with occurrence tracking enabled to use rename"],
+            open_gaps=[f"symbol '{req.usr}' has no file path or caller data"],
         )
 
     diff_text = rename_diff(plan)

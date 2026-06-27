@@ -130,9 +130,9 @@ def test_build_rename_plan_usr_not_found(conn_with_rename_data):
     assert plan is None
 
 
-# ── AC-R3.1: symbol exists, no occurrence data ────────────────────
-def test_build_rename_plan_symbol_exists_no_occurrences(tmp_db_path):
-    """Symbol in graph but zero occurrence nodes → empty plan (not None)."""
+# ── AC-R3.1: fallback without occurrence data ──────────────────────
+def test_build_rename_plan_fallback_without_occurrences(tmp_db_path):
+    """Symbol exists, no Occurrence nodes → uses file_path from Symbol table."""
     from orchard.graph.db import get_connection
     conn = get_connection(tmp_db_path)
     init_schema(conn)
@@ -144,12 +144,14 @@ def test_build_rename_plan_symbol_exists_no_occurrences(tmp_db_path):
         "origin: 'derived', is_generated: false})"
     )
     plan = build_rename_plan(conn, "s:noOcc", "newFunc")
-    assert plan == []  # empty, not None
+    assert len(plan) == 1  # declaration from file_path fallback
+    assert plan[0]["file_path"] == "/src/none.swift"
+    assert plan[0]["line"] == 0  # no precise location
     conn.close()
 
 
-def test_rename_symbol_no_occurrence_gives_helpful_message(tmp_db_path):
-    """Symbol exists but no occurrence data → clear message about re-ingest."""
+def test_rename_symbol_dry_run_works_without_occurrences(tmp_db_path):
+    """Symbol with file_path but no occurrence → plan + diff via fallback."""
     from orchard.graph.db import get_connection
     conn = get_connection(tmp_db_path)
     init_schema(conn)
@@ -162,8 +164,9 @@ def test_rename_symbol_no_occurrence_gives_helpful_message(tmp_db_path):
     )
     req = RenameRequest(usr="s:noOcc", new_name="newFunc", dry_run=True)
     resp = rename_symbol(conn, req)
-    assert resp.data is None
-    assert "occurrence" in " ".join(resp.open_gaps).lower()
+    assert resp.data is not None
+    assert "search" in resp.data["diff"]  # fallback location label
+    assert len(resp.data["plan"]) == 1
     conn.close()
 
 
