@@ -183,6 +183,8 @@ def cmd_ingest(args: list[str]):
                     help="Graph database path (default: <project>/.orchard/graph.db)")
     ap.add_argument("--incremental", action="store_true",
                     help="Only ingest files changed since last ingest")
+    ap.add_argument("--symbolgraph", default="",
+                    help="Path to a SymbolGraph JSON file to ingest alongside IndexStore data")
     ns = ap.parse_args(args)
     from orchard.ingest.indexstore import read_index_store, _unit_dir_mtime
     from orchard.normalize.identity import (
@@ -326,6 +328,19 @@ def cmd_ingest(args: list[str]):
         print(f"  [{i+1}/{len(targets)}] {target}: {len(syms):,} syms, "
               f"{len(r.relations):,} rels")
 
+    # SymbolGraph ingest: parse JSON and upsert its symbols + relationships.
+    if ns.symbolgraph:
+        from orchard.ingest.symbolgraph import parse_symbolgraph
+        from orchard.normalize.identity import upsert_symbol_rels
+        t_sg = time.monotonic()
+        sg = parse_symbolgraph(ns.symbolgraph, targets[0])
+        if sg.symbols:
+            upsert_symbols(conn, sg.symbols, targets[0])
+        if sg.relationships:
+            upsert_symbol_rels(conn, sg.relationships, targets[0])
+        print(f"  symbolgraph: {len(sg.symbols):,} syms, "
+              f"{len(sg.relationships):,} rels  ({time.monotonic()-t_sg:.1f}s)")
+
     print(f"done  {time.monotonic()-t0:.0f}s")
 
     # Persist state for next incremental run.
@@ -356,6 +371,7 @@ def cmd_search(args: list[str]):
     ap.add_argument("--target", default="", help="Filter by target/module")
     ap.add_argument("--kind", default="", help="Filter by kind (class, method, function, etc.)")
     ap.add_argument("--language", default="", help="Filter by language (swift, objc, c, etc.)")
+    ap.add_argument("--file", default="", help="Filter by file path (substring match)")
     ap.add_argument("--limit", type=int, default=20)
     ap.add_argument("--db", default="")
     ns = ap.parse_args(args)
@@ -389,6 +405,8 @@ def _cmd_search_class(conn, ns):
     if ns.target:
         where.append("s.module = $target")
         params["target"] = ns.target
+    if ns.file:
+        where.append(_file_where(ns, params))
 
     rows = conn.execute(
         f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
@@ -437,6 +455,8 @@ def _cmd_search_name(conn, ns):
     if ns.language:
         where.append("s.language = $language")
         params["language"] = ns.language
+    if ns.file:
+        where.append(_file_where(ns, params))
     rows = conn.execute(
         f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
         "RETURN s.usr, s.name, s.kind, s.language, s.module "
@@ -561,6 +581,12 @@ def _compile_search_pattern(raw: str) -> str:
     return f".*{raw}.*"
 
 
+def _file_where(ns, params: dict) -> str:
+    """Add a file-path filter clause and its parameter to *params*."""
+    params["file_pattern"] = f".*{ns.file}.*"
+    return "s.file_path =~ $file_pattern"
+
+
 def _pipe_search(conn, args: dict):
     """Direct search query — no handler overhead for this path.
 
@@ -640,6 +666,9 @@ def _pipe_search_name(conn, args: dict):
     if language:
         where.append("s.language = $language")
         params["language"] = language
+    if args.get("file"):
+        params["file_pattern"] = f".*{args['file']}.*"
+        where.append("s.file_path =~ $file_pattern")
     rows = conn.execute(
         f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
         "RETURN s.usr, s.name, s.kind, s.language, s.module "

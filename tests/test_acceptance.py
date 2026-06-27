@@ -17,7 +17,7 @@ from orchard.build.context import BuildContext, make_build_id
 from orchard.handlers.symbol_context import get_symbol_context, SymbolContextRequest
 from orchard.handlers.callers import find_callers, CallerRequest
 from orchard.validation.freshness import freshness_for
-from orchard.cli import cmd_find_callers, cmd_find_callees, cmd_stats
+from orchard.cli import cmd_find_callers, cmd_find_callees, cmd_search, cmd_stats
 
 
 @pytest.fixture
@@ -238,6 +238,34 @@ def test_find_callees_with_relation_types(tmp_db_path, capsys):
     callee_names_rt = {c["name"] for c in payload_rt["data"]}
     assert "b()" in callee_names_rt, "still reachable via Calls (d=1)"
     assert "c()" in callee_names_rt, "should be reachable via Inherits edge (d=2)"
+
+
+def test_search_by_file_path(tmp_db_path, capsys):
+    """--file flag filters symbols by file_path substring/pattern."""
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:a", precise_id="s:a", name="a()", kind="swift.func",
+                     module="MyLib", language="swift", file_path="/src/MyLib.swift",
+                     signature="", access_level="public"),
+        SymbolRecord(usr="s:b", precise_id="s:b", name="b()", kind="swift.func",
+                     module="MyLib", language="swift", file_path="/src/Other.swift",
+                     signature="", access_level="public"),
+    ], target_id="MyLib")
+    conn.close()
+
+    # --file matches file_path substring
+    cmd_search(["--name", "a", "--file", "MyLib", "--db", tmp_db_path])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 1, "should find a() in MyLib.swift"
+
+    cmd_search(["--name", "b", "--file", "Other", "--db", tmp_db_path])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 1, "should find b() in Other.swift"
+
+    cmd_search(["--name", "b", "--file", "NotExists", "--db", tmp_db_path])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 0, "no symbols in NotExists file"
 
 
 def test_cmd_stats_prints_db_path_and_snapshot_metadata(tmp_db_path, capsys):

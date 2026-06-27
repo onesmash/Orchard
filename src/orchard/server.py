@@ -66,6 +66,7 @@ TOOLS = [
                 "target": {"type": "string", "description": "Filter by module/target name (e.g. TheModuleName)"},
                 "kind": {"type": "string", "description": "Filter by symbol kind (class, method, function, etc.). In class mode, filters returned methods."},
                 "language": {"type": "string", "description": "Filter by language (swift, objc, c)"},
+                "file": {"type": "string", "description": "Filter by file path (substring match)"},
                 "limit": {"type": "integer", "description": "Max results (default 20)"},
             },
         },
@@ -196,6 +197,9 @@ def _do_search_name(args: dict) -> str:
     if language:
         where.append("s.language = $language")
         params["language"] = language
+    if args.get("file"):
+        params["file_pattern"] = f".*{args['file']}.*"
+        where.append("s.file_path =~ $file_pattern")
 
     conn = _get_conn()
     rows = conn.execute(
