@@ -76,7 +76,8 @@ def test_entry_scoring_boosts_known_patterns():
     names = {e["name"]: e["score"] for e in entries}
     # handlePush should score above doWork and getter:body
     assert names["handlePush:"] > names["doWork"], "handlePush should rank higher than doWork"
-    # getter:body should be blacklisted (score 0)
-    assert "getter:body" not in names, "getter:body should be blacklisted"
+    assert names["handlePush:"] > names["getter:body"], "handlePush should rank above getter"
+    # getter:body penalized but NOT excluded (GitNexus soft penalty)
+    assert "getter:body" in names, "getter:body should appear but with lower score"
 
 

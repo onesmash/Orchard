@@ -48,8 +48,9 @@ def _entry_point_score(conn, max_candidates: int = 200) -> list[dict]:
         (re.compile(r"^(viewDid|onLogin|onStart|pushNoti|report)"), 1.5),
     ]
 
-    # Noise patterns: score = 0.
-    _ENTRY_BLACKLIST = [
+    # Utility/penalty patterns: reduce score by ×0.5 (GitNexus soft penalty).
+    # These are NOT excluded — a symbol with high call ratio still ranks high.
+    _ENTRY_PENALTY = [
         re.compile(r"^(getter:|setter:|dealloc|\.cxx_destruct|init$|initWith)"),
         re.compile(r"^(tableView:|collectionView:|numberOfSections|numberOfRows)"),
         re.compile(r"^(itemsWith|actionsWith|onRender|onMoreMenu|loadSubviews?$)"),
@@ -57,21 +58,23 @@ def _entry_point_score(conn, max_candidates: int = 200) -> list[dict]:
     ]
 
     def _score(name: str, callees: int, callers: int) -> float:
-        for pat in _ENTRY_BLACKLIST:
+        ratio = callees / (callers + 1)
+        # Soft penalty (GitNexus pattern): utility-like names get ×0.5
+        for pat in _ENTRY_PENALTY:
             if pat.search(name or ""):
-                return 0.0
+                ratio *= 0.5
+                break
         boost = 1.0
         for pat, weight in _ENTRY_BOOST:
             if pat.search(name or ""):
                 boost = max(boost, weight)
-        return (callees / (callers + 1)) * boost
+        return ratio * boost
 
     scored = []
     for r in rows:
         usr, name, kind, module, callees, callers = r
         s = _score(name or "", callees, callers)
-        if s > 0:
-            scored.append({
+        scored.append({
                 "usr": usr, "name": name, "kind": kind, "module": module,
                 "callee_count": callees, "caller_count": callers, "score": s,
             })
