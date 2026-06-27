@@ -485,3 +485,72 @@ def upsert_build_snapshot(conn, ctx: BuildContext) -> None:
             "build_id": ctx.build_id,
         },
     )
+
+
+# ── File + Occurrence upsert ─────────────────────────────────────────
+
+
+def upsert_files_and_occurrences(
+    conn,
+    symbols: list[SymbolRecord],
+    occurrences: list,
+) -> tuple[int, int]:
+    """Upsert File and Occurrence nodes from ingest data.
+
+    File nodes are derived from SymbolRecord.file_path; Occurrence nodes
+    from the IndexStore reader's occurrence JSON lines.  Returns
+    ``(file_count, occurrence_count)``.
+    """
+    from orchard.ingest.indexstore import OccurrenceRecord
+
+    # 1. File nodes — deduplicate by path.
+    file_paths: set[str] = set()
+    for s in symbols:
+        if s.file_path:
+            file_paths.add(s.file_path)
+    for o in occurrences:
+        if isinstance(o, OccurrenceRecord) and o.file_path:
+            file_paths.add(o.file_path)
+
+    file_count = 0
+    for fp in file_paths:
+        # MERGE is idempotent — creates if not present.
+        conn.execute(
+            "MERGE (f:File {path: $path}) "
+            "SET f.module = $module, f.is_generated = false",
+            {"path": fp, "module": ""},
+        )
+        file_count += 1
+
+    # 2. Occurrence nodes — full replace via DELETE + CREATE for performance.
+    if occurrences:
+        conn.execute(
+            "MATCH ()-[r:ContainsOccurrence]->(o:Occurrence) "
+            "WHERE o.file_path STARTS WITH $prefix "
+            "DELETE r, o",
+            {"prefix": ""},
+        )
+        conn.execute("MATCH (o:Occurrence) DELETE o")
+
+    occ_count = 0
+    for o in occurrences:
+        if not isinstance(o, OccurrenceRecord):
+            continue
+        oid = f"{o.file_path}:{o.line}:{o.col}:{o.usr}"
+        conn.execute(
+            "MERGE (f:File {path: $fp}) "
+            "CREATE (f)-[:ContainsOccurrence]->"
+            "(:Occurrence {id: $oid, usr: $usr, file_path: $fp, "
+            "line: $line, col: $col, role: $role})",
+            {
+                "fp": o.file_path,
+                "oid": oid,
+                "usr": o.usr,
+                "line": o.line,
+                "col": o.col,
+                "role": o.role,
+            },
+        )
+        occ_count += 1
+
+    return file_count, occ_count

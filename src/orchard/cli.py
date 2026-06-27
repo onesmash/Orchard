@@ -344,6 +344,12 @@ def cmd_ingest(args: list[str]):
         print(f"  [{i+1}/{len(targets)}] {target}: {len(syms):,} syms, "
               f"{len(r.relations):,} rels")
 
+    # File + Occurrence upsert (shared across targets).
+    from orchard.normalize.identity import upsert_files_and_occurrences
+    fc, oc = upsert_files_and_occurrences(conn, syms, r.occurrences)
+    if fc or oc:
+        print(f"  files: {fc:,}  occurrences: {oc:,}")
+
     # SymbolGraph ingest: parse JSON and upsert its symbols + relationships.
     if ns.symbolgraph:
         from orchard.ingest.symbolgraph import parse_symbolgraph
