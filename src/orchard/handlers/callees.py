@@ -12,7 +12,7 @@ methods (ordered by name) are expanded.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from orchard.handlers.base import BaseToolRequest, BaseToolResponse
 from orchard.query.lookup import GraphLookup
@@ -29,6 +29,7 @@ class CalleeRequest(BaseToolRequest):
     usr: str = ""
     target_id: str | None = None
     depth: int = 1
+    relation_types: list[str] = field(default_factory=lambda: ["Calls"])
 
 
 def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
@@ -50,7 +51,7 @@ def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
         # Group callees by USR, accumulating calling methods.
         callee_map: dict[str, dict] = {}
         for method in methods:
-            for callee in g.callees_of(method["usr"], target_id):
+            for callee in g.callees_of(method["usr"], target_id, req.relation_types):
                 key = callee["usr"]
                 if key not in callee_map:
                     callee_map[key] = {
@@ -87,9 +88,9 @@ def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
 
     # ── single-symbol path (existing behaviour) ────────────────────────
     if req.depth > 1:
-        data = g.callees_of_depth(req.usr, target_id, req.depth)
+        data = g.callees_of_depth(req.usr, target_id, req.depth, req.relation_types)
     else:
-        data = g.callees_of(req.usr, target_id)
+        data = g.callees_of(req.usr, target_id, req.relation_types)
         data = [{**d, "depth": 1} for d in data]
     _, status = g.freshness(req.build_id or "")
     return BaseToolResponse(

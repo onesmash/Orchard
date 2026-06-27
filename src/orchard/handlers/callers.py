@@ -11,7 +11,7 @@ the same caller when it invokes multiple methods of the target type.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from orchard.handlers.base import BaseToolRequest, BaseToolResponse
 from orchard.query.lookup import GraphLookup, is_framework_callback
@@ -25,6 +25,7 @@ class CallerRequest(BaseToolRequest):
     usr: str = ""
     target_id: str | None = None
     depth: int = 1
+    relation_types: list[str] = field(default_factory=lambda: ["Calls"])
 
 
 def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
@@ -46,7 +47,7 @@ def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
         all_callers: list[dict] = []
 
         for method in methods:
-            for caller in g.callers_of(method["usr"], target_id):
+            for caller in g.callers_of(method["usr"], target_id, req.relation_types):
                 usr = caller["usr"]
                 if usr not in seen_caller_usrs:
                     seen_caller_usrs.add(usr)
@@ -66,9 +67,9 @@ def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
 
     # ── single-symbol path (existing behaviour) ────────────────────────
     if req.depth > 1:
-        data = g.callers_of_depth(req.usr, target_id, req.depth)
+        data = g.callers_of_depth(req.usr, target_id, req.depth, req.relation_types)
     else:
-        data = g.callers_of(req.usr, target_id)
+        data = g.callers_of(req.usr, target_id, req.relation_types)
         data = [{**d, "depth": 1} for d in data]
     _, status = g.freshness(req.build_id or "")
     sym_name = g.symbol(req.usr, target_id)

@@ -118,11 +118,15 @@ class GraphLookup:
             return [row for row in rows if (row[8] or "") == "source_direct"]
         return rows
 
-    def callers_of(self, usr: str, target_id: str = "") -> list[dict]:
+    def callers_of(self, usr: str, target_id: str = "",
+                   relation_types: list[str] | None = None) -> list[dict]:
         """Return callers of *usr*, preferring source-level call evidence."""
+        if relation_types is None:
+            relation_types = ["Calls"]
+        rel_pipe = "|".join(relation_types)
         sym_id = make_symbol_id(target_id, usr)
         rows = self._conn.execute(
-            "MATCH (caller:Symbol)-[r:Calls]->(target:Symbol {id: $id}) "
+            f"MATCH (caller:Symbol)-[r:{rel_pipe}]->(target:Symbol {{id: $id}}) "
             "OPTIONAL MATCH (f:File)-[:ContainsOccurrence]->(o:Occurrence {usr: caller.usr}) "
             "WHERE o.role = 'definition' "
             "RETURN DISTINCT caller.usr, caller.name, caller.module, "
@@ -146,11 +150,15 @@ class GraphLookup:
             )
         return list(callers.values())
 
-    def callees_of(self, usr: str, target_id: str = "") -> list[dict]:
+    def callees_of(self, usr: str, target_id: str = "",
+                   relation_types: list[str] | None = None) -> list[dict]:
         """Return callees of *usr*, preferring source-level call evidence."""
+        if relation_types is None:
+            relation_types = ["Calls"]
+        rel_pipe = "|".join(relation_types)
         sym_id = make_symbol_id(target_id, usr)
         rows = self._conn.execute(
-            "MATCH (src:Symbol {id: $id})-[r:Calls]->(callee:Symbol) "
+            f"MATCH (src:Symbol {{id: $id}})-[r:{rel_pipe}]->(callee:Symbol) "
             "RETURN DISTINCT callee.usr, callee.name, callee.module, "
             "callee.kind, callee.language, r.reason",
             {"id": sym_id},
@@ -171,15 +179,18 @@ class GraphLookup:
         return list(callees.values())
 
     def callees_of_depth(self, usr: str, target_id: str = "",
-                         depth: int = 3) -> list[dict]:
+                         depth: int = 3,
+                         relation_types: list[str] | None = None) -> list[dict]:
         """Return callees of *usr* up to *depth* hops via iterative BFS."""
+        if relation_types is None:
+            relation_types = ["Calls"]
         seen: set[str] = {usr}
         frontier: set[str] = {usr}
         results: list[dict] = []
         for d in range(1, depth + 1):
             next_frontier: set[str] = set()
             for f_usr in frontier:
-                for c in self.callees_of(f_usr, target_id):
+                for c in self.callees_of(f_usr, target_id, relation_types):
                     if c["usr"] not in seen:
                         seen.add(c["usr"])
                         results.append({**c, "depth": d})
@@ -190,15 +201,18 @@ class GraphLookup:
         return results
 
     def callers_of_depth(self, usr: str, target_id: str = "",
-                         depth: int = 3) -> list[dict]:
+                         depth: int = 3,
+                         relation_types: list[str] | None = None) -> list[dict]:
         """Return callers of *usr* up to *depth* hops via iterative BFS (reverse)."""
+        if relation_types is None:
+            relation_types = ["Calls"]
         seen: set[str] = {usr}
         frontier: set[str] = {usr}
         results: list[dict] = []
         for d in range(1, depth + 1):
             next_frontier: set[str] = set()
             for f_usr in frontier:
-                for c in self.callers_of(f_usr, target_id):
+                for c in self.callers_of(f_usr, target_id, relation_types):
                     if c["usr"] not in seen:
                         seen.add(c["usr"])
                         results.append({**c, "depth": d})

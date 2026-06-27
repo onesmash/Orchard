@@ -17,7 +17,7 @@ from orchard.build.context import BuildContext, make_build_id
 from orchard.handlers.symbol_context import get_symbol_context, SymbolContextRequest
 from orchard.handlers.callers import find_callers, CallerRequest
 from orchard.validation.freshness import freshness_for
-from orchard.cli import cmd_find_callers, cmd_stats
+from orchard.cli import cmd_find_callers, cmd_find_callees, cmd_stats
 
 
 @pytest.fixture
@@ -200,6 +200,44 @@ def test_cli_find_callers_prefers_latest_build_for_target(tmp_db_path, capsys):
     cmd_find_callers(["--usr", "s:callee", "--target", "T1", "--db", tmp_db_path])
     payload = json.loads(capsys.readouterr().out)
     assert payload["build_id"] == ctx1.build_id
+
+
+def test_find_callees_with_relation_types(tmp_db_path, capsys):
+    """--relation-types flag traverses non-Calls edges in multi-hop BFS."""
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:a", precise_id="s:a", name="a()", kind="swift.func",
+                     module="MyLib", language="swift", file_path="/src/a.swift",
+                     signature="", access_level="public"),
+        SymbolRecord(usr="s:b", precise_id="s:b", name="b()", kind="swift.func",
+                     module="MyLib", language="swift", file_path="/src/b.swift",
+                     signature="", access_level="public"),
+        SymbolRecord(usr="s:c", precise_id="s:c", name="c()", kind="swift.func",
+                     module="MyLib", language="swift", file_path="/src/c.swift",
+                     signature="", access_level="public"),
+    ], target_id="MyLib")
+    # a -[:Calls]-> b, b -[:Inherits]-> c
+    conn.execute("MATCH (a:Symbol {id:'s:a'}), (b:Symbol {id:'s:b'}) "
+                 "CREATE (a)-[:Calls {source:'test',confidence:1.0}]->(b)")
+    conn.execute("MATCH (b:Symbol {id:'s:b'}), (c:Symbol {id:'s:c'}) "
+                 "CREATE (b)-[:Inherits {source:'test',confidence:1.0}]->(c)")
+    conn.close()
+
+    # Default (Calls only, depth=2) — a→b then b→? (no outgoing Calls from b)
+    cmd_find_callees(["--usr", "s:a", "--target", "MyLib", "--db", tmp_db_path, "--depth", "2"])
+    payload_default = json.loads(capsys.readouterr().out)
+    callee_names = {c["name"] for c in payload_default["data"]}
+    assert "b()" in callee_names, "direct callee via Calls should be found"
+    assert "c()" not in callee_names, "Inherits should not be traversed by default"
+
+    # With Calls+Inherits (depth=2) — a→b (Calls), then b→c (Inherits)
+    cmd_find_callees(["--usr", "s:a", "--target", "MyLib", "--db", tmp_db_path,
+                      "--depth", "2", "--relation-types", "Calls,Inherits"])
+    payload_rt = json.loads(capsys.readouterr().out)
+    callee_names_rt = {c["name"] for c in payload_rt["data"]}
+    assert "b()" in callee_names_rt, "still reachable via Calls (d=1)"
+    assert "c()" in callee_names_rt, "should be reachable via Inherits edge (d=2)"
 
 
 def test_cmd_stats_prints_db_path_and_snapshot_metadata(tmp_db_path, capsys):
