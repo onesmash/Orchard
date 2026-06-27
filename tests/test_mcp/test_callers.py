@@ -89,3 +89,59 @@ def test_find_callers_none(conn_with_calls):
     req = CallerRequest(usr="s:C", target_id="T1", build_id="b1")
     resp = find_callers(conn_with_calls, req)
     assert resp.data == []
+
+
+# ── AC-1: reason_to_confidence 映射 ──────────────────────────────
+def test_reason_to_confidence_maps_source_direct():
+    from orchard.handlers.base import reason_to_confidence
+    assert reason_to_confidence("source_direct") == "compiler-verified"
+
+
+def test_reason_to_confidence_maps_indexstore_relation_only():
+    from orchard.handlers.base import reason_to_confidence
+    assert reason_to_confidence("indexstore_relation_only") == "inferred"
+
+
+def test_reason_to_confidence_maps_none_to_compiler_verified():
+    from orchard.handlers.base import reason_to_confidence
+    assert reason_to_confidence(None) == "compiler-verified"
+
+
+def test_reason_to_confidence_maps_unknown_to_compiler_verified():
+    from orchard.handlers.base import reason_to_confidence
+    assert reason_to_confidence("some_unknown_reason") == "compiler-verified"
+
+
+# ── AC-2: caller/callee 响应包含 confidence 字段 ─────────────────
+def test_find_callers_includes_confidence_field(conn_with_calls):
+    """AC-2.1: Each caller result has a confidence label derived from reason."""
+    req = CallerRequest(usr="s:A", target_id="T1", build_id="b1")
+    resp = find_callers(conn_with_calls, req)
+    for item in resp.data:
+        assert "confidence" in item, f"caller {item['name']} missing confidence"
+        assert "provenance" in item, f"caller {item['name']} missing provenance"
+        assert item["confidence"] in ("compiler-verified", "inferred")
+
+
+def test_find_callees_includes_confidence_field(conn_with_calls):
+    """AC-2.2: Each callee result has a confidence label derived from reason."""
+    req = CalleeRequest(usr="s:A", target_id="T1", build_id="b1")
+    resp = find_callees(conn_with_calls, req)
+    for item in resp.data:
+        assert "confidence" in item, f"callee {item['name']} missing confidence"
+        assert "provenance" in item, f"callee {item['name']} missing provenance"
+        assert item["confidence"] in ("compiler-verified", "inferred")
+
+
+def test_find_callers_source_direct_becomes_compiler_verified(conn_with_calls):
+    """AC-2.3: source_direct reason → 'compiler-verified' confidence."""
+    conn_with_calls.execute(
+        "MATCH (b:Symbol {id:'s:B'}), (a:Symbol {id:'s:A'}) "
+        "CREATE (b)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+        "build_id:'b1', reason:'source_direct'}]->(a)"
+    )
+    req = CallerRequest(usr="s:A", target_id="T1", build_id="b1")
+    resp = find_callers(conn_with_calls, req)
+    caller_b = next(item for item in resp.data if item["name"] == "B")
+    assert caller_b["confidence"] == "compiler-verified"
+    assert caller_b["provenance"] == "source_direct"

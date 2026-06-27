@@ -54,6 +54,19 @@ def _get_conn():
     return _conn
 
 
+def _default_build_id_safe(conn, target_id: str = "") -> str | None:
+    """Return the latest build snapshot ID, or None if none exists.
+
+    Wraps ``cli._default_build_id`` with error handling so that freshness
+    resolution never crashes a handler.
+    """
+    try:
+        from orchard.cli import _default_build_id
+        return _default_build_id(conn, target_id)
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Tool catalogue
 # ---------------------------------------------------------------------------
@@ -157,6 +170,30 @@ TOOLS = [
         },
     ),
     Tool(
+        name="orchard_notification_flow",
+        description="Analyze ObjC notification/selector semantics for a symbol. Returns semantic role (notification_observer, delegate_setter, framework_callback, ...), dispatch hints, and notification peers.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "usr": {"type": "string", "description": "USR of the symbol to analyze"},
+            },
+            "required": ["usr"],
+        },
+    ),
+    Tool(
+        name="orchard_rename",
+        description="USR-precise rename: preview or apply a symbol rename across all occurrence sites (definition + references). Dry-run by default — returns a diff plan without modifying files. USR alone provides unambiguous symbol identity — no target_id needed.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "usr": {"type": "string", "description": "USR of the symbol to rename"},
+                "new_name": {"type": "string", "description": "New name for the symbol"},
+                "dry_run": {"type": "boolean", "description": "Preview rename plan without writing files (default true)"},
+            },
+            "required": ["usr", "new_name"],
+        },
+    ),
+    Tool(
         name="orchard_stats",
         description="Database statistics: counts of Symbol, Calls, Contains, Inherits, Implements, and Extends edges.",
         inputSchema={
@@ -227,7 +264,14 @@ def _do_search_name(args: dict) -> str:
         params,
     ).get_all()
     results = [{"usr": r[0], "name": r[1], "kind": r[2], "language": r[3], "module": r[4]} for r in rows]
-    return json.dumps({"count": len(results), "results": results}, ensure_ascii=False, indent=2)
+    by_kind: dict[str, list] = {}
+    for r in results:
+        by_kind.setdefault(r["kind"], []).append(r)
+    return json.dumps({
+        "count": len(results),
+        "by_kind": by_kind,
+        "results": results,
+    }, ensure_ascii=False, indent=2)
 
 
 def _do_search_class(args: dict) -> str:
@@ -292,15 +336,18 @@ def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, 
     mod = importlib.import_module(f"orchard.handlers.{module_name}")
     fn = getattr(mod, attr)
     cls = getattr(mod, request_cls_name)
+    conn = _get_conn()
+    # Auto-resolve build_id so freshness is accurate by default.
+    build_id = args.get("build_id") or _default_build_id_safe(conn, args.get("target_id", ""))
     req = cls(
         usr=args.get("usr", ""),
         target_id=args.get("target_id", ""),
+        build_id=build_id,
         depth=args.get("depth", depth),
         max_depth=args.get("max_depth", 5),
         relation_types=relation_types or args.get("relation_types", ["Calls"]),
         include_inferred=args.get("include_inferred", include_inferred),
     )
-    conn = _get_conn()
     result = fn(conn, req)
     if not include_noise:
         from orchard.query.noise_filter import filter_noise
@@ -364,6 +411,12 @@ HANDLERS: dict[str, callable] = {
     "orchard_hierarchy": lambda a: _do_handler("type_hierarchy", "get_type_hierarchy", "TypeHierarchyRequest", a),
     "orchard_stats": _do_stats,
     "orchard_audit": _do_audit,
+    "orchard_rename": (lambda a: _do_handler(
+        "rename", "rename_symbol", "RenameRequest",
+        {k: v for k, v in a.items() if k != "target_id"})),
+    "orchard_notification_flow": (lambda a: _do_handler(
+        "notification_flow", "get_notification_flow", "NotificationFlowRequest",
+        {k: v for k, v in a.items() if k != "target_id"})),
 }
 
 

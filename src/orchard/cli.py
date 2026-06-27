@@ -1042,6 +1042,42 @@ def _parse_db(args: list[str]) -> str:
 
 from orchard.setup import cmd_setup
 
+
+def cmd_rename(args: list[str]):
+    """USR-precise rename with dry-run preview."""
+    import argparse
+    ap = argparse.ArgumentParser(prog="orchard rename")
+    ap.add_argument("--usr", required=True, help="USR of the symbol to rename")
+    ap.add_argument("--new-name", required=True, help="New name for the symbol")
+    ap.add_argument("--target", default="", help="Build target ID")
+    ap.add_argument("--db", default="", help="Graph database path")
+    ap.add_argument("--no-dry-run", action="store_true", default=False,
+                    help="Actually write files (default: dry-run preview only)")
+    ns = ap.parse_args(args)
+
+    from orchard.handlers.rename import RenameRequest, rename_symbol, rename_diff
+    conn = _conn(ns.db, read_only=ns.no_dry_run is False)
+    try:
+        bid = _default_build_id(conn, "")
+        req = RenameRequest(
+            usr=ns.usr, new_name=ns.new_name,
+            dry_run=not ns.no_dry_run, build_id=bid,
+        )
+        resp = rename_symbol(conn, req)
+        if resp.data:
+            print(rename_diff(resp.data.get("plan", [])))
+            if resp.data.get("dry_run"):
+                print("\n[Dry-run] Use --no-dry-run to apply changes.")
+            else:
+                print(f"\nFiles modified: {resp.data.get('files_modified', 0)}")
+        else:
+            for gap in resp.open_gaps:
+                print(f"error: {gap}", file=sys.stderr)
+            sys.exit(1)
+    finally:
+        conn.close()
+
+
 COMMANDS: dict[str, tuple] = {
     "search":        (cmd_search,        "Find symbols by name (substring or regex)"),
     "find_callers":  (cmd_find_callers,  "List all callers of a symbol"),
@@ -1056,6 +1092,7 @@ COMMANDS: dict[str, tuple] = {
     "process":       (cmd_process_list,  "List detected execution flows (Process nodes)"),
     "pipe":          (cmd_pipe,          "Batch queries via stdin JSONL (3+ queries)"),
     "setup":         (cmd_setup,         "Install MCP config + skill + download model"),
+    "rename":        (cmd_rename,        "USR-precise symbol rename with dry-run preview"),
 }
 
 

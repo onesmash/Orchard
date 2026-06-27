@@ -10,6 +10,25 @@ T = TypeVar("T")
 Freshness = Literal["fresh", "stale", "partially_stale", "build_mismatch", "toolchain_mismatch"]
 
 
+def reason_to_confidence(reason: str | None) -> str:
+    """Map Calls edge reason to user-facing confidence label.
+
+    IndexStore tags every CALLS edge with a reason:
+      - ``source_direct`` — observed at a source-level call-site (compiler-verified)
+      - ``indexstore_relation_only`` — compiler type-inference edge (inferred)
+      - ``None`` — edge from symbolgraph (semantically equivalent to source-level)
+
+    Returns:
+        ``"compiler-verified"`` for source-level evidence.
+        ``"inferred"`` for compiler-inferred edges.
+    """
+    if reason == "source_direct" or reason is None:
+        return "compiler-verified"
+    if reason == "indexstore_relation_only":
+        return "inferred"
+    return "compiler-verified"
+
+
 @dataclass
 class BaseToolRequest:
     """Base request dataclass for MCP tool handlers."""

@@ -9,6 +9,7 @@ import re
 
 from orchard.normalize.identity import make_symbol_id
 from orchard.validation.freshness import freshness_for, GraphFreshness
+from orchard.handlers.base import reason_to_confidence
 
 # ---------------------------------------------------------------------------
 # Framework callback detection
@@ -169,6 +170,7 @@ class GraphLookup:
         preferred_rows = self._filter_inferred(rows, include_inferred)
         callers: dict[str, dict] = {}
         for r in preferred_rows:
+            reason_val = r[8] or "indexstore_relation_only"
             callers.setdefault(
                 r[0],
                 {
@@ -177,7 +179,9 @@ class GraphLookup:
                     "file_path": r[5] or "",
                     "line": r[6],
                     "col": r[7],
-                    "reason": r[8] or "indexstore_relation_only",
+                    "reason": reason_val,
+                    "confidence": reason_to_confidence(reason_val),
+                    "provenance": r[8] or "symbolgraph",
                     "owner": self.owner_of(r[0]),
                 },
             )
@@ -211,12 +215,15 @@ class GraphLookup:
         )
         callees: dict[str, dict] = {}
         for r in preferred_rows:
+            reason_val = r[8] or "indexstore_relation_only"
             callees.setdefault(
                 r[0],
                 {
                     "usr": r[0], "name": r[1], "module": r[2],
                     "kind": r[3], "language": r[4],
-                    "reason": r[8] or "indexstore_relation_only",
+                    "reason": reason_val,
+                    "confidence": reason_to_confidence(reason_val),
+                    "provenance": r[8] or "symbolgraph",
                 },
             )
         result = list(callees.values())
