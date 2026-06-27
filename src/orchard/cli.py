@@ -2,11 +2,11 @@
 
 Usage::
 
-    orchard find_callers --usi s:myFunc --target MyTarget [--db ~/.orchard/graph.db]
-    orchard find_callees --usi s:myFunc --target MyTarget
-    orchard impact --usi s:myFunc --target MyTarget
-    orchard symbol  --usi s:myFunc --target MyTarget
-    orchard hierarchy --usi s:myFunc --target MyTarget
+    orchard find_callers --usr s:myFunc [--db ~/.orchard/graph.db]
+    orchard find_callees --usr s:myFunc
+    orchard impact --usr s:myFunc
+    orchard symbol  --usr s:myFunc
+    orchard hierarchy --usr s:myFunc
     orchard ingest  --index-store <path> [--source-root <dir>]
     orchard setup   --mcp | --skill | --model   # one-shot configuration
 """
@@ -487,8 +487,8 @@ def cmd_pipe(args: list[str]):
     Example stdin::
 
         {"cmd":"search","args":{"name":"initWithProvider","target":"YourModule"}}
-        {"cmd":"find_callers","args":{"usr":"c:objc...(im)initWithProvider:","target_id":"YourModule"}}
-        {"cmd":"find_callees","args":{"usr":"c:objc...(im)initWithProvider:","target_id":"YourModule"}}
+        {"cmd":"find_callers","args":{"usr":"c:objc...(im)initWithProvider:"}}
+        {"cmd":"find_callees","args":{"usr":"c:objc...(im)initWithProvider:"}}
 
     For find_callers / find_callees, add ``"include_noise": true`` to keep
     C++ operator/logging noise in the output (filtered by default).
@@ -521,7 +521,7 @@ def cmd_pipe(args: list[str]):
 
 def _execute_pipe_cmd(conn, cmd: str, args: dict):
     """Dispatch a single pipe command. Handler imports are lazy."""
-    req_keys = {"usr", "target_id"}
+    req_keys = {"usr"}
 
     if cmd == "search":
         return _pipe_search(conn, args)

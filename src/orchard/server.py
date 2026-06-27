@@ -80,7 +80,7 @@ TOOLS = [
                 "usr": {"type": "string", "description": "USR of the symbol"},
                 "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
             },
-            "required": ["usr", "target_id"],
+            "required": ["usr"],
         },
     ),
     Tool(
@@ -95,7 +95,7 @@ TOOLS = [
                 "relation_types": {"type": "string", "description": "Comma-separated edge types to traverse (default: Calls). Example: 'Calls,Inherits,Implements'"},
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
             },
-            "required": ["usr", "target_id"],
+            "required": ["usr"],
         },
     ),
     Tool(
@@ -110,7 +110,7 @@ TOOLS = [
                 "relation_types": {"type": "string", "description": "Comma-separated edge types to traverse (default: Calls). Example: 'Calls,Inherits,Implements'"},
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
             },
-            "required": ["usr", "target_id"],
+            "required": ["usr"],
         },
     ),
     Tool(
@@ -123,7 +123,7 @@ TOOLS = [
                 "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
                 "max_depth": {"type": "integer", "description": "Max traversal depth (default 5)"},
             },
-            "required": ["usr", "target_id"],
+            "required": ["usr"],
         },
     ),
     Tool(
@@ -135,7 +135,7 @@ TOOLS = [
                 "usr": {"type": "string", "description": "USR of the symbol"},
                 "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
             },
-            "required": ["usr", "target_id"],
+            "required": ["usr"],
         },
     ),
     Tool(
@@ -147,7 +147,7 @@ TOOLS = [
                 "usr": {"type": "string", "description": "USR of the symbol"},
                 "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
             },
-            "required": ["usr", "target_id"],
+            "required": ["usr"],
         },
     ),
     Tool(
