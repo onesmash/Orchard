@@ -24,6 +24,7 @@ _AUTO_EXPAND_KINDS = frozenset({"class", "struct", "enum", "protocol"})
 class CallerRequest(BaseToolRequest):
     usr: str = ""
     target_id: str | None = None
+    depth: int = 1
 
 
 def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
@@ -64,12 +65,16 @@ def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
         )
 
     # ── single-symbol path (existing behaviour) ────────────────────────
-    data = g.callers_of(req.usr, target_id)
+    if req.depth > 1:
+        data = g.callers_of_depth(req.usr, target_id, req.depth)
+    else:
+        data = g.callers_of(req.usr, target_id)
+        data = [{**d, "depth": 1} for d in data]
     _, status = g.freshness(req.build_id or "")
     sym_name = g.symbol(req.usr, target_id)
     open_gaps = _build_open_gaps_single(data, sym_name)
     return BaseToolResponse(
-        data=[{**d, "depth": 1} for d in data],
+        data=data,
         freshness=status,
         build_id=req.build_id,
         evidence_sources=["call_graph_derivation"],

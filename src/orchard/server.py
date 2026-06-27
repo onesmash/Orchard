@@ -78,6 +78,7 @@ TOOLS = [
             "properties": {
                 "usr": {"type": "string", "description": "USR (Unified Symbol Resolution) of the target symbol"},
                 "target_id": {"type": "string", "description": "Build target for disambiguation (e.g. TheModuleName)"},
+                "depth": {"type": "integer", "description": "Multi-hop traversal depth (default 1, direct only)"},
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
             },
             "required": ["usr", "target_id"],
@@ -91,6 +92,7 @@ TOOLS = [
             "properties": {
                 "usr": {"type": "string", "description": "USR of the source symbol"},
                 "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
+                "depth": {"type": "integer", "description": "Multi-hop traversal depth (default 1, direct only)"},
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
             },
             "required": ["usr", "target_id"],
@@ -260,7 +262,7 @@ def _do_search_class(args: dict) -> str:
     }, ensure_ascii=False, indent=2)
 
 
-def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, include_noise: bool = True) -> str:
+def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, include_noise: bool = True, depth: int = 1) -> str:
     """Generic dispatch: import → build request → call handler → noise filter → JSON."""
     import importlib
     mod = importlib.import_module(f"orchard.handlers.{module_name}")
@@ -269,6 +271,7 @@ def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, 
     req = cls(
         usr=args.get("usr", ""),
         target_id=args.get("target_id", ""),
+        depth=args.get("depth", depth),
         max_depth=args.get("max_depth", 5),
     )
     conn = _get_conn()
@@ -327,8 +330,8 @@ def _do_audit(args: dict) -> str:
 
 HANDLERS: dict[str, callable] = {
     "orchard_search": _do_search,
-    "orchard_find_callers": lambda a: _do_handler("callers", "find_callers", "CallerRequest", a, include_noise=a.get("include_noise", False)),
-    "orchard_find_callees": lambda a: _do_handler("callees", "find_callees", "CalleeRequest", a, include_noise=a.get("include_noise", False)),
+    "orchard_find_callers": lambda a: _do_handler("callers", "find_callers", "CallerRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1)),
+    "orchard_find_callees": lambda a: _do_handler("callees", "find_callees", "CalleeRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1)),
     "orchard_impact": lambda a: _do_handler("impact", "impact_analysis", "ImpactRequest", a),
     "orchard_symbol": lambda a: _do_handler("symbol_context", "get_symbol_context", "SymbolContextRequest", a),
     "orchard_hierarchy": lambda a: _do_handler("type_hierarchy", "get_type_hierarchy", "TypeHierarchyRequest", a),

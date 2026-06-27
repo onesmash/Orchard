@@ -28,6 +28,7 @@ _MAX_METHODS_FOR_AUTO_EXPAND = 50
 class CalleeRequest(BaseToolRequest):
     usr: str = ""
     target_id: str | None = None
+    depth: int = 1
 
 
 def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
@@ -85,10 +86,14 @@ def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
         )
 
     # ── single-symbol path (existing behaviour) ────────────────────────
-    data = g.callees_of(req.usr, target_id)
+    if req.depth > 1:
+        data = g.callees_of_depth(req.usr, target_id, req.depth)
+    else:
+        data = g.callees_of(req.usr, target_id)
+        data = [{**d, "depth": 1} for d in data]
     _, status = g.freshness(req.build_id or "")
     return BaseToolResponse(
-        data=[{**d, "depth": 1} for d in data],
+        data=data,
         freshness=status,
         build_id=req.build_id,
         evidence_sources=["call_graph_derivation"],

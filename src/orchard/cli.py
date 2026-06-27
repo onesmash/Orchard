@@ -88,24 +88,26 @@ def _default_build_id(conn, target_id: str = "") -> str | None:
     return snapshot["id"] if snapshot else None
 
 
-def _parse_caller_callee_args(args: list[str]) -> tuple[str, str, str, bool]:
-    """Parse --usr, --target, --db, --include-noise for caller/callee commands."""
+def _parse_caller_callee_args(args: list[str]) -> tuple[str, str, str, bool, int]:
+    """Parse --usr, --target, --db, --include-noise, --depth for caller/callee commands."""
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--usr", required=True)
     ap.add_argument("--target", default="")
     ap.add_argument("--db", default="")
     ap.add_argument("--include-noise", action="store_true", default=False)
+    ap.add_argument("--depth", type=int, default=1,
+                    help="Multi-hop traversal depth (default: 1, direct only)")
     ns = ap.parse_args(args)
-    return ns.usr, ns.target, ns.db, ns.include_noise
+    return ns.usr, ns.target, ns.db, ns.include_noise, ns.depth
 
 
 def cmd_find_callers(args: list[str]):
-    usr, target, db, include_noise = _parse_caller_callee_args(args)
+    usr, target, db, include_noise, depth = _parse_caller_callee_args(args)
     from orchard.handlers.callers import CallerRequest, find_callers
     conn = _conn(db)
     build_id = _default_build_id(conn, target)
-    r = find_callers(conn, CallerRequest(usr=usr, target_id=target, build_id=build_id))
+    r = find_callers(conn, CallerRequest(usr=usr, target_id=target, build_id=build_id, depth=depth))
     if not include_noise:
         from orchard.query.noise_filter import filter_noise
         filtered, removed = filter_noise(r.data)
@@ -116,11 +118,11 @@ def cmd_find_callers(args: list[str]):
 
 
 def cmd_find_callees(args: list[str]):
-    usr, target, db, include_noise = _parse_caller_callee_args(args)
+    usr, target, db, include_noise, depth = _parse_caller_callee_args(args)
     from orchard.handlers.callees import CalleeRequest, find_callees
     conn = _conn(db)
     build_id = _default_build_id(conn, target)
-    r = find_callees(conn, CalleeRequest(usr=usr, target_id=target, build_id=build_id))
+    r = find_callees(conn, CalleeRequest(usr=usr, target_id=target, build_id=build_id, depth=depth))
     if not include_noise:
         from orchard.query.noise_filter import filter_noise
         filtered, removed = filter_noise(r.data)
@@ -492,7 +494,8 @@ def _execute_pipe_cmd(conn, cmd: str, args: dict):
     if cmd == "find_callers":
         from orchard.handlers.callers import CallerRequest, find_callers
         r = find_callers(conn, CallerRequest(
-            usr=args.get("usr", ""), target_id=args.get("target_id", "")
+            usr=args.get("usr", ""), target_id=args.get("target_id", ""),
+            depth=args.get("depth", 1),
         ))
         if not args.get("include_noise", False):
             from orchard.query.noise_filter import filter_noise
@@ -504,7 +507,8 @@ def _execute_pipe_cmd(conn, cmd: str, args: dict):
     if cmd == "find_callees":
         from orchard.handlers.callees import CalleeRequest, find_callees
         r = find_callees(conn, CalleeRequest(
-            usr=args.get("usr", ""), target_id=args.get("target_id", "")
+            usr=args.get("usr", ""), target_id=args.get("target_id", ""),
+            depth=args.get("depth", 1),
         ))
         if not args.get("include_noise", False):
             from orchard.query.noise_filter import filter_noise

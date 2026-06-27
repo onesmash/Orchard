@@ -170,6 +170,44 @@ class GraphLookup:
             )
         return list(callees.values())
 
+    def callees_of_depth(self, usr: str, target_id: str = "",
+                         depth: int = 3) -> list[dict]:
+        """Return callees of *usr* up to *depth* hops via iterative BFS."""
+        seen: set[str] = {usr}
+        frontier: set[str] = {usr}
+        results: list[dict] = []
+        for d in range(1, depth + 1):
+            next_frontier: set[str] = set()
+            for f_usr in frontier:
+                for c in self.callees_of(f_usr, target_id):
+                    if c["usr"] not in seen:
+                        seen.add(c["usr"])
+                        results.append({**c, "depth": d})
+                    next_frontier.add(c["usr"])
+            if not next_frontier:
+                break
+            frontier = next_frontier
+        return results
+
+    def callers_of_depth(self, usr: str, target_id: str = "",
+                         depth: int = 3) -> list[dict]:
+        """Return callers of *usr* up to *depth* hops via iterative BFS (reverse)."""
+        seen: set[str] = {usr}
+        frontier: set[str] = {usr}
+        results: list[dict] = []
+        for d in range(1, depth + 1):
+            next_frontier: set[str] = set()
+            for f_usr in frontier:
+                for c in self.callers_of(f_usr, target_id):
+                    if c["usr"] not in seen:
+                        seen.add(c["usr"])
+                        results.append({**c, "depth": d})
+                    next_frontier.add(c["usr"])
+            if not next_frontier:
+                break
+            frontier = next_frontier
+        return results
+
     # ---- Class methods (Contains edge traversal) ---------------------------
 
     def methods_of(self, usr: str, target_id: str = "") -> list[dict]:
