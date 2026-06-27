@@ -12,47 +12,35 @@ Usage::
 
 from __future__ import annotations
 
-# C++ noise operators: exact-matched (call-graph names are operator<<, not
-# operator<<char, traits>).  When a parameterised variant does appear it
-# will be caught by the multi-word prefix branch below.
-_CPP_NOISE_OPERATORS = {
-    "operator<<", "operator>>", "operator&", "operator->",
-    "operator()", "operator[]", "operator=", "operator+",
-    "operator-", "operator*", "operator/", "operator%",
-    "operator^", "operator|", "operator~", "operator!",
-    "operator<", "operator>", "operator,", "operator->*",
-    "operator<=>",
-}
+import re
 
-# Multi-word noise operators (prefix-matched — may carry template / param
-# suffixes like ``operator new(unsigned long)``).
-_CPP_NOISE_PREFIXES = [
-    "operator new", "operator delete", "operator bool",
-]
+# C++ operator noise: matched by prefix.  Any symbol whose name starts with
+# "operator" followed by a non-letter character is an overloaded operator
+# (``operator<<``, ``operator++``, ``operator<=>``, ``operator new``, etc.).
+# Symbols like ``operatorName`` (letter directly after "operator") are NOT
+# matched — those are ordinary functions with "operator" in their name.
+_CPP_OPERATOR_RE = re.compile(r"^operator(?:[^a-zA-Z]|$)")
 
-# Exact-match noise: logging / NSNotification / stream / C++ helpers
-CPP_NOISE_EXACT = {
+# Exact-match noise: logging / NSNotification / stream / C++ helpers.
+_CPP_HELPER_NAMES = frozenset({
     "GetMinLogLevel", "LogMessage", "LogMessageVoidify",
     "defaultCenter", "postNotificationName:object:",
     "StringPiece", "basic_stringstream", "NSLog",
     "c_str", "str", "stream",
-}
+})
 
 
 def is_noise(name: str) -> bool:
     """Return True if *name* is a known noise symbol.
 
-    Checks exact-match operators, multi-word prefix operators, and exact
-    helpers.  Call-graph names are simple operator names (``operator<<``)
-    without template arguments, so exact matching is sufficient.
+    Matches:
+      - C++ overloaded operators (``operator<<``, ``operator++``, ``operator new``, …)
+      - C++ logging / stream / ObjC notification helpers
     """
-    if name in CPP_NOISE_EXACT:
+    if name in _CPP_HELPER_NAMES:
         return True
-    if name in _CPP_NOISE_OPERATORS:
+    if _CPP_OPERATOR_RE.match(name):
         return True
-    for prefix in _CPP_NOISE_PREFIXES:
-        if name.startswith(prefix):
-            return True
     return False
 
 

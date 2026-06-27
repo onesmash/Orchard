@@ -114,15 +114,46 @@ class GraphLookup:
     # ---- Callers / callees ------------------------------------------------
 
     @staticmethod
-    def _prefer_source_direct(rows: list[tuple]) -> list[tuple]:
-        """Prefer source-level call evidence when any is available."""
-        if any((row[8] or "") == "source_direct" for row in rows):
-            return [row for row in rows if (row[8] or "") == "source_direct"]
-        return rows
+    def _filter_inferred(rows: list[tuple], include_inferred: bool) -> list[tuple]:
+        """Filter CALLS edges by ``reason`` provenance.
+
+        IndexStore tags every CALLS edge with a ``reason`` column:
+          - ``source_direct`` — observed at a source-level call-site (high signal)
+          - ``indexstore_relation_only`` — compiler type-inference edge (lower
+            signal; e.g. protocol-default dispatch, override chains)
+          - ``NULL`` — edge from symbolgraph (no reason column); semantically
+            equivalent to source-level (explicitly declared).
+
+        When *include_inferred* is False (the default):
+          1. Exclude ``indexstore_relation_only`` edges.
+          2. If ``source_direct`` edges exist for a given pair, prefer them
+             over NULL-reason duplicates (dedup).
+
+        When *include_inferred* is True the original behaviour is preserved:
+          prefer ``source_direct`` when any exist, otherwise return all rows.
+        """
+        if include_inferred:
+            if any((row[8] or "") == "source_direct" for row in rows):
+                return [row for row in rows if (row[8] or "") == "source_direct"]
+            return rows
+        # Default: exclude compiler-inferred edges
+        filtered = [row for row in rows if (row[8] or "") != "indexstore_relation_only"]
+        # When source_direct exists, prefer it over NULL-reason duplicates
+        # (e.g. an IndexStore source_direct edge and a symbolgraph edge for
+        # the same (caller, callee) pair — keep only the source_direct one).
+        if any((row[8] or "") == "source_direct" for row in filtered):
+            return [row for row in filtered if (row[8] or "") == "source_direct"]
+        return filtered
 
     def callers_of(self, usr: str, target_id: str = "",
-                   relation_types: list[str] | None = None) -> list[dict]:
-        """Return callers of *usr*, preferring source-level call evidence."""
+                   relation_types: list[str] | None = None,
+                   include_inferred: bool = False) -> list[dict]:
+        """Return callers of *usr*.
+
+        By default only source-level call evidence (``reason = 'source_direct'``)
+        is returned.  Set *include_inferred* to True to see compiler-inferred
+        edges (``indexstore_relation_only``) as well.
+        """
         if relation_types is None:
             relation_types = ["Calls"]
         rel_pipe = "|".join(relation_types)
@@ -135,7 +166,7 @@ class GraphLookup:
             "caller.kind, caller.language, caller.file_path, o.line, o.col, r.reason",
             {"id": sym_id},
         ).get_all()
-        preferred_rows = self._prefer_source_direct(rows)
+        preferred_rows = self._filter_inferred(rows, include_inferred)
         callers: dict[str, dict] = {}
         for r in preferred_rows:
             callers.setdefault(
@@ -153,11 +184,17 @@ class GraphLookup:
         return list(callers.values())
 
     def callees_of(self, usr: str, target_id: str = "",
-                   relation_types: list[str] | None = None) -> list[dict]:
-        """Return callees of *usr*, preferring source-level call evidence."""
+                   relation_types: list[str] | None = None,
+                   include_inferred: bool = False) -> list[dict]:
+        """Return callees of *usr*.
+
+        By default only source-level call evidence (``reason = 'source_direct'``)
+        is returned.  Set *include_inferred* to True to see compiler-inferred
+        edges (``indexstore_relation_only``) as well.
+        """
         if relation_types is None:
             relation_types = ["Calls"]
-        cache_key = f"{usr}"
+        cache_key = f"{usr}:{include_inferred}"
         if cache_key in self._callees_cache:
             return self._callees_cache[cache_key]
         rel_pipe = "|".join(relation_types)
@@ -168,8 +205,9 @@ class GraphLookup:
             "callee.kind, callee.language, r.reason",
             {"id": sym_id},
         ).get_all()
-        preferred_rows = self._prefer_source_direct(
-            [(r[0], r[1], r[2], r[3], r[4], "", None, None, r[5]) for r in rows]
+        preferred_rows = self._filter_inferred(
+            [(r[0], r[1], r[2], r[3], r[4], "", None, None, r[5]) for r in rows],
+            include_inferred,
         )
         callees: dict[str, dict] = {}
         for r in preferred_rows:
@@ -187,7 +225,8 @@ class GraphLookup:
 
     def callees_of_depth(self, usr: str, target_id: str = "",
                          depth: int = 3,
-                         relation_types: list[str] | None = None) -> list[dict]:
+                         relation_types: list[str] | None = None,
+                         include_inferred: bool = False) -> list[dict]:
         """Return callees of *usr* up to *depth* hops via iterative BFS."""
         if relation_types is None:
             relation_types = ["Calls"]
@@ -197,7 +236,8 @@ class GraphLookup:
         for d in range(1, depth + 1):
             next_frontier: set[str] = set()
             for f_usr in frontier:
-                for c in self.callees_of(f_usr, target_id, relation_types):
+                for c in self.callees_of(f_usr, target_id, relation_types,
+                                         include_inferred=include_inferred):
                     if c["usr"] not in seen:
                         seen.add(c["usr"])
                         results.append({**c, "depth": d})
@@ -209,7 +249,8 @@ class GraphLookup:
 
     def callers_of_depth(self, usr: str, target_id: str = "",
                          depth: int = 3,
-                         relation_types: list[str] | None = None) -> list[dict]:
+                         relation_types: list[str] | None = None,
+                         include_inferred: bool = False) -> list[dict]:
         """Return callers of *usr* up to *depth* hops via iterative BFS (reverse)."""
         if relation_types is None:
             relation_types = ["Calls"]
@@ -219,7 +260,8 @@ class GraphLookup:
         for d in range(1, depth + 1):
             next_frontier: set[str] = set()
             for f_usr in frontier:
-                for c in self.callers_of(f_usr, target_id, relation_types):
+                for c in self.callers_of(f_usr, target_id, relation_types,
+                                         include_inferred=include_inferred):
                     if c["usr"] not in seen:
                         seen.add(c["usr"])
                         results.append({**c, "depth": d})

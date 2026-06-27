@@ -30,6 +30,7 @@ class CalleeRequest(BaseToolRequest):
     target_id: str | None = None
     depth: int = 1
     relation_types: list[str] = field(default_factory=lambda: ["Calls"])
+    include_inferred: bool = False
 
 
 def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
@@ -51,7 +52,8 @@ def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
         # Group callees by USR, accumulating calling methods.
         callee_map: dict[str, dict] = {}
         for method in methods:
-            for callee in g.callees_of(method["usr"], target_id, req.relation_types):
+            for callee in g.callees_of(method["usr"], target_id, req.relation_types,
+                                       include_inferred=req.include_inferred):
                 key = callee["usr"]
                 if key not in callee_map:
                     callee_map[key] = {
@@ -88,9 +90,11 @@ def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
 
     # ── single-symbol path (existing behaviour) ────────────────────────
     if req.depth > 1:
-        data = g.callees_of_depth(req.usr, target_id, req.depth, req.relation_types)
+        data = g.callees_of_depth(req.usr, target_id, req.depth, req.relation_types,
+                                  include_inferred=req.include_inferred)
     else:
-        data = g.callees_of(req.usr, target_id, req.relation_types)
+        data = g.callees_of(req.usr, target_id, req.relation_types,
+                            include_inferred=req.include_inferred)
         data = [{**d, "depth": 1} for d in data]
     _, status = g.freshness(req.build_id or "")
     return BaseToolResponse(

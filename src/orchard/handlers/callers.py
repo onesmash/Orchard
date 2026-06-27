@@ -26,6 +26,7 @@ class CallerRequest(BaseToolRequest):
     target_id: str | None = None
     depth: int = 1
     relation_types: list[str] = field(default_factory=lambda: ["Calls"])
+    include_inferred: bool = False
 
 
 def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
@@ -47,7 +48,8 @@ def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
         all_callers: list[dict] = []
 
         for method in methods:
-            for caller in g.callers_of(method["usr"], target_id, req.relation_types):
+            for caller in g.callers_of(method["usr"], target_id, req.relation_types,
+                                       include_inferred=req.include_inferred):
                 usr = caller["usr"]
                 if usr not in seen_caller_usrs:
                     seen_caller_usrs.add(usr)
@@ -67,9 +69,11 @@ def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
 
     # ── single-symbol path (existing behaviour) ────────────────────────
     if req.depth > 1:
-        data = g.callers_of_depth(req.usr, target_id, req.depth, req.relation_types)
+        data = g.callers_of_depth(req.usr, target_id, req.depth, req.relation_types,
+                                  include_inferred=req.include_inferred)
     else:
-        data = g.callers_of(req.usr, target_id, req.relation_types)
+        data = g.callers_of(req.usr, target_id, req.relation_types,
+                            include_inferred=req.include_inferred)
         data = [{**d, "depth": 1} for d in data]
     _, status = g.freshness(req.build_id or "")
     sym_name = g.symbol(req.usr, target_id)

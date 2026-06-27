@@ -94,6 +94,7 @@ TOOLS = [
                 "depth": {"type": "integer", "description": "Multi-hop traversal depth (default 1, direct only)"},
                 "relation_types": {"type": "string", "description": "Comma-separated edge types to traverse (default: Calls). Example: 'Calls,Inherits,Implements'"},
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
+                "include_inferred": {"type": "boolean", "description": "When true, include compiler-inferred edges (reason=indexstore_relation_only). Default false: only source-level call evidence."},
             },
             "required": ["usr"],
         },
@@ -109,6 +110,7 @@ TOOLS = [
                 "depth": {"type": "integer", "description": "Multi-hop traversal depth (default 1, direct only)"},
                 "relation_types": {"type": "string", "description": "Comma-separated edge types to traverse (default: Calls). Example: 'Calls,Inherits,Implements'"},
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
+                "include_inferred": {"type": "boolean", "description": "When true, include compiler-inferred edges (reason=indexstore_relation_only). Default false: only source-level call evidence."},
             },
             "required": ["usr"],
         },
@@ -280,7 +282,7 @@ def _do_search_class(args: dict) -> str:
     }, ensure_ascii=False, indent=2)
 
 
-def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, include_noise: bool = True, depth: int = 1, relation_types: list[str] | None = None) -> str:
+def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, include_noise: bool = True, include_inferred: bool = False, depth: int = 1, relation_types: list[str] | None = None) -> str:
     """Generic dispatch: import → build request → call handler → noise filter → JSON."""
     import importlib
     mod = importlib.import_module(f"orchard.handlers.{module_name}")
@@ -292,6 +294,7 @@ def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, 
         depth=args.get("depth", depth),
         max_depth=args.get("max_depth", 5),
         relation_types=relation_types or args.get("relation_types", ["Calls"]),
+        include_inferred=args.get("include_inferred", include_inferred),
     )
     conn = _get_conn()
     result = fn(conn, req)

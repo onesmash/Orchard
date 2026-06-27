@@ -51,10 +51,11 @@ async def test_pipeline_writes_calls_then_handlers_return_data(ctx, tmp_db_path)
     from orchard.handlers.callers import find_callers, CallerRequest
     from orchard.handlers.callees import find_callees, CalleeRequest
 
-    # Synthetic IndexStore JSONL: callee is calledBy caller => caller calls callee
+    # Synthetic IndexStore JSONL: callee is calledBy caller => caller calls callee.
+    # occurrence_role "call" marks this as a source-level call-site (source_direct).
     indexstore_jsonl = (
         '{"kind": "relation", "from_usr": "c:callee()", '
-        '"to_usr": "c:caller()", "role": "calledBy"}\n'
+        '"to_usr": "c:caller()", "role": "calledBy", "occurrence_role": "call"}\n'
     )
     # Synthetic symbolgraph: two functions exist as Symbol nodes
     sg = SymbolGraphResult(
