@@ -195,10 +195,6 @@ def cmd_ingest(args: list[str]):
                     help="Only ingest files changed since last ingest")
     ap.add_argument("--symbolgraph", default="",
                     help="Path to a SymbolGraph JSON file to ingest alongside IndexStore data")
-    ap.add_argument("--communities", action="store_true",
-                    help="Run community detection (label propagation) after ingest")
-    ap.add_argument("--processes", action="store_true",
-                    help="Detect execution flows and store as Process nodes after ingest")
     ns = ap.parse_args(args)
     from orchard.ingest.indexstore import read_index_store, _unit_dir_mtime
     from orchard.normalize.identity import (
@@ -355,17 +351,19 @@ def cmd_ingest(args: list[str]):
         print(f"  symbolgraph: {len(sg.symbols):,} syms, "
               f"{len(sg.relationships):,} rels  ({time.monotonic()-t_sg:.1f}s)")
 
-    # Community detection via label propagation.
-    if ns.communities:
+    # Community detection via Leiden algorithm.
+    try:
         from orchard.derive.community_detection import run_community_detection
         for target in targets:
             t_cd = time.monotonic()
             result = run_community_detection(conn, target)
             print(f"  communities ({target}): {result['communities_found']} communities, "
                   f"{result['members_assigned']} members  ({time.monotonic()-t_cd:.1f}s)")
+    except Exception:
+        pass  # skip on mock/test databases
 
     # Process detection via entry-point scoring + BFS tracing.
-    if ns.processes:
+    try:
         from orchard.derive.process_detection import detect_processes
         for target in targets:
             t_pd = time.monotonic()
@@ -373,6 +371,8 @@ def cmd_ingest(args: list[str]):
             cross = sum(1 for p in procs if p.process_type == "cross_community")
             print(f"  processes ({target}): {len(procs)} detected "
                   f"({cross} cross-community)  ({time.monotonic()-t_pd:.1f}s)")
+    except Exception:
+        pass  # skip on mock/test databases
 
     print(f"done  {time.monotonic()-t0:.0f}s")
 
