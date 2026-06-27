@@ -72,6 +72,18 @@ TOOLS = [
         },
     ),
     Tool(
+        name="orchard_find_references",
+        description="Find incoming and outgoing references for a symbol. Returns both callers (incoming) and callees (outgoing).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "usr": {"type": "string", "description": "USR of the symbol"},
+                "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
+            },
+            "required": ["usr", "target_id"],
+        },
+    ),
+    Tool(
         name="orchard_find_callers",
         description="Find all callers of a symbol. Returns caller USR, name, kind, language, module, and containing owner.",
         inputSchema={
@@ -337,6 +349,7 @@ def _do_audit(args: dict) -> str:
 
 HANDLERS: dict[str, callable] = {
     "orchard_search": _do_search,
+    "orchard_find_references": lambda a: _do_handler("references", "find_references", "ReferencesRequest", a),
     "orchard_find_callers": lambda a: _do_handler("callers", "find_callers", "CallerRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1), relation_types=a.get("relation_types", "Calls").split(",") if isinstance(a.get("relation_types"), str) else ["Calls"]),
     "orchard_find_callees": lambda a: _do_handler("callees", "find_callees", "CalleeRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1), relation_types=a.get("relation_types", "Calls").split(",") if isinstance(a.get("relation_types"), str) else ["Calls"]),
     "orchard_impact": lambda a: _do_handler("impact", "impact_analysis", "ImpactRequest", a),

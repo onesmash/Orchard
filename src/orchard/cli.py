@@ -157,6 +157,16 @@ def cmd_symbol(args: list[str]):
     conn.close()
 
 
+def cmd_find_references(args: list[str]):
+    usr, target, db = _parse_common(args)
+    from orchard.handlers.references import ReferencesRequest, find_references
+    conn = _conn(db)
+    build_id = _default_build_id(conn, target)
+    r = find_references(conn, ReferencesRequest(usr=usr, target_id=target, build_id=build_id))
+    _print_json(r.__dict__)
+    conn.close()
+
+
 def cmd_hierarchy(args: list[str]):
     usr, target, db = _parse_common(args)
     from orchard.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
@@ -528,6 +538,13 @@ def _execute_pipe_cmd(conn, cmd: str, args: dict):
             filtered, removed = filter_noise(r.data)
             r.data = filtered
             r.noise_removed = removed
+        return r.__dict__
+
+    if cmd == "find_references":
+        from orchard.handlers.references import ReferencesRequest, find_references
+        r = find_references(conn, ReferencesRequest(
+            usr=args.get("usr", ""), target_id=args.get("target_id", ""),
+        ))
         return r.__dict__
 
     if cmd == "find_callees":
@@ -957,6 +974,7 @@ COMMANDS: dict[str, tuple] = {
     "find_callees":  (cmd_find_callees,  "List all symbols called by a symbol"),
     "impact":        (cmd_impact,        "Blast-radius analysis with risk scoring"),
     "symbol":        (cmd_symbol,        "Show metadata for a single symbol"),
+    "find_references": (cmd_find_references, "Find incoming and outgoing references for a symbol"),
     "hierarchy":     (cmd_hierarchy,     "Show type hierarchy (supertypes/subtypes)"),
     "ingest":        (cmd_ingest,        "Build the graph from Xcode IndexStore data"),
     "stats":         (cmd_stats,         "Database overview and freshness check"),

@@ -17,7 +17,7 @@ from orchard.build.context import BuildContext, make_build_id
 from orchard.handlers.symbol_context import get_symbol_context, SymbolContextRequest
 from orchard.handlers.callers import find_callers, CallerRequest
 from orchard.validation.freshness import freshness_for
-from orchard.cli import cmd_find_callers, cmd_find_callees, cmd_search, cmd_stats
+from orchard.cli import cmd_find_callers, cmd_find_callees, cmd_find_references, cmd_search, cmd_stats
 
 
 @pytest.fixture
@@ -266,6 +266,38 @@ def test_search_by_file_path(tmp_db_path, capsys):
     cmd_search(["--name", "b", "--file", "NotExists", "--db", tmp_db_path])
     payload = json.loads(capsys.readouterr().out)
     assert payload["count"] == 0, "no symbols in NotExists file"
+
+
+def test_find_references_returns_incoming_and_outgoing(tmp_db_path, capsys):
+    """find_references returns outgoing calls + incoming callers."""
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:self", precise_id="s:self", name="self()", kind="swift.func",
+                     module="MyLib", language="swift", file_path="/src/Ref.swift",
+                     signature="", access_level="public"),
+        SymbolRecord(usr="s:called", precise_id="s:called", name="called()", kind="swift.func",
+                     module="MyLib", language="swift", file_path="/src/Ref.swift",
+                     signature="", access_level="public"),
+        SymbolRecord(usr="s:caller", precise_id="s:caller", name="caller()", kind="swift.func",
+                     module="MyLib", language="swift", file_path="/src/Ref.swift",
+                     signature="", access_level="public"),
+    ], target_id="MyLib")
+    # self calls called, caller calls self
+    conn.execute("MATCH (a:Symbol {id:'s:self'}), (b:Symbol {id:'s:called'}) "
+                 "CREATE (a)-[:Calls {source:'test',confidence:1.0}]->(b)")
+    conn.execute("MATCH (a:Symbol {id:'s:caller'}), (b:Symbol {id:'s:self'}) "
+                 "CREATE (a)-[:Calls {source:'test',confidence:1.0}]->(b)")
+    conn.close()
+
+    cmd_find_references(["--usr", "s:self", "--target", "MyLib", "--db", tmp_db_path])
+    payload = json.loads(capsys.readouterr().out)
+    outgoing = payload["data"]["outgoing"]
+    incoming = payload["data"]["incoming"]
+    assert len(outgoing) == 1, "self calls called → 1 outgoing"
+    assert outgoing[0]["target_name"] == "called()"
+    assert len(incoming) == 1, "caller calls self → 1 incoming"
+    assert incoming[0]["caller_name"] == "caller()"
 
 
 def test_cmd_stats_prints_db_path_and_snapshot_metadata(tmp_db_path, capsys):
