@@ -10,6 +10,7 @@ import re
 from orchard.normalize.identity import make_symbol_id
 from orchard.validation.freshness import freshness_for, GraphFreshness
 from orchard.handlers.base import reason_to_confidence
+from orchard.derive.objc_semantics import classify_objc_message
 
 # ---------------------------------------------------------------------------
 # Framework callback detection
@@ -216,16 +217,17 @@ class GraphLookup:
         callees: dict[str, dict] = {}
         for r in preferred_rows:
             reason_val = r[8] or "indexstore_relation_only"
-            callees.setdefault(
-                r[0],
-                {
-                    "usr": r[0], "name": r[1], "module": r[2],
-                    "kind": r[3], "language": r[4],
-                    "reason": reason_val,
-                    "confidence": reason_to_confidence(reason_val),
-                    "provenance": r[8] or "symbolgraph",
-                },
-            )
+            lang = r[4] or ""
+            entry = {
+                "usr": r[0], "name": r[1], "module": r[2],
+                "kind": r[3], "language": lang,
+                "reason": reason_val,
+                "confidence": reason_to_confidence(reason_val),
+                "provenance": r[8] or "symbolgraph",
+            }
+            if lang == "objc":
+                entry["semantic_role"] = classify_objc_message(r[1])
+            callees.setdefault(r[0], entry)
         result = list(callees.values())
         self._callees_cache[cache_key] = result
         return result

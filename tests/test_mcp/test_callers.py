@@ -145,3 +145,33 @@ def test_find_callers_source_direct_becomes_compiler_verified(conn_with_calls):
     caller_b = next(item for item in resp.data if item["name"] == "B")
     assert caller_b["confidence"] == "compiler-verified"
     assert caller_b["provenance"] == "source_direct"
+
+
+# ── AC-3: semantic_role in callees ─────────────────────────────────
+def test_find_callees_includes_semantic_role_for_objc(conn_with_calls):
+    """AC-3: ObjC callees get semantic_role; Swift callees don't."""
+    conn_with_calls.execute(
+        "CREATE (:Symbol {id: 's:addObs', usr: 's:addObs', precise_id: '', "
+        "name: 'addObserver:selector:name:object:', language: 'objc', "
+        "kind: 'objc.method', module: 'M', target_id: 'T1', "
+        "file_path: '/src/a.mm', signature: '', container_usr: '', "
+        "access_level: 'internal', origin: 'derived', is_generated: false})"
+    )
+    conn_with_calls.execute(
+        "MATCH (a:Symbol {id:'s:A'}), (nc:Symbol {id:'s:addObs'}) "
+        "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+        "build_id:'b1', reason:'source_direct'}]->(nc)"
+    )
+    # Use include_inferred=True so NULL-reason edges aren't filtered out
+    # alongside the new source_direct edge (existing global filter quirk).
+    req = CalleeRequest(usr="s:A", build_id="b1",
+                        include_inferred=True,
+                        relation_types=["Calls"])
+    resp = find_callees(conn_with_calls, req)
+
+    observer = next(item for item in resp.data if item["name"] == "addObserver:selector:name:object:")
+    assert observer.get("semantic_role") == "notification_observer"
+
+    swift = next((item for item in resp.data if item["name"] == "B"), None)
+    if swift is not None:
+        assert "semantic_role" not in swift
