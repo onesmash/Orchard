@@ -51,6 +51,50 @@ def _entry_point_score(conn, max_candidates: int = 200) -> list[dict]:
     return scored
 
 
+def _build_calls_adjacency(conn) -> tuple[dict[str, list[str]], dict[str, dict]]:
+    """Load all Calls edges into an in-memory adjacency list + USR→metadata map.
+
+    Follows GitNexus pattern: one Cypher query, zero DB calls during BFS.
+    """
+    from collections import deque
+    rows = conn.execute(
+        "MATCH (a:Symbol)-[:Calls]->(b:Symbol) "
+        "RETURN a.usr, b.usr, b.name, b.module, b.kind, b.language"
+    ).get_all()
+    adj: dict[str, list[str]] = defaultdict(list)
+    meta: dict[str, dict] = {}
+    for r in rows:
+        adj[r[0]].append(r[1])
+        if r[1] not in meta:
+            meta[r[1]] = {"usr": r[1], "name": r[2], "module": r[3],
+                          "kind": r[4], "language": r[5],
+                          "reason": "source_direct"}
+    return adj, meta
+
+
+def _bfs_depth(adj: dict[str, list[str]], meta: dict[str, dict],
+               entry_usr: str, max_depth: int) -> list[dict]:
+    """In-memory BFS from *entry_usr* up to *max_depth* hops."""
+    seen: set[str] = {entry_usr}
+    results: list[dict] = []
+    frontier: list[str] = [entry_usr]
+    for d in range(1, max_depth + 1):
+        next_frontier: list[str] = []
+        for usr in frontier:
+            for cu in adj.get(usr, []):
+                if cu not in seen:
+                    seen.add(cu)
+                    callee = meta.get(cu, {"usr": cu, "name": cu, "module": "",
+                                           "kind": "", "language": "",
+                                           "reason": "source_direct"})
+                    results.append({**callee, "depth": d})
+                    next_frontier.append(cu)
+        if not next_frontier:
+            break
+        frontier = next_frontier
+    return results
+
+
 def detect_processes(
     conn,
     target_id: str = "",
@@ -59,11 +103,12 @@ def detect_processes(
     min_steps: int = 3,
 ) -> list[ProcessNode]:
     """Detect execution flows and write Process nodes + STEP_IN_PROCESS edges."""
-    g = GraphLookup(conn)
-
     entries = _entry_point_score(conn)
     if not entries:
         return []
+
+    # One-shot load of all Calls edges → in-memory BFS (GitNexus pattern).
+    adj, meta = _build_calls_adjacency(conn)
 
     community_rows = conn.execute(
         "MATCH (s:Symbol)-[:MEMBER_OF]->(c:Community) RETURN s.usr, c.id"
@@ -83,8 +128,7 @@ def detect_processes(
             continue
         seen.add(entry["usr"])
 
-        callees = g.callees_of_depth(entry["usr"], target_id, depth=max_depth,
-                                     relation_types=["Calls"])
+        callees = _bfs_depth(adj, meta, entry["usr"], max_depth)
         if len(callees) < min_steps:
             continue
 
@@ -108,17 +152,27 @@ def detect_processes(
         processes.append(proc)
         proc_callees[proc_id] = callees
 
-    # Write Process nodes + STEP_IN_PROCESS edges in one pass.
-    for proc in processes:
-        conn.execute(
-            "CREATE (:Process {id: $id, entry_name: $name, entry_kind: $kind})",
-            {"id": proc.id, "name": proc.entry_name, "kind": proc.entry_kind},
-        )
-        for step, callee in enumerate(proc_callees[proc.id], start=1):
-            conn.execute(
-                "MATCH (s:Symbol {usr: $usr}), (p:Process {id: $pid}) "
-                "CREATE (s)-[:STEP_IN_PROCESS {step: $step}]->(p)",
-                {"usr": callee["usr"], "pid": proc.id, "step": step},
-            )
+    # CSV batch write Process nodes + STEP_IN_PROCESS edges.
+    import csv, os, tempfile
+    csv_dir = tempfile.mkdtemp()
+
+    proc_path = os.path.join(csv_dir, "processes.csv")
+    with open(proc_path, "w", newline="") as fh:
+        w = csv.writer(fh, quoting=csv.QUOTE_ALL)
+        for proc in processes:
+            w.writerow([proc.id, proc.entry_name, proc.entry_kind])
+    conn.execute(f"COPY Process FROM '{proc_path}' (HEADER=false)")
+
+    step_path = os.path.join(csv_dir, "steps.csv")
+    with open(step_path, "w", newline="") as fh:
+        w = csv.writer(fh, quoting=csv.QUOTE_ALL)
+        for proc in processes:
+            for step, callee in enumerate(proc_callees[proc.id], start=1):
+                w.writerow([callee["usr"], proc.id, step])
+    conn.execute(f"COPY STEP_IN_PROCESS FROM '{step_path}' (HEADER=false)")
+
+    os.unlink(proc_path)
+    os.unlink(step_path)
+    os.rmdir(csv_dir)
 
     return processes
