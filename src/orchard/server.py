@@ -36,7 +36,11 @@ _conn = None
 
 
 def _get_conn():
-    """Return the session-scoped connection, opening it on first access."""
+    """Return the session-scoped connection, opening it on first access.
+
+    Opens the database in read-only mode so multiple MCP server instances
+    (e.g. from different editor windows) can share the same database.
+    """
     global _conn
     if _conn is None:
         from orchard.graph.db import get_connection
@@ -46,7 +50,7 @@ def _get_conn():
             path = _find_project_db() or ""
         if not path:
             path = os.path.expanduser("~/.orchard/graph.db")
-        _conn = get_connection(path)
+        _conn = get_connection(path, read_only=True)
     return _conn
 
 

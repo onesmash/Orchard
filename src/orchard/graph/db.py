@@ -21,13 +21,15 @@ from orchard.graph.schema import SCHEMA_STATEMENTS
 class _ConnectionWithDB:
     """Thin wrapper that keeps the Database alive alongside its Connection."""
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, read_only: bool = False) -> None:
         # Ladybug cannot open a database whose parent directory does not exist,
         # so ensure it is present (e.g. the default ~/.orchard/graph.db on a
         # fresh install). Existing directories are a no-op.
-        parent = os.path.dirname(os.path.abspath(db_path))
-        os.makedirs(parent, exist_ok=True)
-        self._db = ladybug.Database(db_path)
+        # Skip makedirs in read-only mode — the DB must already exist.
+        if not read_only:
+            parent = os.path.dirname(os.path.abspath(db_path))
+            os.makedirs(parent, exist_ok=True)
+        self._db = ladybug.Database(db_path, read_only=read_only)
         self._conn = ladybug.Connection(self._db)
 
     # Delegate all attribute access to the underlying Connection so callers
@@ -39,20 +41,23 @@ class _ConnectionWithDB:
         self._conn.close()
 
 
-def get_connection(db_path: str) -> _ConnectionWithDB:
+def get_connection(db_path: str, read_only: bool = False) -> _ConnectionWithDB:
     """Open (or create) a Ladybug database at *db_path* and return a connection.
 
     Parameters
     ----------
     db_path:
         Filesystem path for the Ladybug database directory.
+    read_only:
+        If True, open the database in read-only mode.  Multiple read-only
+        connections can coexist.  Default False (exclusive read-write).
 
     Returns
     -------
     _ConnectionWithDB
         A connection object whose lifetime keeps the underlying Database alive.
     """
-    return _ConnectionWithDB(db_path)
+    return _ConnectionWithDB(db_path, read_only=read_only)
 
 
 def init_schema(conn) -> None:

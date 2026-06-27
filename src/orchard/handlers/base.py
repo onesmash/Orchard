@@ -20,6 +20,9 @@ class BaseToolRequest:
     module: str | None = None
     include_derived: bool = True
     max_depth: int = 5
+    depth: int = 1
+    relation_types: list[str] = field(default_factory=lambda: ["Calls"])
+    include_inferred: bool = False
 
 
 @dataclass

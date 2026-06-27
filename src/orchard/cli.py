@@ -35,7 +35,7 @@ def _find_project_db_with_origin() -> tuple[str, bool] | None:
     return None
 
 
-def _conn(db_path: str = "", announce_parent: bool = False):
+def _conn(db_path: str = "", announce_parent: bool = False, read_only: bool = False):
     from orchard.graph.db import get_connection, init_schema
     path = db_path or os.environ.get("ORCHARD_DB_PATH", "")
     if not path:
@@ -47,8 +47,9 @@ def _conn(db_path: str = "", announce_parent: bool = False):
                 print(f"Using database at {path} (found in parent directory)", file=stream)
     if not path:
         path = os.path.expanduser("~/.orchard/graph.db")
-    c = get_connection(path)
-    init_schema(c)
+    c = get_connection(path, read_only=read_only)
+    if not read_only:
+        init_schema(c)
     return c
 
 
@@ -111,7 +112,7 @@ def _parse_caller_callee_args(args: list[str]) -> tuple[str, str, str, bool, boo
 def cmd_find_callers(args: list[str]):
     usr, target, db, include_noise, include_inferred, depth, rel_types = _parse_caller_callee_args(args)
     from orchard.handlers.callers import CallerRequest, find_callers
-    conn = _conn(db)
+    conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
     r = find_callers(conn, CallerRequest(usr=usr, target_id=target, build_id=build_id,
                                           depth=depth, relation_types=rel_types,
@@ -128,7 +129,7 @@ def cmd_find_callers(args: list[str]):
 def cmd_find_callees(args: list[str]):
     usr, target, db, include_noise, include_inferred, depth, rel_types = _parse_caller_callee_args(args)
     from orchard.handlers.callees import CalleeRequest, find_callees
-    conn = _conn(db)
+    conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
     r = find_callees(conn, CalleeRequest(usr=usr, target_id=target, build_id=build_id,
                                           depth=depth, relation_types=rel_types,
@@ -145,7 +146,7 @@ def cmd_find_callees(args: list[str]):
 def cmd_impact(args: list[str]):
     usr, target, db = _parse_common(args)
     from orchard.handlers.impact import ImpactRequest, impact_analysis
-    conn = _conn(db)
+    conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
     r = impact_analysis(conn, ImpactRequest(usr=usr, target_id=target, max_depth=5, build_id=build_id))
     _print_json(r.__dict__)
@@ -155,7 +156,7 @@ def cmd_impact(args: list[str]):
 def cmd_symbol(args: list[str]):
     usr, target, db = _parse_common(args)
     from orchard.handlers.symbol_context import SymbolContextRequest, get_symbol_context
-    conn = _conn(db)
+    conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
     r = get_symbol_context(conn, SymbolContextRequest(usr=usr, target_id=target, build_id=build_id))
     _print_json(r.__dict__)
@@ -165,7 +166,7 @@ def cmd_symbol(args: list[str]):
 def cmd_find_references(args: list[str]):
     usr, target, db = _parse_common(args)
     from orchard.handlers.references import ReferencesRequest, find_references
-    conn = _conn(db)
+    conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
     r = find_references(conn, ReferencesRequest(usr=usr, target_id=target, build_id=build_id))
     _print_json(r.__dict__)
@@ -175,7 +176,7 @@ def cmd_find_references(args: list[str]):
 def cmd_hierarchy(args: list[str]):
     usr, target, db = _parse_common(args)
     from orchard.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
-    conn = _conn(db)
+    conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
     r = get_type_hierarchy(conn, TypeHierarchyRequest(usr=usr, target_id=target, build_id=build_id))
     _print_json(r.__dict__)
@@ -417,7 +418,7 @@ def cmd_search(args: list[str]):
     if not ns.name and not ns.class_name:
         ap.error("either --name or --class is required")
 
-    conn = _conn(ns.db)
+    conn = _conn(ns.db, read_only=True)
 
     if ns.class_name:
         _cmd_search_class(conn, ns)
@@ -530,7 +531,7 @@ def cmd_pipe(args: list[str]):
     ap = argparse.ArgumentParser(prog="orchard pipe")
     ap.add_argument("--db", default="")
     ns = ap.parse_args(args)
-    conn = _conn(ns.db)
+    conn = _conn(ns.db, read_only=True)
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -730,7 +731,7 @@ def _pipe_search_name(conn, args: dict):
 def cmd_stats(args: list[str]):
     from orchard.validation.freshness import freshness_for
     db = _parse_db(args)
-    conn = _conn(db, announce_parent=True)
+    conn = _conn(db, announce_parent=True, read_only=True)
     print(f"Database: {db or os.environ.get('ORCHARD_DB_PATH', _find_project_db() or os.path.expanduser('~/.orchard/graph.db'))}")
     snapshot = _latest_build_snapshot(conn)
     if snapshot:
@@ -891,7 +892,7 @@ def cmd_process_list(args: list[str]):
         cmd_process_show(args[1:])
         return
     db = _parse_db(args)
-    conn = _conn(db)
+    conn = _conn(db, read_only=True)
     rows = conn.execute(
         "MATCH (p:Process) RETURN p.id, p.entry_name, p.entry_kind, "
         "p.label, p.process_type, p.step_count ORDER BY p.id"
@@ -907,7 +908,7 @@ def cmd_process_show(args: list[str]):
     """Show a single process with its full step chain."""
     pid = args[0] if args else ""
     db = _parse_db(args[1:])
-    conn = _conn(db)
+    conn = _conn(db, read_only=True)
     rows = conn.execute(
         "MATCH (s:Symbol)-[r:STEP_IN_PROCESS]->(p:Process {id: $id}) "
         "RETURN s.name, s.usr, s.kind, r.step ORDER BY r.step",
@@ -943,7 +944,7 @@ def cmd_audit(args: list[str]):
                     help="Graph database path")
     ns = ap.parse_args(args)
 
-    conn = _conn(ns.db)
+    conn = _conn(ns.db, read_only=True)
     from orchard.query.lookup import GraphLookup
     gl = GraphLookup(conn)
     stats = gl.module_stats()
