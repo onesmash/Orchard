@@ -74,7 +74,7 @@ def _default_build_id_safe(conn, target_id: str = "") -> str | None:
 TOOLS = [
     Tool(
         name="orchard_search",
-        description="Search for symbols by name (substring match) or find all methods of a class. When class_name is provided, finds matching classes and lists their methods. Returns USR, name, kind, language, and module for each match.",
+        description="Search for symbols by name (substring match) or find all methods of a class. Results include by_kind grouping (field/method/class/protocol...) and a flat results list. When class_name is provided, finds matching classes and lists their methods.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -90,7 +90,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_find_references",
-        description="Find incoming and outgoing references for a symbol. Returns both callers (incoming) and callees (outgoing).",
+        description="Find incoming and outgoing references for a symbol. Returns both callers (incoming) and callees (outgoing). Each edge includes confidence labels and provenance.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -101,7 +101,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_find_callers",
-        description="Find all callers of a symbol. Returns caller USR, name, kind, language, module, and containing owner.",
+        description="Find all callers of a symbol. Each entry includes confidence (compiler-verified/inferred) and provenance labels so you can distinguish source-level evidence from compiler-inferred edges.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -116,7 +116,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_find_callees",
-        description="Find all callees (symbols called by) a given symbol.",
+        description="Find all callees (symbols called by) a given symbol. Each entry includes confidence (compiler-verified/inferred). ObjC callees carry semantic_role (notification_observer, delegate_setter, framework_callback...) inline — no separate tool needed.",
         inputSchema={
             "type": "object",
             "properties": {
