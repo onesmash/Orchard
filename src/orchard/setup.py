@@ -300,19 +300,19 @@ _ORCHARD_BLOCK = """<!-- orchard:start -->
 This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbols, {calls_count:,} calls, {contains_count:,} contains). Use the orchard MCP tools to understand code, assess impact, and navigate safely.
 
 > If the index is stale, run `orchard ingest --project-dir .` to rebuild.
-> Data source: Xcode IndexStore — every edge is compiler-verified, not heuristic.
+> Data source: Xcode IndexStore — every edge is compiler-verified with confidence labels.
 
 ## Always Do
 
 - **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `orchard_impact` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST use orchard to find callers/callees** when exploring unfamiliar code — `orchard_find_callers` and `orchard_find_callees` with compiler-verified edges are more precise than grep.
+- **MUST use orchard to find callers/callees** when exploring unfamiliar code — `orchard_find_callers` and `orchard_find_callees` with compiler-verified edges are more precise than grep. Check the `confidence` field to distinguish source-level evidence from compiler-inferred edges.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
 
 ## When Debugging
 
-1. `orchard_search({{name: "<symbol>"}})` — find the symbol's USR
-2. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it (default: source-level call evidence only)
-3. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls
+1. `orchard_search({{name: "<symbol>"}})` — find the symbol's USR; results include `by_kind` grouping
+2. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred)
+3. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...)
 4. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups
 
 ## When Refactoring
@@ -320,6 +320,7 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 - **Before editing**: run `orchard_impact` on the target symbol to find all dependents.
 - **After changes**: run `orchard_find_callers` to verify no unexpected new dependents broke.
 - **Cross-language bridges**: use `orchard_find_references` to see ObjC ↔ Swift bridge edges.
+- **Renaming**: use `orchard_rename` — USR-precise, dry-run first, works without occurrence data via Symbol+Calls fallback.
 
 ## Never Do
 
@@ -335,19 +336,35 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 | `search` | Find symbols by name | `orchard_search({{name: "viewDidLoad"}})` |
 | `find_callers` | Who calls this symbol | `orchard_find_callers({{usr: "<USR>"}})` |
 | `find_callees` | What this symbol calls | `orchard_find_callees({{usr: "<USR>"}})` |
+| `find_references` | Incoming + outgoing references | `orchard_find_references({{usr: "<USR>"}})` |
 | `impact` | Blast radius before editing | `orchard_impact({{usr: "<USR>"}})` |
 | `symbol` | Symbol metadata | `orchard_symbol({{usr: "<USR>"}})` |
 | `hierarchy` | Type hierarchy | `orchard_hierarchy({{usr: "<USR>"}})` |
+| `rename` | USR-precise rename (dry-run safe) | `orchard_rename({{usr: "<USR>", new_name: "X"}})` |
 | `stats` | Database overview | `orchard_stats()` |
+| `audit` | Module coverage gaps | `orchard_audit({{project_dir: "."}})` |
 
-## Signal Filtering
+## Confidence Labels
 
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `include_noise` | false | Show C++ operators & logging helpers |
-| `include_inferred` | false | Show compiler-inferred edges |
+Every caller/callee carries a `confidence` field:
 
-By default only source-level call evidence is shown — compiler-verified call sites, not heuristics.
+| confidence | Meaning |
+|-----------|---------|
+| `compiler-verified` | Observed at a source-level call-site (source_direct or symbolgraph) |
+| `inferred` | Compiler type-inference edge (protocol dispatch, overrides) |
+
+Set `include_inferred: true` to see both; default shows only compiler-verified.
+
+## Semantic Roles (ObjC callees)
+
+ObjC callees carry a `semantic_role` field inline:
+
+| role | Example |
+|------|---------|
+| `notification_observer` | `addObserver:selector:name:object:` |
+| `notification_poster` | `postNotificationName:object:` |
+| `delegate_setter` | `setDelegate:` |
+| `framework_callback` | `viewDidLoad`, `application:didFinish...` |
 
 ## Impact Risk Levels
 
