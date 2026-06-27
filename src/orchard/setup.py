@@ -139,7 +139,10 @@ def _setup_mcp() -> tuple[bool, str]:
 # Skill
 # ---------------------------------------------------------------------------
 
-_SKILL_TARGET = Path.home() / ".claude" / "skills" / "orchard"
+_SKILL_TARGETS = [
+    Path.home() / ".claude" / "skills" / "orchard",
+    Path.home() / ".agents" / "skills" / "orchard",
+]
 
 
 def _skill_source_dir() -> Path:
@@ -169,23 +172,26 @@ def _skill_source_dir() -> Path:
 
 
 def _setup_skill() -> tuple[bool, str]:
-    """Copy the bundled orchard skill into ``~/.claude/skills/orchard/``.
+    """Copy the bundled orchard skill into ``~/.claude/skills/orchard/`` and
+    ``~/.agents/skills/orchard/``.
 
     Returns ``(ok, message)``.
     """
-    target = _SKILL_TARGET
     src = _skill_source_dir()
 
     if not src.is_dir():
         return False, f"Skill: source not found at {src}"
 
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, target, dirs_exist_ok=True)
-    except OSError as e:
-        return False, f"Skill: copy failed: {e}"
+    installed = []
+    for target in _SKILL_TARGETS:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, target, dirs_exist_ok=True)
+            installed.append(str(target))
+        except OSError as e:
+            return False, f"Skill: copy to {target} failed: {e}"
 
-    return True, f"Skill: installed to {target}"
+    return True, f"Skill: installed to {', '.join(installed)}"
 
 
 # ---------------------------------------------------------------------------
