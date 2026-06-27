@@ -164,17 +164,6 @@ TOOLS = [
         },
     ),
     Tool(
-        name="orchard_notification_flow",
-        description="Analyze ObjC notification/selector semantics for a symbol. Returns semantic role (notification_observer, delegate_setter, framework_callback, ...), dispatch hints, and notification peers.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "usr": {"type": "string", "description": "USR of the symbol to analyze"},
-            },
-            "required": ["usr"],
-        },
-    ),
-    Tool(
         name="orchard_rename",
         description="USR-precise rename: preview or apply a symbol rename across all occurrence sites (definition + references). Dry-run by default — returns a diff plan without modifying files. USR alone provides unambiguous symbol identity — no target_id needed.",
         inputSchema={
@@ -405,7 +394,6 @@ HANDLERS: dict[str, callable] = {
     "orchard_stats": _do_stats,
     "orchard_audit": _do_audit,
     "orchard_rename": lambda a: _do_handler("rename", "rename_symbol", "RenameRequest", a),
-    "orchard_notification_flow": lambda a: _do_handler("notification_flow", "get_notification_flow", "NotificationFlowRequest", a),
 }
 
 

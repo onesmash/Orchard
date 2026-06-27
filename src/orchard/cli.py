@@ -1039,24 +1039,6 @@ def _parse_db(args: list[str]) -> str:
 from orchard.setup import cmd_setup
 
 
-def cmd_notification_flow(args: list[str]):
-    """ObjC notification/selector semantic analysis."""
-    import argparse
-    ap = argparse.ArgumentParser(prog="orchard notification_flow")
-    ap.add_argument("--usr", required=True, help="USR of the symbol to analyze")
-    ap.add_argument("--db", default="", help="Graph database path")
-    ns = ap.parse_args(args)
-
-    from orchard.handlers.notification_flow import NotificationFlowRequest, get_notification_flow
-    conn = _conn(ns.db, read_only=True)
-    try:
-        req = NotificationFlowRequest(usr=ns.usr)
-        resp = get_notification_flow(conn, req)
-        _print_json(resp.__dict__)
-    finally:
-        conn.close()
-
-
 def cmd_rename(args: list[str]):
     """USR-precise rename with dry-run preview."""
     import argparse
@@ -1107,7 +1089,6 @@ COMMANDS: dict[str, tuple] = {
     "pipe":          (cmd_pipe,          "Batch queries via stdin JSONL (3+ queries)"),
     "setup":         (cmd_setup,         "Install MCP config + skill + download model"),
     "rename":        (cmd_rename,        "USR-precise symbol rename with dry-run preview"),
-    "notification_flow": (cmd_notification_flow, "ObjC notification/selector semantic analysis"),
 }
 
 
