@@ -83,54 +83,62 @@ def cmd_setup(args: list[str]) -> None:
 # MCP
 # ---------------------------------------------------------------------------
 
-_MCP_TARGET = Path.home() / ".claude" / "mcp.json"
+_MCP_TARGET = Path.home() / ".claude.json"
+
+_OLD_MCP_TARGET = Path.home() / ".claude" / "mcp.json"
 
 _MCP_ENTRY = {
-    "mcpServers": {
-        "orchard": {
-            "command": "orchard-mcp",
-            "args": [],
-        },
+    "orchard": {
+        "command": "orchard-mcp",
+        "args": [],
     },
 }
 
 
 def _setup_mcp() -> tuple[bool, str]:
-    """Ensure ``~/.claude/mcp.json`` includes the orchard MCP server.
+    """Ensure ``~/.claude.json`` includes the orchard MCP server.
 
     Returns ``(ok, message)``.
     """
     target = _MCP_TARGET
 
-    if target.exists():
-        try:
-            raw = target.read_text(encoding="utf-8")
-        except OSError as e:
-            return False, f"MCP: cannot read {target}: {e}"
-
-        try:
-            config = json.loads(raw)
-        except json.JSONDecodeError:
-            return False, (
-                f"MCP: {target} exists but contains comments or invalid JSON. "
-                "Please add the following entry manually:\n"
-                + json.dumps(_MCP_ENTRY, indent=2)
-            )
-
-        if "mcpServers" in config and "orchard" in config["mcpServers"]:
-            return True, "MCP: already configured (skipped)"
-
-        # Merge
-        config.setdefault("mcpServers", {}).update(_MCP_ENTRY["mcpServers"])
-        new_raw = json.dumps(config, indent=2) + "\n"
-    else:
-        new_raw = json.dumps(_MCP_ENTRY, indent=2) + "\n"
+    if not target.exists():
+        return False, f"MCP: {target} not found — is Claude Code installed?"
 
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
+        raw = target.read_text(encoding="utf-8")
+    except OSError as e:
+        return False, f"MCP: cannot read {target}: {e}"
+
+    try:
+        config = json.loads(raw)
+    except json.JSONDecodeError:
+        return False, (
+            f"MCP: {target} exists but contains invalid JSON. "
+            "Please add the following entry manually to the 'mcpServers' key:\n"
+            + json.dumps(_MCP_ENTRY, indent=2)
+        )
+
+    if config.get("mcpServers", {}).get("orchard"):
+        msg = "MCP: already configured in ~/.claude.json (skipped)"
+        # Clean up old ~/.claude/mcp.json if it exists
+        if _OLD_MCP_TARGET.exists():
+            _OLD_MCP_TARGET.unlink(missing_ok=True)
+            msg += " — removed stale ~/.claude/mcp.json"
+        return True, msg
+
+    # Merge orchard into existing mcpServers
+    config.setdefault("mcpServers", {}).update(_MCP_ENTRY)
+    new_raw = json.dumps(config, indent=2) + "\n"
+
+    try:
         target.write_text(new_raw, encoding="utf-8")
     except OSError as e:
         return False, f"MCP: cannot write {target}: {e}"
+
+    # Clean up old ~/.claude/mcp.json
+    if _OLD_MCP_TARGET.exists():
+        _OLD_MCP_TARGET.unlink(missing_ok=True)
 
     return True, f"MCP: wrote {target}"
 
