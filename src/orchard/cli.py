@@ -195,6 +195,10 @@ def cmd_ingest(args: list[str]):
                     help="Only ingest files changed since last ingest")
     ap.add_argument("--symbolgraph", default="",
                     help="Path to a SymbolGraph JSON file to ingest alongside IndexStore data")
+    ap.add_argument("--communities", action="store_true",
+                    help="Run community detection (label propagation) after ingest")
+    ap.add_argument("--processes", action="store_true",
+                    help="Detect execution flows and store as Process nodes after ingest")
     ns = ap.parse_args(args)
     from orchard.ingest.indexstore import read_index_store, _unit_dir_mtime
     from orchard.normalize.identity import (
@@ -350,6 +354,25 @@ def cmd_ingest(args: list[str]):
             upsert_symbol_rels(conn, sg.relationships, targets[0])
         print(f"  symbolgraph: {len(sg.symbols):,} syms, "
               f"{len(sg.relationships):,} rels  ({time.monotonic()-t_sg:.1f}s)")
+
+    # Community detection via label propagation.
+    if ns.communities:
+        from orchard.derive.community_detection import run_community_detection
+        for target in targets:
+            t_cd = time.monotonic()
+            result = run_community_detection(conn, target)
+            print(f"  communities ({target}): {result['communities_found']} communities, "
+                  f"{result['members_assigned']} members  ({time.monotonic()-t_cd:.1f}s)")
+
+    # Process detection via entry-point scoring + BFS tracing.
+    if ns.processes:
+        from orchard.derive.process_detection import detect_processes
+        for target in targets:
+            t_pd = time.monotonic()
+            procs = detect_processes(conn, target)
+            cross = sum(1 for p in procs if p.process_type == "cross_community")
+            print(f"  processes ({target}): {len(procs)} detected "
+                  f"({cross} cross-community)  ({time.monotonic()-t_pd:.1f}s)")
 
     print(f"done  {time.monotonic()-t0:.0f}s")
 
@@ -853,6 +876,18 @@ def _format_audit_table(stats: list[dict], xcode_targets: list[str] | None = Non
     return "\n".join(lines)
 
 
+def cmd_process_list(args: list[str]):
+    db = _parse_db(args)
+    conn = _conn(db)
+    rows = conn.execute(
+        "MATCH (p:Process) RETURN p.id, p.entry_name, p.entry_kind "
+        "ORDER BY p.id"
+    ).get_all()
+    procs = [{"id": r[0], "entry_name": r[1], "entry_kind": r[2]} for r in rows]
+    _print_json({"count": len(procs), "processes": procs})
+    conn.close()
+
+
 def cmd_audit(args: list[str]):
     """Audit the graph database: module coverage, symbol counts by kind, gap detection.
 
@@ -979,6 +1014,7 @@ COMMANDS: dict[str, tuple] = {
     "ingest":        (cmd_ingest,        "Build the graph from Xcode IndexStore data"),
     "stats":         (cmd_stats,         "Database overview and freshness check"),
     "audit":         (cmd_audit,         "Module coverage report with Xcode target gap detection"),
+    "process":       (cmd_process_list,  "List detected execution flows (Process nodes)"),
     "pipe":          (cmd_pipe,          "Batch queries via stdin JSONL (3+ queries)"),
     "setup":         (cmd_setup,         "Install MCP config + skill + download model"),
 }
