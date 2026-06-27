@@ -1,4 +1,4 @@
-"""``orchard setup`` — one-shot configuration for Claude Code.
+"""``orchard setup`` — one-shot configuration for Claude Code and Codex.
 
 Configures the MCP server entry, installs the orchard skill, and injects
 the orchard code-intelligence block into CLAUDE.md / AGENTS.md.
@@ -54,6 +54,8 @@ def cmd_setup(args: list[str]) -> None:
     if all_items or ns.mcp:
         ok, msg = _setup_mcp()
         (installed if ok else errors).append(msg)
+        ok2, msg2 = _setup_codex_mcp()
+        (installed if ok2 else errors).append(msg2)
 
     if all_items or ns.skill:
         ok, msg = _setup_skill()
@@ -141,6 +143,48 @@ def _setup_mcp() -> tuple[bool, str]:
         _OLD_MCP_TARGET.unlink(missing_ok=True)
 
     return True, f"MCP: wrote {target}"
+
+
+# ---------------------------------------------------------------------------
+# Codex MCP
+# ---------------------------------------------------------------------------
+
+_CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
+
+_CODEX_MCP_ENTRY = """\
+[mcp_servers.orchard]
+type = "stdio"
+command = "orchard-mcp"
+args = []
+"""
+
+
+def _setup_codex_mcp() -> tuple[bool, str]:
+    """Ensure ``~/.codex/config.toml`` includes the orchard MCP server.
+
+    Returns ``(ok, message)``.
+    """
+    target = _CODEX_CONFIG
+
+    if not target.exists():
+        return True, "Codex MCP: ~/.codex/config.toml not found (skipped)"
+
+    try:
+        raw = target.read_text(encoding="utf-8")
+    except OSError as e:
+        return False, f"Codex MCP: cannot read {target}: {e}"
+
+    if "[mcp_servers.orchard]" in raw:
+        return True, "Codex MCP: already configured (skipped)"
+
+    # Append orchard entry
+    try:
+        with open(target, "a", encoding="utf-8") as f:
+            f.write("\n" + _CODEX_MCP_ENTRY)
+    except OSError as e:
+        return False, f"Codex MCP: cannot write {target}: {e}"
+
+    return True, f"Codex MCP: wrote {target}"
 
 
 # ---------------------------------------------------------------------------
