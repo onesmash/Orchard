@@ -41,3 +41,42 @@ def test_process_detection_empty_graph():
     init_schema(conn)
     procs = detect_processes(conn, "Test")
     assert len(procs) == 0
+
+
+def test_entry_scoring_boosts_known_patterns():
+    """handle*/application: patterns should score higher than generic names."""
+    from orchard.derive.process_detection import _entry_point_score
+    conn = get_connection(":memory:")
+    init_schema(conn)
+    syms = [
+        SymbolRecord(usr="s:handle", name="handlePush:", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:generic", name="doWork", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:getter", name="getter:body", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:ca", name="ca", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:cb", name="cb", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+        SymbolRecord(usr="s:cc", name="cc", kind="function", module="T",
+                     language="swift", file_path="", signature="", access_level="public",
+                     container_usr=None, precise_id=""),
+    ]
+    upsert_symbols(conn, syms, "T")
+    for s in ("s:handle", "s:generic", "s:getter"):
+        for t in ("s:ca", "s:cb", "s:cc"):
+            conn.execute(f"MATCH (a:Symbol {{usr:'{s}'}}),(b:Symbol {{usr:'{t}'}}) CREATE (a)-[:Calls {{source:'test',confidence:0.9}}]->(b)")
+    entries = _entry_point_score(conn, 20)
+    names = {e["name"]: e["score"] for e in entries}
+    # handlePush should score above doWork and getter:body
+    assert names["handlePush:"] > names["doWork"], "handlePush should rank higher than doWork"
+    # getter:body should be blacklisted (score 0)
+    assert "getter:body" not in names, "getter:body should be blacklisted"
+
+

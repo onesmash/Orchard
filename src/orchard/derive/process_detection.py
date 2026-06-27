@@ -21,7 +21,11 @@ class ProcessNode:
 
 
 def _entry_point_score(conn, max_candidates: int = 200) -> list[dict]:
-    """Score symbols as potential process entry points by callee/caller ratio."""
+    """Score symbols as potential process entry points.
+
+    Uses weighted callee/caller ratio with naming-pattern boosts and a
+    blacklist for noise symbols (accessors, dealloc, UI delegate stubs).
+    """
     rows = conn.execute(
         "MATCH (s:Symbol)-[:Calls]->(c:Symbol) "
         "WITH s, count(c) AS callee_count "
@@ -34,19 +38,43 @@ def _entry_point_score(conn, max_candidates: int = 200) -> list[dict]:
         {"n": max_candidates},
     ).get_all()
 
-    entry_patterns = (
-        "handle", "Handle", "didReceive", "application:", "scene:",
-        "viewDidLoad", "onLogin", "onStart", "main", "entry",
-    )
+    import re
+
+    # High-value entry patterns (weight multiplier).
+    _ENTRY_BOOST = [
+        (re.compile(r"^(application|scene|userNotificationCenter):"), 3.0),
+        (re.compile(r"^(handle|Handle|didReceive|onReceive)"), 2.5),
+        (re.compile(r"^(imCmd|confNoti|notify|onConf|call)"), 2.0),
+        (re.compile(r"^(viewDid|onLogin|onStart|pushNoti|report)"), 1.5),
+    ]
+
+    # Noise patterns: score = 0.
+    _ENTRY_BLACKLIST = [
+        re.compile(r"^(getter:|setter:|dealloc|\.cxx_destruct|init$|initWith)"),
+        re.compile(r"^(tableView:|collectionView:|numberOfSections|numberOfRows)"),
+        re.compile(r"^(itemsWith|actionsWith|onRender|onMoreMenu|loadSubviews?$)"),
+        re.compile(r"^(refreshUI|find_by_|dispatchJSEvent|getCallOut)"),
+    ]
+
+    def _score(name: str, callees: int, callers: int) -> float:
+        for pat in _ENTRY_BLACKLIST:
+            if pat.search(name or ""):
+                return 0.0
+        boost = 1.0
+        for pat, weight in _ENTRY_BOOST:
+            if pat.search(name or ""):
+                boost = max(boost, weight)
+        return (callees / (callers + 1)) * boost
+
     scored = []
     for r in rows:
         usr, name, kind, module, callees, callers = r
-        name_boost = 1.5 if any(p in (name or "") for p in entry_patterns) else 1.0
-        score = (callees / (callers + 1)) * name_boost
-        scored.append({
-            "usr": usr, "name": name, "kind": kind, "module": module,
-            "callee_count": callees, "caller_count": callers, "score": score,
-        })
+        s = _score(name or "", callees, callers)
+        if s > 0:
+            scored.append({
+                "usr": usr, "name": name, "kind": kind, "module": module,
+                "callee_count": callees, "caller_count": callers, "score": s,
+            })
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored
 
@@ -58,7 +86,8 @@ def _build_calls_adjacency(conn) -> tuple[dict[str, list[str]], dict[str, dict]]
     """
     from collections import deque
     rows = conn.execute(
-        "MATCH (a:Symbol)-[:Calls]->(b:Symbol) "
+        "MATCH (a:Symbol)-[r:Calls]->(b:Symbol) "
+        "WHERE r.confidence IS NULL OR r.confidence >= 0.5 "
         "RETURN a.usr, b.usr, b.name, b.module, b.kind, b.language"
     ).get_all()
     adj: dict[str, list[str]] = defaultdict(list)

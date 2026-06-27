@@ -1,27 +1,29 @@
-"""Community detection via label propagation for functional domain discovery.
-
-Groups symbols into communities based on co-occurrence in call graphs and
-structural relationships.  Uses label propagation (Python-side) with CSV
-batch writes for Community nodes and MEMBER_OF edges.
-"""
+"""Community detection via Leiden algorithm for functional domain discovery."""
 
 from __future__ import annotations
 
 from collections import defaultdict
 import csv, os, tempfile
 
+import igraph as ig
+import leidenalg
+
 
 def run_community_detection(conn, target_id: str) -> dict[str, int]:
-    """Detect communities and write Community nodes + MEMBER_OF edges."""
-
-    # Load functional-proximity edges only (no Contains — structural, not functional).
-    # GitNexus uses Calls + Extends + Implements; orchard uses Calls + Inherits + ConformsTo.
+    """Detect communities via Leiden and write Community + MEMBER_OF edges."""
     adj: dict[str, set[str]] = defaultdict(set)
     for rel_type in ("Calls", "Inherits", "ConformsTo"):
-        rows = conn.execute(
-            f"MATCH (a:Symbol)-[:{rel_type}]->(b:Symbol) "
-            f"RETURN a.usr, b.usr"
-        ).get_all()
+        if rel_type == "Calls":
+            rows = conn.execute(
+                "MATCH (a:Symbol)-[r:Calls]->(b:Symbol) "
+                "WHERE r.confidence IS NULL OR r.confidence >= 0.5 "
+                "RETURN a.usr, b.usr"
+            ).get_all()
+        else:
+            rows = conn.execute(
+                f"MATCH (a:Symbol)-[:{rel_type}]->(b:Symbol) "
+                f"RETURN a.usr, b.usr"
+            ).get_all()
         for row in rows:
             adj[row[0]].add(row[1])
             adj[row[1]].add(row[0])
@@ -29,58 +31,54 @@ def run_community_detection(conn, target_id: str) -> dict[str, int]:
     if not adj:
         return {"communities_found": 0, "members_assigned": 0}
 
-    # Skip singletons: degree-1 nodes cost iteration time but become singletons
-    # or get absorbed into their single neighbor's community (GitNexus pattern).
+    # Skip degree-1 singletons (GitNexus pattern for large graphs).
     if len(adj) > 10000:
         adj = {k: v for k, v in adj.items() if len(v) >= 2}
 
-    # Label propagation.
-    labels: dict[str, int] = {}
-    for i, node in enumerate(adj):
-        labels[node] = i
+    # Build igraph from adjacency.
+    usr_list = list(adj.keys())
+    usr_to_idx = {u: i for i, u in enumerate(usr_list)}
+    g = ig.Graph(n=len(usr_list))
+    edges = []
+    for src, targets in adj.items():
+        si = usr_to_idx[src]
+        for tgt in targets:
+            ti = usr_to_idx.get(tgt)
+            if ti is not None and si != ti:
+                edges.append((si, ti))
+    g.add_edges(edges)
 
-    for _ in range(20):
-        changed = False
-        for node in adj:
-            if not adj[node]:
-                continue
-            counts: dict[int, int] = defaultdict(int)
-            for nb in adj[node]:
-                counts[labels.get(nb, 0)] += 1
-            if counts:
-                best = max(counts, key=counts.get)
-                if labels[node] != best:
-                    labels[node] = best
-                    changed = True
-        if not changed:
-            break
+    # Leiden partition with deterministic seed.
+    partition = leidenalg.find_partition(
+        g, leidenalg.ModularityVertexPartition,
+        n_iterations=2, seed=0xc0de,
+    )
 
-    # Group by label.
+    # Group by community.
     groups: dict[int, set[str]] = defaultdict(set)
-    for node, lbl in labels.items():
-        groups[lbl].add(node)
+    for i, comm_id in enumerate(partition.membership):
+        groups[comm_id].add(usr_list[i])
 
-    # CSV batch write Community nodes.
+    # CSV batch write Community nodes + MEMBER_OF edges (unchanged).
     csv_dir = tempfile.mkdtemp()
     comm_path = os.path.join(csv_dir, "communities.csv")
     with open(comm_path, "w", newline="") as fh:
         w = csv.writer(fh, quoting=csv.QUOTE_ALL)
         for lbl, members in groups.items():
-            if len(members) < 3:
+            if len(members) < 2:
                 continue
             w.writerow([f"community:{target_id}:{lbl}", len(members)])
     try:
         conn.execute(f"COPY Community FROM '{comm_path}' (HEADER=false)")
     except Exception:
-        pass  # Community table may not exist yet
+        pass
     os.unlink(comm_path)
 
-    # CSV batch write MEMBER_OF edges.
     rel_path = os.path.join(csv_dir, "member_of.csv")
     with open(rel_path, "w", newline="") as fh:
         w = csv.writer(fh, quoting=csv.QUOTE_ALL)
         for lbl, members in groups.items():
-            if len(members) < 3:
+            if len(members) < 2:
                 continue
             cid = f"community:{target_id}:{lbl}"
             for usr in members:
@@ -92,4 +90,4 @@ def run_community_detection(conn, target_id: str) -> dict[str, int]:
     os.unlink(rel_path)
     os.rmdir(csv_dir)
 
-    return {"communities_found": len(groups), "members_assigned": len(labels)}
+    return {"communities_found": len(groups), "members_assigned": sum(len(m) for m in groups.values())}
