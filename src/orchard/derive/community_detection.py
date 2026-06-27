@@ -1,30 +1,26 @@
 """Community detection via label propagation for functional domain discovery.
 
 Groups symbols into communities based on co-occurrence in call graphs and
-structural relationships.  Uses a simple label propagation algorithm as
-default; Leiden (igraph) is an optional upgrade.
+structural relationships.  Uses label propagation (Python-side) with CSV
+batch writes for Community nodes and MEMBER_OF edges.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
+import csv, os, tempfile
 
 
 def run_community_detection(conn, target_id: str) -> dict[str, int]:
-    """Detect communities and write Community nodes + MEMBER_OF edges.
+    """Detect communities and write Community nodes + MEMBER_OF edges."""
 
-    Strategy: label propagation on the co-occurrence graph built from
-    Calls + Contains + Inherits edges.
-    """
-    # Build adjacency: symbol → neighboring symbols
+    # Load functional-proximity edges only (no Contains — structural, not functional).
+    # GitNexus uses Calls + Extends + Implements; orchard uses Calls + Inherits + ConformsTo.
     adj: dict[str, set[str]] = defaultdict(set)
-
-    for rel_type in ("Calls", "Contains", "Inherits", "ConformsTo"):
+    for rel_type in ("Calls", "Inherits", "ConformsTo"):
         rows = conn.execute(
             f"MATCH (a:Symbol)-[:{rel_type}]->(b:Symbol) "
-            f"WHERE a.module = $tid AND b.module = $tid "
-            f"RETURN a.usr, b.usr LIMIT 10000",
-            {"tid": target_id},
+            f"RETURN a.usr, b.usr"
         ).get_all()
         for row in rows:
             adj[row[0]].add(row[1])
@@ -33,15 +29,17 @@ def run_community_detection(conn, target_id: str) -> dict[str, int]:
     if not adj:
         return {"communities_found": 0, "members_assigned": 0}
 
-    # Label propagation
+    # Skip singletons: degree-1 nodes cost iteration time but become singletons
+    # or get absorbed into their single neighbor's community (GitNexus pattern).
+    if len(adj) > 10000:
+        adj = {k: v for k, v in adj.items() if len(v) >= 2}
+
+    # Label propagation.
     labels: dict[str, int] = {}
     for i, node in enumerate(adj):
         labels[node] = i
 
-    changed = True
     for _ in range(20):
-        if not changed:
-            break
         changed = False
         for node in adj:
             if not adj[node]:
@@ -54,27 +52,44 @@ def run_community_detection(conn, target_id: str) -> dict[str, int]:
                 if labels[node] != best:
                     labels[node] = best
                     changed = True
+        if not changed:
+            break
 
-    # Group by label
+    # Group by label.
     groups: dict[int, set[str]] = defaultdict(set)
     for node, lbl in labels.items():
         groups[lbl].add(node)
 
-    # Write Community nodes + MEMBER_OF edges
-    for lbl, members in groups.items():
-        if len(members) < 3:
-            continue
-        # Find most common module or name as label
-        community_id = f"community:{target_id}:{lbl}"
-        conn.execute(
-            "MERGE (c:Community {id: $cid}) SET c.size = $size",
-            {"cid": community_id, "size": len(members)},
-        )
-        for member_usr in members:
-            conn.execute(
-                "MATCH (s:Symbol {usr: $usr}), (c:Community {id: $cid}) "
-                "MERGE (s)-[:MEMBER_OF]->(c)",
-                {"usr": member_usr, "cid": community_id},
-            )
+    # CSV batch write Community nodes.
+    csv_dir = tempfile.mkdtemp()
+    comm_path = os.path.join(csv_dir, "communities.csv")
+    with open(comm_path, "w", newline="") as fh:
+        w = csv.writer(fh, quoting=csv.QUOTE_ALL)
+        for lbl, members in groups.items():
+            if len(members) < 3:
+                continue
+            w.writerow([f"community:{target_id}:{lbl}", len(members)])
+    try:
+        conn.execute(f"COPY Community FROM '{comm_path}' (HEADER=false)")
+    except Exception:
+        pass  # Community table may not exist yet
+    os.unlink(comm_path)
+
+    # CSV batch write MEMBER_OF edges.
+    rel_path = os.path.join(csv_dir, "member_of.csv")
+    with open(rel_path, "w", newline="") as fh:
+        w = csv.writer(fh, quoting=csv.QUOTE_ALL)
+        for lbl, members in groups.items():
+            if len(members) < 3:
+                continue
+            cid = f"community:{target_id}:{lbl}"
+            for usr in members:
+                w.writerow([usr, cid])
+    try:
+        conn.execute(f"COPY MEMBER_OF FROM '{rel_path}' (HEADER=false)")
+    except Exception:
+        pass
+    os.unlink(rel_path)
+    os.rmdir(csv_dir)
 
     return {"communities_found": len(groups), "members_assigned": len(labels)}

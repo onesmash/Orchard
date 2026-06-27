@@ -60,6 +60,7 @@ class GraphLookup:
     def __init__(self, conn):
         self._conn = conn
         self._container_names_cache: dict[str, list[str]] = {}
+        self._callees_cache: dict[str, list[dict]] = {}
 
     # ---- Symbol resolution ------------------------------------------------
 
@@ -155,6 +156,9 @@ class GraphLookup:
         """Return callees of *usr*, preferring source-level call evidence."""
         if relation_types is None:
             relation_types = ["Calls"]
+        cache_key = f"{usr}:{target_id}:{'.'.join(relation_types)}"
+        if cache_key in self._callees_cache:
+            return self._callees_cache[cache_key]
         rel_pipe = "|".join(relation_types)
         sym_id = make_symbol_id(target_id, usr)
         rows = self._conn.execute(
@@ -176,7 +180,9 @@ class GraphLookup:
                     "reason": r[8] or "indexstore_relation_only",
                 },
             )
-        return list(callees.values())
+        result = list(callees.values())
+        self._callees_cache[cache_key] = result
+        return result
 
     def callees_of_depth(self, usr: str, target_id: str = "",
                          depth: int = 3,
@@ -220,6 +226,54 @@ class GraphLookup:
             if not next_frontier:
                 break
             frontier = next_frontier
+        return results
+
+    def callees_of_depth_batch(
+        self, entry_usrs: list[str], target_id: str = "",
+        depth: int = 5,
+        relation_types: list[str] | None = None,
+    ) -> dict[str, list[dict]]:
+        """Multi-source BFS: all *entry_usrs* expand in one traversal.
+
+        Returns ``{entry_usr: [callee_dict, ...]}``.  Shared nodes are
+        visited once but attributed to every entry that can reach them.
+        """
+        if relation_types is None:
+            relation_types = ["Calls"]
+        # Each node remembers which entries can reach it.
+        node_sources: dict[str, set[str]] = {}
+        for u in entry_usrs:
+            node_sources[u] = {u}
+
+        frontier = set(entry_usrs)
+        results: dict[str, list[dict]] = {u: [] for u in entry_usrs}
+
+        for d in range(1, depth + 1):
+            next_frontier: set[str] = set()
+            for f_usr in frontier:
+                fr_sources = node_sources.get(f_usr, {f_usr})
+                for callee in self.callees_of(f_usr, target_id, relation_types):
+                    cu = callee["usr"]
+                    if cu not in node_sources:
+                        node_sources[cu] = set(fr_sources)
+                        next_frontier.add(cu)
+                    else:
+                        node_sources[cu].update(fr_sources)
+                    for src in fr_sources:
+                        if src in results:
+                            results[src].append({**callee, "depth": d})
+            if not next_frontier:
+                break
+            frontier = next_frontier
+
+        # Deduplicate per entry (same callee at different depths → keep shallowest).
+        for u in entry_usrs:
+            seen: dict[str, dict] = {}
+            for c in results[u]:
+                if c["usr"] not in seen or c["depth"] < seen[c["usr"]]["depth"]:
+                    seen[c["usr"]] = c
+            results[u] = list(seen.values())
+
         return results
 
     # ---- Class methods (Contains edge traversal) ---------------------------
