@@ -23,7 +23,7 @@ def _seed(conn):
 def test_impact_includes_subtypes_in_d1():
     conn = get_connection(":memory:")
     _seed(conn)
-    r = impact_analysis(conn, ImpactRequest(usr="s:P", target_id="Test"))
+    r = impact_analysis(conn, ImpactRequest(usr="s:P"))
     d1 = r.data["by_depth"].get("d1", [])
     d1_usrs = {d["usr"] for d in d1}
     assert "s:A" in d1_usrs
@@ -38,7 +38,7 @@ def test_impact_no_duplicate_when_conformer_also_calls():
     _seed(conn)
     # A also calls P (would be reached via Calls too)
     conn.execute("MATCH (a:Symbol {usr:'s:A'}),(p:Symbol {usr:'s:P'}) CREATE (a)-[:Calls {source:'test',confidence:0.9}]->(p)")
-    r = impact_analysis(conn, ImpactRequest(usr="s:P", target_id="Test"))
+    r = impact_analysis(conn, ImpactRequest(usr="s:P"))
     d1 = r.data["by_depth"].get("d1", [])
     a_entries = [d for d in d1 if d["usr"] == "s:A"]
     assert len(a_entries) == 1  # no duplicate

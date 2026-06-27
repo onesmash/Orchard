@@ -45,7 +45,7 @@ def test_m3_bridge_recovery_and_impact(tmp_db_path):
 
     # 3. Query bridges
     bridges = get_cross_language_bridges(
-        conn, BridgesRequest(usr="s:loadData", target_id=target_id, build_id="m3"))
+        conn, BridgesRequest(usr="s:loadData", build_id="m3"))
     assert len(bridges.data) >= 1
     assert any(b["bridge_kind"] in ("name_match", "usr_correlate") for b in bridges.data)
     assert bridges.freshness is not None
@@ -55,11 +55,11 @@ def test_m3_bridge_recovery_and_impact(tmp_db_path):
     conn.execute(
         "MATCH (a:Symbol {id: $caller}), (b:Symbol {id: $callee}) "
         "CREATE (a)-[:Calls {source:'test', confidence:1.0}]->(b)",
-        {"caller": make_symbol_id(target_id, "s:otherFunc"),
-         "callee": make_symbol_id(target_id, "s:loadData")},
+        {"caller": make_symbol_id("s:otherFunc"),
+         "callee": make_symbol_id("s:loadData")},
     )
     impact = impact_analysis(
-        conn, ImpactRequest(usr="s:loadData", target_id=target_id, build_id="m3"))
+        conn, ImpactRequest(usr="s:loadData", build_id="m3"))
     assert isinstance(impact.data, dict)
     assert "by_depth" in impact.data
     assert "risk" in impact.data

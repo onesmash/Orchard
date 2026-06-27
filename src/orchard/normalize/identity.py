@@ -30,7 +30,7 @@ def enable_progress() -> None:
     _progress = True
 
 
-def make_symbol_id(target_id: str, usr: str) -> str:
+def make_symbol_id(usr: str) -> str:
     """Return a USR-based symbol ID (sourcekit-lsp convention)."""
     return usr
 
@@ -50,7 +50,7 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
         "MATCH (s:Symbol) RETURN s.id",
     ).get_all()
     existing = {r[0] for r in id_rows}
-    existing_rows = {make_symbol_id(target_id, s.usr): s for s in symbols if make_symbol_id(target_id, s.usr) in existing}
+    existing_rows = {make_symbol_id(s.usr): s for s in symbols if make_symbol_id(s.usr) in existing}
     for sym_id, s in existing_rows.items():
         conn.execute(
             "MATCH (s:Symbol {id: $id}) "
@@ -71,7 +71,7 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
                 "access_level": s.access_level,
             },
         )
-    new = [s for s in symbols if make_symbol_id(target_id, s.usr) not in existing]
+    new = [s for s in symbols if make_symbol_id(s.usr) not in existing]
     if not new:
         _perf_probes.setdefault("upsert_symbols_s", 0.0)
         _perf_probes.setdefault("upsert_symbols_n", 0)
@@ -81,7 +81,7 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
         w = csv.writer(fh, quoting=csv.QUOTE_ALL)
         for s in new:
             w.writerow([
-                make_symbol_id(target_id, s.usr),
+                make_symbol_id(s.usr),
                 s.usr, s.precise_id or "", s.name, s.swift_display_name or "",
                 s.language, s.kind,
                 s.module, target_id, s.file_path or "", s.signature or "",
@@ -167,8 +167,8 @@ def upsert_symbol_rels(
         table = _REL_KIND_TO_TABLE.get(rel.rel_kind)
         if table is None:
             continue
-        src_id = make_symbol_id(target_id, rel.source_usr)
-        tgt_id = make_symbol_id(target_id, rel.target_usr)
+        src_id = make_symbol_id(rel.source_usr)
+        tgt_id = make_symbol_id(rel.target_usr)
         conn.execute(
             f"MATCH (a:Symbol {{id: $src}}), (b:Symbol {{id: $tgt}}) "
             f"MERGE (a)-[:{table} {{source: $source}}]->(b)",
@@ -230,7 +230,7 @@ def _collect_missing_endpoints(
     for rel in rels:
         for usr, name in [(rel.from_usr, rel.from_usr_name),
                           (rel.to_usr, rel.to_usr_name)]:
-            sid = make_symbol_id(target_id, usr)
+            sid = make_symbol_id(usr)
             if sid not in existing_ids:
                 missing[sid] = name or usr
     return missing
@@ -271,8 +271,8 @@ def upsert_indexstore_rels(
         table = _INDEXSTORE_REL_TO_TABLE.get(rel.role)
         if table is None:
             continue
-        s_id = make_symbol_id(target_id, rel.from_usr)
-        t_id = make_symbol_id(target_id, rel.to_usr)
+        s_id = make_symbol_id(rel.from_usr)
+        t_id = make_symbol_id(rel.to_usr)
         if s_id in existing_ids and t_id in existing_ids:
             # Direction: IndexStore role is FROM the related symbol TO the
             # occurrence symbol.  E.g. baseOf: related IS the base of the
@@ -365,8 +365,8 @@ def upsert_calls(
         w = csv.writer(fh, quoting=csv.QUOTE_ALL)
         for (to_u, fm_u), reason in called.items():
             w.writerow([
-                make_symbol_id(target_id, to_u),
-                make_symbol_id(target_id, fm_u),
+                make_symbol_id(to_u),
+                make_symbol_id(fm_u),
                 source, "1.0", "indexstore", build_id, reason,
             ])
     if _progress:
@@ -402,8 +402,8 @@ def upsert_references(
     for rel in relations:
         if rel.role != "references":
             continue
-        src_id = make_symbol_id(target_id, rel.from_usr)
-        tgt_id = make_symbol_id(target_id, rel.to_usr)
+        src_id = make_symbol_id(rel.from_usr)
+        tgt_id = make_symbol_id(rel.to_usr)
         conn.execute(
             "MATCH (a:Symbol {id: $src}), (b:Symbol {id: $tgt}) "
             "MERGE (a)-[:References {source: $source}]->(b)",

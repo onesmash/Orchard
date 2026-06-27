@@ -31,21 +31,21 @@ def conn_with_hierarchy(tmp_db_path):
 
 
 def test_get_type_hierarchy_parents(conn_with_hierarchy):
-    req = TypeHierarchyRequest(usr="s:Child", target_id="T1", build_id="b1")
+    req = TypeHierarchyRequest(usr="s:Child", build_id="b1")
     resp = get_type_hierarchy(conn_with_hierarchy, req)
     parent_names = {p["name"] for p in resp.data["parents"]}
     assert "Base" in parent_names
 
 
 def test_get_type_hierarchy_protocols(conn_with_hierarchy):
-    req = TypeHierarchyRequest(usr="s:Child", target_id="T1", build_id="b1")
+    req = TypeHierarchyRequest(usr="s:Child", build_id="b1")
     resp = get_type_hierarchy(conn_with_hierarchy, req)
     proto_names = {p["name"] for p in resp.data["protocols"]}
     assert "MyProtocol" in proto_names
 
 
 def test_get_type_hierarchy_children(conn_with_hierarchy):
-    req = TypeHierarchyRequest(usr="s:Base", target_id="T1", build_id="b1")
+    req = TypeHierarchyRequest(usr="s:Base", build_id="b1")
     resp = get_type_hierarchy(conn_with_hierarchy, req)
     child_names = {c["name"] for c in resp.data["children"]}
     assert "Child" in child_names

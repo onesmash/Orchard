@@ -87,11 +87,11 @@ async def test_pipeline_writes_calls_then_handlers_return_data(ctx, tmp_db_path)
     from orchard.graph.db import get_connection
     conn = get_connection(tmp_db_path)
     callers = find_callers(conn, CallerRequest(
-        usr="c:callee()", target_id="MyLib", build_id=ctx.build_id))
+        usr="c:callee()", build_id=ctx.build_id))
     assert any(d["usr"] == "c:caller()" for d in callers.data)
 
     callees = find_callees(conn, CalleeRequest(
-        usr="c:caller()", target_id="MyLib", build_id=ctx.build_id))
+        usr="c:caller()", build_id=ctx.build_id))
     assert any(d["usr"] == "c:callee()" for d in callees.data)
     conn.close()
 

@@ -373,8 +373,8 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
                 "r.clang_name = $clang, r.swift_name = $swift, "
                 "r.definition_language = $deflang",
                 {
-                    "src": make_symbol_id(target_id, src_usr),
-                    "dst": make_symbol_id(target_id, tgt_usr),
+                    "src": make_symbol_id(src_usr),
+                    "dst": make_symbol_id(tgt_usr),
                     "kind": kind,
                     "prov": "derive/bridge",
                     "conf": conf,

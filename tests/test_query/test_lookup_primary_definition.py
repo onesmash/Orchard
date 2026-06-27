@@ -26,7 +26,7 @@ def test_primary_definition_returns_symbol_id():
     conn = get_connection(":memory:")
     _seed(conn)
     g = GraphLookup(conn)
-    result = g.primary_definition_usr("s:single", "Test")
+    result = g.primary_definition_usr("s:single")
     assert result is not None
     assert result == "s:single"
 
@@ -35,24 +35,23 @@ def test_primary_definition_deterministic_across_targets():
     conn = get_connection(":memory:")
     _seed(conn)
     g = GraphLookup(conn)
-    # Same USR in Test and Other targets — each target is deterministic
-    r1 = g.primary_definition_usr("s:multiTarget", "Test")
-    r2 = g.primary_definition_usr("s:multiTarget", "Other")
+    # USR alone provides deterministic identity
+    r1 = g.primary_definition_usr("s:multiTarget")
+    r2 = g.primary_definition_usr("s:multiTarget")
     assert r1 is not None
     assert r2 is not None
-    # Secondary call returns same result
-    assert g.primary_definition_usr("s:multiTarget", "Test") == r1
+    assert r1 == r2
 
 
 def test_primary_definition_not_found():
     conn = get_connection(":memory:")
     _seed(conn)
     g = GraphLookup(conn)
-    assert g.primary_definition_usr("nonexistent", "Test") is None
+    assert g.primary_definition_usr("nonexistent") is None
 
 
 def test_primary_definition_empty_graph():
     conn = get_connection(":memory:")
     init_schema(conn)
     g = GraphLookup(conn)
-    assert g.primary_definition_usr("anything", "") is None
+    assert g.primary_definition_usr("anything") is None

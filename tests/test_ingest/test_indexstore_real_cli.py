@@ -118,10 +118,10 @@ def test_real_cli_read_index_store_produces_calledby(tmp_path):
     assert written >= 1
 
     # find_callers(callee) -> caller ; find_callees(caller) -> callee
-    callers = find_callers(conn, CallerRequest(usr=callee_usr, target_id="T", build_id="b-real"))
+    callers = find_callers(conn, CallerRequest(usr=callee_usr, build_id="b-real"))
     assert any(d["usr"] == caller_usr for d in callers.data)
 
-    callees = find_callees(conn, CalleeRequest(usr=caller_usr, target_id="T", build_id="b-real"))
+    callees = find_callees(conn, CalleeRequest(usr=caller_usr, build_id="b-real"))
     assert any(d["usr"] == callee_usr for d in callees.data)
     conn.close()
 

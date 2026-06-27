@@ -21,7 +21,7 @@ def conn(tmp_db_path):
 
 
 def test_make_symbol_id():
-    assert make_symbol_id("MyTarget", "s:MyFunc") == "s:MyFunc"
+    assert make_symbol_id("s:MyFunc") == "s:MyFunc"
 
 
 def test_upsert_symbols_inserts_nodes(conn):

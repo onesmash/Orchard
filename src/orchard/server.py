@@ -95,7 +95,6 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol"},
-                "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
             },
             "required": ["usr"],
         },
@@ -107,7 +106,6 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR (Unified Symbol Resolution) of the target symbol"},
-                "target_id": {"type": "string", "description": "Build target for disambiguation (e.g. TheModuleName)"},
                 "depth": {"type": "integer", "description": "Multi-hop traversal depth (default 1, direct only)"},
                 "relation_types": {"type": "string", "description": "Comma-separated edge types to traverse (default: Calls). Example: 'Calls,Inherits,Implements'"},
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
@@ -123,7 +121,6 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the source symbol"},
-                "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
                 "depth": {"type": "integer", "description": "Multi-hop traversal depth (default 1, direct only)"},
                 "relation_types": {"type": "string", "description": "Comma-separated edge types to traverse (default: Calls). Example: 'Calls,Inherits,Implements'"},
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
@@ -139,7 +136,6 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol to analyze"},
-                "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
                 "max_depth": {"type": "integer", "description": "Max traversal depth (default 5)"},
             },
             "required": ["usr"],
@@ -152,7 +148,6 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol"},
-                "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
             },
             "required": ["usr"],
         },
@@ -164,7 +159,6 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol"},
-                "target_id": {"type": "string", "description": "Build target (e.g. TheModuleName)"},
             },
             "required": ["usr"],
         },
@@ -311,7 +305,7 @@ def _do_search_class(args: dict) -> str:
     owners = []
     for r in rows:
         owner = {"usr": r[0], "name": r[1], "kind": r[2], "module": r[3]}
-        methods = gl.methods_of(r[0], target)
+        methods = gl.methods_of(r[0])
         if kind_filter:
             methods = [m for m in methods if m["kind"] == kind_filter]
         owners.append({"owner": owner, "methods": methods})
@@ -338,10 +332,9 @@ def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, 
     cls = getattr(mod, request_cls_name)
     conn = _get_conn()
     # Auto-resolve build_id so freshness is accurate by default.
-    build_id = args.get("build_id") or _default_build_id_safe(conn, args.get("target_id", ""))
+    build_id = args.get("build_id") or _default_build_id_safe(conn, "")
     req = cls(
         usr=args.get("usr", ""),
-        target_id=args.get("target_id", ""),
         build_id=build_id,
         depth=args.get("depth", depth),
         max_depth=args.get("max_depth", 5),
@@ -411,12 +404,8 @@ HANDLERS: dict[str, callable] = {
     "orchard_hierarchy": lambda a: _do_handler("type_hierarchy", "get_type_hierarchy", "TypeHierarchyRequest", a),
     "orchard_stats": _do_stats,
     "orchard_audit": _do_audit,
-    "orchard_rename": (lambda a: _do_handler(
-        "rename", "rename_symbol", "RenameRequest",
-        {k: v for k, v in a.items() if k != "target_id"})),
-    "orchard_notification_flow": (lambda a: _do_handler(
-        "notification_flow", "get_notification_flow", "NotificationFlowRequest",
-        {k: v for k, v in a.items() if k != "target_id"})),
+    "orchard_rename": lambda a: _do_handler("rename", "rename_symbol", "RenameRequest", a),
+    "orchard_notification_flow": lambda a: _do_handler("notification_flow", "get_notification_flow", "NotificationFlowRequest", a),
 }
 
 

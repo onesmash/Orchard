@@ -14,7 +14,6 @@ class SymbolContextRequest(BaseToolRequest):
     """Request for symbol context information."""
 
     usr: str = ""
-    target_id: str | None = None
 
 
 def get_symbol_context(conn, req: SymbolContextRequest) -> BaseToolResponse:
@@ -25,15 +24,14 @@ def get_symbol_context(conn, req: SymbolContextRequest) -> BaseToolResponse:
     conn
         An open Ladybug connection.
     req : SymbolContextRequest
-        The request containing usr, target_id, and build_id.
+        The request containing usr and build_id.
 
     Returns
     -------
     BaseToolResponse
         A response containing symbol data, freshness status, and metadata.
     """
-    target_id = req.target_id or ""
-    sym_id = make_symbol_id(target_id, req.usr) if target_id else req.usr
+    sym_id = make_symbol_id(req.usr)
     rows = conn.execute(
         "MATCH (s:Symbol {id: $id}) "
         "RETURN s.name, s.language, s.kind, s.module, s.file_path, "
@@ -46,7 +44,7 @@ def get_symbol_context(conn, req: SymbolContextRequest) -> BaseToolResponse:
             data=None,
             freshness=freshness_status,
             build_id=req.build_id,
-            open_gaps=[f"symbol '{req.usr}' not found in target '{target_id}'"],
+            open_gaps=[f"symbol '{req.usr}' not found"],
             evidence_sources=[],
         )
     row = rows[0]

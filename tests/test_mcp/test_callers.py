@@ -39,7 +39,7 @@ def conn_with_calls(tmp_db_path):
 
 
 def test_find_callers_returns_callers(conn_with_calls):
-    req = CallerRequest(usr="s:A", target_id="T1", build_id="b1")
+    req = CallerRequest(usr="s:A", build_id="b1")
     resp = find_callers(conn_with_calls, req)
     names = {item["name"] for item in resp.data}
     assert "B" in names
@@ -53,7 +53,7 @@ def test_find_callers_returns_callers(conn_with_calls):
 
 
 def test_find_callees_returns_callees(conn_with_calls):
-    req = CalleeRequest(usr="s:A", target_id="T1", build_id="b1")
+    req = CalleeRequest(usr="s:A", build_id="b1")
     resp = find_callees(conn_with_calls, req)
     names = {item["name"] for item in resp.data}
     assert "B" in names
@@ -67,7 +67,7 @@ def test_find_callers_prefers_source_direct_when_available(conn_with_calls):
         "CREATE (b)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', build_id:'b1', "
         "reason:'source_direct'}]->(a)"
     )
-    req = CallerRequest(usr='s:A', target_id='T1', build_id='b1')
+    req = CallerRequest(usr='s:A', build_id='b1')
     resp = find_callers(conn_with_calls, req)
     assert [item["name"] for item in resp.data] == ["B"]
     assert resp.data[0]["reason"] == "source_direct"
@@ -79,14 +79,14 @@ def test_find_callees_prefers_source_direct_when_available(conn_with_calls):
         "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', build_id:'b1', "
         "reason:'source_direct'}]->(b)"
     )
-    req = CalleeRequest(usr='s:A', target_id='T1', build_id='b1')
+    req = CalleeRequest(usr='s:A', build_id='b1')
     resp = find_callees(conn_with_calls, req)
     assert [item["name"] for item in resp.data] == ["B"]
     assert resp.data[0]["reason"] == "source_direct"
 
 
 def test_find_callers_none(conn_with_calls):
-    req = CallerRequest(usr="s:C", target_id="T1", build_id="b1")
+    req = CallerRequest(usr="s:C", build_id="b1")
     resp = find_callers(conn_with_calls, req)
     assert resp.data == []
 
@@ -115,7 +115,7 @@ def test_reason_to_confidence_maps_unknown_to_compiler_verified():
 # ── AC-2: caller/callee 响应包含 confidence 字段 ─────────────────
 def test_find_callers_includes_confidence_field(conn_with_calls):
     """AC-2.1: Each caller result has a confidence label derived from reason."""
-    req = CallerRequest(usr="s:A", target_id="T1", build_id="b1")
+    req = CallerRequest(usr="s:A", build_id="b1")
     resp = find_callers(conn_with_calls, req)
     for item in resp.data:
         assert "confidence" in item, f"caller {item['name']} missing confidence"
@@ -125,7 +125,7 @@ def test_find_callers_includes_confidence_field(conn_with_calls):
 
 def test_find_callees_includes_confidence_field(conn_with_calls):
     """AC-2.2: Each callee result has a confidence label derived from reason."""
-    req = CalleeRequest(usr="s:A", target_id="T1", build_id="b1")
+    req = CalleeRequest(usr="s:A", build_id="b1")
     resp = find_callees(conn_with_calls, req)
     for item in resp.data:
         assert "confidence" in item, f"callee {item['name']} missing confidence"
@@ -140,7 +140,7 @@ def test_find_callers_source_direct_becomes_compiler_verified(conn_with_calls):
         "CREATE (b)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
         "build_id:'b1', reason:'source_direct'}]->(a)"
     )
-    req = CallerRequest(usr="s:A", target_id="T1", build_id="b1")
+    req = CallerRequest(usr="s:A", build_id="b1")
     resp = find_callers(conn_with_calls, req)
     caller_b = next(item for item in resp.data if item["name"] == "B")
     assert caller_b["confidence"] == "compiler-verified"

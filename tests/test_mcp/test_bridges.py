@@ -36,7 +36,7 @@ def conn_with_bridges(tmp_db_path):
 
 def test_get_bridges_returns_edge(conn_with_bridges):
     """Query outgoing bridges for swiftFunc — should find the edge."""
-    req = BridgesRequest(usr="s:swiftFunc", target_id="T", build_id="b1")
+    req = BridgesRequest(usr="s:swiftFunc", build_id="b1")
     resp = get_cross_language_bridges(conn_with_bridges, req)
     assert len(resp.data) == 1
     assert resp.data[0]["bridge_kind"] == "name_match"
@@ -49,7 +49,7 @@ def test_get_bridges_returns_edge(conn_with_bridges):
 
 def test_get_bridges_none(conn_with_bridges):
     """Query a symbol with no BridgesTo edges — should return empty."""
-    req = BridgesRequest(usr="s:noBridge", target_id="T", build_id="b1")
+    req = BridgesRequest(usr="s:noBridge", build_id="b1")
     resp = get_cross_language_bridges(conn_with_bridges, req)
     assert resp.data == []
     assert "no bridges found for this symbol" in resp.open_gaps

@@ -9,12 +9,10 @@ from orchard.validation.freshness import freshness_for
 @dataclass
 class ReferencesRequest(BaseToolRequest):
     usr: str = ""
-    target_id: str | None = None
 
 
 def find_references(conn, req: ReferencesRequest) -> BaseToolResponse:
-    target_id = req.target_id or ""
-    sym_id = make_symbol_id(target_id, req.usr)
+    sym_id = make_symbol_id(req.usr)
     rows = conn.execute(
         "MATCH (s:Symbol {id: $id})-[r:Calls]->(ref:Symbol) "
         "RETURN s.usr, s.name, s.module, ref.usr, ref.name, ref.kind",

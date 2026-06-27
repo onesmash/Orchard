@@ -13,12 +13,10 @@ class ViewTreeRequest(BaseToolRequest):
     """Request for querying the SwiftUI view tree.
 
     Attributes:
-        target_id: Optional target identifier.
         module: Optional module filter (substring match on Symbol.module).
         build_id: Optional build snapshot identifier for freshness check.
     """
 
-    target_id: str | None = None
     module: str | None = None
 
 

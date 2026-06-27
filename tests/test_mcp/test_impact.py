@@ -39,7 +39,7 @@ def impact_graph(tmp_db_path):
 
 def test_impact_returns_callers_by_depth(impact_graph):
     """Verify d1 has directCaller, d2 has indirectCaller."""
-    req = ImpactRequest(usr="s:targetFn", target_id="T", build_id="b1")
+    req = ImpactRequest(usr="s:targetFn", build_id="b1")
     resp = impact_analysis(impact_graph, req)
     by_depth = resp.data["by_depth"]
     # d=1: directCaller
@@ -51,7 +51,7 @@ def test_impact_returns_callers_by_depth(impact_graph):
 
 def test_impact_none(impact_graph):
     """Query a symbol with no callers, assert empty d1."""
-    req = ImpactRequest(usr="s:indirectCaller", target_id="T", build_id="b1")
+    req = ImpactRequest(usr="s:indirectCaller", build_id="b1")
     resp = impact_analysis(impact_graph, req)
     assert isinstance(resp.data, dict)
     assert "by_depth" in resp.data
@@ -60,7 +60,7 @@ def test_impact_none(impact_graph):
 
 def test_impact_response_has_risk(impact_graph):
     """Assert risk field is a string (low/medium/high/critical)."""
-    req = ImpactRequest(usr="s:targetFn", target_id="T", build_id="b1")
+    req = ImpactRequest(usr="s:targetFn", build_id="b1")
     resp = impact_analysis(impact_graph, req)
     assert "risk" in resp.data
     assert isinstance(resp.data["risk"], str)
@@ -129,7 +129,7 @@ def fresh_graph(tmp_db_path):
 
 def test_impact_risk_not_critical_when_fresh(fresh_graph):
     """With freshness=fresh and 1 direct caller, risk should be 'low', not 'critical'."""
-    req = ImpactRequest(usr="s:targetFn", target_id="T", build_id="b-fresh")
+    req = ImpactRequest(usr="s:targetFn", build_id="b-fresh")
     resp = impact_analysis(fresh_graph, req)
     assert resp.data["risk"] == "low"
     assert resp.freshness == "fresh"
@@ -142,7 +142,7 @@ def test_impact_traverses_bridges_to(bridges_graph):
     (finding dependents), we follow incoming edges. Querying swiftFn should
     find objcCaller via incoming BridgesTo traversal.
     """
-    req = ImpactRequest(usr="s:swiftFn", target_id="T", build_id="b1")
+    req = ImpactRequest(usr="s:swiftFn", build_id="b1")
     resp = impact_analysis(bridges_graph, req)
     by_depth = resp.data["by_depth"]
     # objcCaller -[BridgesTo]-> swiftFn, so querying swiftFn finds objcCaller

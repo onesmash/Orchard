@@ -27,7 +27,6 @@ _MAX_METHODS_FOR_AUTO_EXPAND = 50
 @dataclass
 class CalleeRequest(BaseToolRequest):
     usr: str = ""
-    target_id: str | None = None
     depth: int = 1
     relation_types: list[str] = field(default_factory=lambda: ["Calls"])
     include_inferred: bool = False
@@ -40,19 +39,18 @@ def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
     groups results by callee USR, aggregating ``calling_methods``.
     """
     g = GraphLookup(conn)
-    target_id = req.target_id or ""
 
     # Resolve the symbol to decide whether auto-expand applies.
-    sym = g.symbol(req.usr, target_id)
+    sym = g.symbol(req.usr)
     if sym is not None and sym.get("kind") in _AUTO_EXPAND_KINDS:
         # ── auto-expand: enumerate methods, collect their callees ─────────
-        methods = g.methods_of(req.usr, target_id)
+        methods = g.methods_of(req.usr)
         methods = methods[:_MAX_METHODS_FOR_AUTO_EXPAND]
 
         # Group callees by USR, accumulating calling methods.
         callee_map: dict[str, dict] = {}
         for method in methods:
-            for callee in g.callees_of(method["usr"], target_id, req.relation_types,
+            for callee in g.callees_of(method["usr"], req.relation_types,
                                        include_inferred=req.include_inferred):
                 key = callee["usr"]
                 if key not in callee_map:
@@ -90,10 +88,10 @@ def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
 
     # ── single-symbol path (existing behaviour) ────────────────────────
     if req.depth > 1:
-        data = g.callees_of_depth(req.usr, target_id, req.depth, req.relation_types,
+        data = g.callees_of_depth(req.usr, req.depth, req.relation_types,
                                   include_inferred=req.include_inferred)
     else:
-        data = g.callees_of(req.usr, target_id, req.relation_types,
+        data = g.callees_of(req.usr, req.relation_types,
                             include_inferred=req.include_inferred)
         data = [{**d, "depth": 1} for d in data]
     _, status = g.freshness(req.build_id or "")

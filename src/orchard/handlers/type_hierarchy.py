@@ -14,7 +14,6 @@ class TypeHierarchyRequest(BaseToolRequest):
     """Request for type hierarchy information."""
 
     usr: str = ""
-    target_id: str | None = None
 
 
 def get_type_hierarchy(conn, req: TypeHierarchyRequest) -> BaseToolResponse:
@@ -25,15 +24,14 @@ def get_type_hierarchy(conn, req: TypeHierarchyRequest) -> BaseToolResponse:
     conn
         An open Ladybug connection.
     req : TypeHierarchyRequest
-        Request containing the symbol USR and target ID.
+        Request containing the symbol USR.
 
     Returns
     -------
     BaseToolResponse
         Response containing parents, protocols, and children lists.
     """
-    target_id = req.target_id or ""
-    sym_id = make_symbol_id(target_id, req.usr)
+    sym_id = make_symbol_id(req.usr)
     _, freshness_status = freshness_for(conn, req.build_id or "", {})
 
     parents = conn.execute(

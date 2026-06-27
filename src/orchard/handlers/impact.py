@@ -20,11 +20,9 @@ class ImpactRequest(BaseToolRequest):
 
     Attributes:
         usr: The USR (Unified Symbol Resolution) string of the queried symbol.
-        target_id: The build target identifier used to disambiguate symbols.
     """
 
     usr: str = ""
-    target_id: str | None = None
 
 
 def _risk_level(d1_count: int, has_bridge: bool, freshness_ok: bool) -> str:
@@ -96,7 +94,7 @@ def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
     conn:
         An open Ladybug connection.
     req:
-        The impact analysis request carrying usr, target_id, and build_id.
+        The impact analysis request carrying usr and build_id.
 
     Returns
     -------
@@ -105,8 +103,7 @@ def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
         build_id, evidence_sources, and open_gaps.
     """
     policy = ImpactTraversalPolicy()
-    target_id = req.target_id or ""
-    sym_id = make_symbol_id(target_id, req.usr)
+    sym_id = make_symbol_id(req.usr)
     max_depth = min(req.max_depth or 5, policy.max_depth)
 
     # Build per-depth result dict.
@@ -135,7 +132,7 @@ def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
     visited_ids = {sym_id}
     # Seed visited with subtype symbol IDs so BFS doesn't re-add them.
     for entry in d1_subtypes:
-        visited_ids.add(make_symbol_id(target_id, entry["usr"]))
+        visited_ids.add(make_symbol_id(entry["usr"]))
     if d1_subtypes:
         depths.setdefault("d1", []).extend(d1_subtypes)
 

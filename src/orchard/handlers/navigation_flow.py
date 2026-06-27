@@ -13,12 +13,10 @@ class NavigationFlowRequest(BaseToolRequest):
     """Request for querying SwiftUI navigation flows.
 
     Attributes:
-        target_id: Optional target identifier.
         module: Optional module filter (substring match on Symbol.module).
         build_id: Optional build snapshot identifier for freshness check.
     """
 
-    target_id: str | None = None
     module: str | None = None
 
 

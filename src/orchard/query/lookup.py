@@ -53,9 +53,9 @@ class GraphLookup:
     ``MATCH`` + ``freshness_for`` boilerplate.  Usage::
 
         g = GraphLookup(conn)
-        sym = g.symbol("s:myFunc", "MyTarget")
+        sym = g.symbol("s:myFunc")
         owner = g.owner_of("s:myFunc")
-        callers = g.callers_of("s:myFunc", "MyTarget")
+        callers = g.callers_of("s:myFunc")
     """
 
     def __init__(self, conn):
@@ -66,9 +66,9 @@ class GraphLookup:
 
     # ---- Symbol resolution ------------------------------------------------
 
-    def symbol(self, usr: str, target_id: str = "") -> dict | None:
+    def symbol(self, usr: str) -> dict | None:
         """Return a dict of Symbol fields for *usr*, or None."""
-        tk = make_symbol_id(target_id, usr)
+        tk = make_symbol_id(usr)
         rows = self._conn.execute(
             "MATCH (s:Symbol {id: $id}) "
             "RETURN s.usr, s.name, s.kind, s.language, s.module "
@@ -146,7 +146,7 @@ class GraphLookup:
             return [row for row in filtered if (row[8] or "") == "source_direct"]
         return filtered
 
-    def callers_of(self, usr: str, target_id: str = "",
+    def callers_of(self, usr: str,
                    relation_types: list[str] | None = None,
                    include_inferred: bool = False) -> list[dict]:
         """Return callers of *usr*.
@@ -158,7 +158,7 @@ class GraphLookup:
         if relation_types is None:
             relation_types = ["Calls"]
         rel_pipe = "|".join(relation_types)
-        sym_id = make_symbol_id(target_id, usr)
+        sym_id = make_symbol_id(usr)
         rows = self._conn.execute(
             f"MATCH (caller:Symbol)-[r:{rel_pipe}]->(target:Symbol {{id: $id}}) "
             "OPTIONAL MATCH (f:File)-[:ContainsOccurrence]->(o:Occurrence {usr: caller.usr}) "
@@ -187,7 +187,7 @@ class GraphLookup:
             )
         return list(callers.values())
 
-    def callees_of(self, usr: str, target_id: str = "",
+    def callees_of(self, usr: str,
                    relation_types: list[str] | None = None,
                    include_inferred: bool = False) -> list[dict]:
         """Return callees of *usr*.
@@ -202,7 +202,7 @@ class GraphLookup:
         if cache_key in self._callees_cache:
             return self._callees_cache[cache_key]
         rel_pipe = "|".join(relation_types)
-        sym_id = make_symbol_id(target_id, usr)
+        sym_id = make_symbol_id(usr)
         rows = self._conn.execute(
             f"MATCH (src:Symbol {{id: $id}})-[r:{rel_pipe}]->(callee:Symbol) "
             "RETURN DISTINCT callee.usr, callee.name, callee.module, "
@@ -230,7 +230,7 @@ class GraphLookup:
         self._callees_cache[cache_key] = result
         return result
 
-    def callees_of_depth(self, usr: str, target_id: str = "",
+    def callees_of_depth(self, usr: str,
                          depth: int = 3,
                          relation_types: list[str] | None = None,
                          include_inferred: bool = False) -> list[dict]:
@@ -243,7 +243,7 @@ class GraphLookup:
         for d in range(1, depth + 1):
             next_frontier: set[str] = set()
             for f_usr in frontier:
-                for c in self.callees_of(f_usr, target_id, relation_types,
+                for c in self.callees_of(f_usr, relation_types,
                                          include_inferred=include_inferred):
                     if c["usr"] not in seen:
                         seen.add(c["usr"])
@@ -254,7 +254,7 @@ class GraphLookup:
             frontier = next_frontier
         return results
 
-    def callers_of_depth(self, usr: str, target_id: str = "",
+    def callers_of_depth(self, usr: str,
                          depth: int = 3,
                          relation_types: list[str] | None = None,
                          include_inferred: bool = False) -> list[dict]:
@@ -267,7 +267,7 @@ class GraphLookup:
         for d in range(1, depth + 1):
             next_frontier: set[str] = set()
             for f_usr in frontier:
-                for c in self.callers_of(f_usr, target_id, relation_types,
+                for c in self.callers_of(f_usr, relation_types,
                                          include_inferred=include_inferred):
                     if c["usr"] not in seen:
                         seen.add(c["usr"])
@@ -280,14 +280,14 @@ class GraphLookup:
 
     # ---- Class methods (Contains edge traversal) ---------------------------
 
-    def methods_of(self, usr: str, target_id: str = "") -> list[dict]:
+    def methods_of(self, usr: str) -> list[dict]:
         """Return all method symbols contained by the given class/struct/enum/protocol.
 
         Traverses ``Contains`` edges from the parent symbol to child symbols
         where ``child.kind = 'method'``.  Returns a list of dicts with keys
         ``usr``, ``name``, ``kind``, ``language``.
         """
-        sym_id = make_symbol_id(target_id, usr)
+        sym_id = make_symbol_id(usr)
         rows = self._conn.execute(
             "MATCH (parent:Symbol {id: $id})-[:Contains]->(child:Symbol) "
             "WHERE child.kind = 'method' "
@@ -320,29 +320,16 @@ class GraphLookup:
 
     # ---- Primary definition ------------------------------------------------
 
-    def primary_definition_usr(self, usr: str, target_id: str = "") -> str | None:
-        """Return the deterministic symbol ID for *usr* in *target_id*.
+    def primary_definition_usr(self, usr: str) -> str | None:
+        """Return the deterministic symbol ID for *usr*.
 
-        The symbol ID is constructed as ``target||usr``, which is the primary
-        key of the Symbol node table — inherently deterministic.  Returns
-        None if the symbol does not exist in the given target.
-
-        When *target_id* is empty, searches by USR alone and returns the
-        first match sorted by (file_path, usr).
+        Returns None if the symbol does not exist.
         """
         from orchard.normalize.identity import make_symbol_id
-        if target_id:
-            sym_id = make_symbol_id(target_id, usr)
-            rows = self._conn.execute(
-                "MATCH (s:Symbol {id: $id}) RETURN s.id LIMIT 1",
-                {"id": sym_id},
-            ).get_all()
-            return rows[0][0] if rows else None
-        # Fallback: search by USR, deterministic sort
+        sym_id = make_symbol_id(usr)
         rows = self._conn.execute(
-            "MATCH (s:Symbol) WHERE s.usr = $usr "
-            "RETURN s.id ORDER BY s.file_path, s.usr LIMIT 1",
-            {"usr": usr},
+            "MATCH (s:Symbol {id: $id}) RETURN s.id LIMIT 1",
+            {"id": sym_id},
         ).get_all()
         return rows[0][0] if rows else None
 

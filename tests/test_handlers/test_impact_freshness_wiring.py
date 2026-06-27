@@ -32,7 +32,7 @@ def test_impact_annotates_stale_dependents(tmp_path):
     ]
     upsert_symbols(conn, syms, "Test")
     conn.execute("MATCH (a:Symbol {usr:'s:caller'}),(t:Symbol {usr:'s:target'}) CREATE (a)-[:Calls {source:'test',confidence:0.9}]->(t)")
-    r = impact_analysis(conn, ImpactRequest(usr="s:target", target_id="Test", build_id="build-1"))
+    r = impact_analysis(conn, ImpactRequest(usr="s:target", build_id="build-1"))
     # NOT filtered out
     d1_usrs = {d["usr"] for d in r.data["by_depth"].get("d1", [])}
     assert "s:caller" in d1_usrs
@@ -56,7 +56,7 @@ def test_impact_no_snapshot_no_annotation(tmp_path):
     ]
     upsert_symbols(conn, syms, "Test")
     conn.execute("MATCH (a:Symbol {usr:'s:caller'}),(t:Symbol {usr:'s:target'}) CREATE (a)-[:Calls {source:'test',confidence:0.9}]->(t)")
-    r = impact_analysis(conn, ImpactRequest(usr="s:target", target_id="Test"))
+    r = impact_analysis(conn, ImpactRequest(usr="s:target"))
     assert not any("stale" in g.lower() for g in r.open_gaps)
 
 
@@ -75,5 +75,5 @@ def test_impact_skips_empty_filepath(tmp_path):
     ]
     upsert_symbols(conn, syms, "Test")
     conn.execute("MATCH (a:Symbol {usr:'s:caller'}),(t:Symbol {usr:'s:target'}) CREATE (a)-[:Calls {source:'test',confidence:0.9}]->(t)")
-    r = impact_analysis(conn, ImpactRequest(usr="s:target", target_id="Test", build_id="build-1"))
+    r = impact_analysis(conn, ImpactRequest(usr="s:target", build_id="build-1"))
     assert not any("stale" in g.lower() for g in r.open_gaps)

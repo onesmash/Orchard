@@ -114,7 +114,7 @@ def cmd_find_callers(args: list[str]):
     from orchard.handlers.callers import CallerRequest, find_callers
     conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
-    r = find_callers(conn, CallerRequest(usr=usr, target_id=target, build_id=build_id,
+    r = find_callers(conn, CallerRequest(usr=usr, build_id=build_id,
                                           depth=depth, relation_types=rel_types,
                                           include_inferred=include_inferred))
     if not include_noise:
@@ -131,7 +131,7 @@ def cmd_find_callees(args: list[str]):
     from orchard.handlers.callees import CalleeRequest, find_callees
     conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
-    r = find_callees(conn, CalleeRequest(usr=usr, target_id=target, build_id=build_id,
+    r = find_callees(conn, CalleeRequest(usr=usr, build_id=build_id,
                                           depth=depth, relation_types=rel_types,
                                           include_inferred=include_inferred))
     if not include_noise:
@@ -148,7 +148,7 @@ def cmd_impact(args: list[str]):
     from orchard.handlers.impact import ImpactRequest, impact_analysis
     conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
-    r = impact_analysis(conn, ImpactRequest(usr=usr, target_id=target, max_depth=5, build_id=build_id))
+    r = impact_analysis(conn, ImpactRequest(usr=usr, max_depth=5, build_id=build_id))
     _print_json(r.__dict__)
     conn.close()
 
@@ -158,7 +158,7 @@ def cmd_symbol(args: list[str]):
     from orchard.handlers.symbol_context import SymbolContextRequest, get_symbol_context
     conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
-    r = get_symbol_context(conn, SymbolContextRequest(usr=usr, target_id=target, build_id=build_id))
+    r = get_symbol_context(conn, SymbolContextRequest(usr=usr, build_id=build_id))
     _print_json(r.__dict__)
     conn.close()
 
@@ -168,7 +168,7 @@ def cmd_find_references(args: list[str]):
     from orchard.handlers.references import ReferencesRequest, find_references
     conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
-    r = find_references(conn, ReferencesRequest(usr=usr, target_id=target, build_id=build_id))
+    r = find_references(conn, ReferencesRequest(usr=usr, build_id=build_id))
     _print_json(r.__dict__)
     conn.close()
 
@@ -178,7 +178,7 @@ def cmd_hierarchy(args: list[str]):
     from orchard.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
     conn = _conn(db, read_only=True)
     build_id = _default_build_id(conn, target)
-    r = get_type_hierarchy(conn, TypeHierarchyRequest(usr=usr, target_id=target, build_id=build_id))
+    r = get_type_hierarchy(conn, TypeHierarchyRequest(usr=usr, build_id=build_id))
     _print_json(r.__dict__)
     conn.close()
 
@@ -458,7 +458,7 @@ def _cmd_search_class(conn, ns):
     for r in rows:
         owner = {"usr": r[0], "name": r[1], "kind": r[2], "module": r[3]}
         # Step 2: get methods for each matching class.
-        methods = gl.methods_of(r[0], ns.target)
+        methods = gl.methods_of(r[0])
         # Step 3: apply --kind filter to returned methods (if given).
         if ns.kind:
             methods = [m for m in methods if m["kind"] == ns.kind]
@@ -560,8 +560,7 @@ def _execute_pipe_cmd(conn, cmd: str, args: dict):
     if cmd == "find_callers":
         from orchard.handlers.callers import CallerRequest, find_callers
         r = find_callers(conn, CallerRequest(
-            usr=args.get("usr", ""), target_id=args.get("target_id", ""),
-            depth=args.get("depth", 1),
+            usr=args.get("usr", ""),             depth=args.get("depth", 1),
             relation_types=args.get("relation_types", ["Calls"]),
             include_inferred=args.get("include_inferred", False),
         ))
@@ -575,15 +574,13 @@ def _execute_pipe_cmd(conn, cmd: str, args: dict):
     if cmd == "find_references":
         from orchard.handlers.references import ReferencesRequest, find_references
         r = find_references(conn, ReferencesRequest(
-            usr=args.get("usr", ""), target_id=args.get("target_id", ""),
-        ))
+            usr=args.get("usr", ""),         ))
         return r.__dict__
 
     if cmd == "find_callees":
         from orchard.handlers.callees import CalleeRequest, find_callees
         r = find_callees(conn, CalleeRequest(
-            usr=args.get("usr", ""), target_id=args.get("target_id", ""),
-            depth=args.get("depth", 1),
+            usr=args.get("usr", ""),             depth=args.get("depth", 1),
             relation_types=args.get("relation_types", ["Calls"]),
             include_inferred=args.get("include_inferred", False),
         ))
@@ -597,20 +594,19 @@ def _execute_pipe_cmd(conn, cmd: str, args: dict):
     if cmd == "impact":
         from orchard.handlers.impact import ImpactRequest, impact_analysis
         return impact_analysis(conn, ImpactRequest(
-            usr=args.get("usr", ""), target_id=args.get("target_id", ""),
-            max_depth=args.get("max_depth", 5),
+            usr=args.get("usr", ""),             max_depth=args.get("max_depth", 5),
         )).__dict__
 
     if cmd == "symbol":
         from orchard.handlers.symbol_context import SymbolContextRequest, get_symbol_context
         return get_symbol_context(conn, SymbolContextRequest(
-            usr=args.get("usr", ""), target_id=args.get("target_id", "")
+            usr=args.get("usr", ""),
         )).__dict__
 
     if cmd == "hierarchy":
         from orchard.handlers.type_hierarchy import TypeHierarchyRequest, get_type_hierarchy
         return get_type_hierarchy(conn, TypeHierarchyRequest(
-            usr=args.get("usr", ""), target_id=args.get("target_id", "")
+            usr=args.get("usr", ""),
         )).__dict__
 
     if cmd == "audit":
@@ -679,7 +675,7 @@ def _pipe_search_class(conn, args: dict):
     owners = []
     for r in rows:
         owner = {"usr": r[0], "name": r[1], "kind": r[2], "module": r[3]}
-        methods = gl.methods_of(r[0], target)
+        methods = gl.methods_of(r[0])
         if kind_filter:
             methods = [m for m in methods if m["kind"] == kind_filter]
         owners.append({"owner": owner, "methods": methods})

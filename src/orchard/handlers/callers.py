@@ -23,7 +23,6 @@ _AUTO_EXPAND_KINDS = frozenset({"class", "struct", "enum", "protocol"})
 @dataclass
 class CallerRequest(BaseToolRequest):
     usr: str = ""
-    target_id: str | None = None
     depth: int = 1
     relation_types: list[str] = field(default_factory=lambda: ["Calls"])
     include_inferred: bool = False
@@ -37,18 +36,17 @@ def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
     annotated with ``via_method``.
     """
     g = GraphLookup(conn)
-    target_id = req.target_id or ""
 
     # Resolve the symbol to decide whether auto-expand applies.
-    sym = g.symbol(req.usr, target_id)
+    sym = g.symbol(req.usr)
     if sym is not None and sym.get("kind") in _AUTO_EXPAND_KINDS:
         # ── auto-expand: enumerate methods, collect their callers ──────────
-        methods = g.methods_of(req.usr, target_id)
+        methods = g.methods_of(req.usr)
         seen_caller_usrs: set[str] = set()
         all_callers: list[dict] = []
 
         for method in methods:
-            for caller in g.callers_of(method["usr"], target_id, req.relation_types,
+            for caller in g.callers_of(method["usr"], req.relation_types,
                                        include_inferred=req.include_inferred):
                 usr = caller["usr"]
                 if usr not in seen_caller_usrs:
@@ -58,7 +56,7 @@ def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
                     all_callers.append(caller)
 
         _, status = g.freshness(req.build_id or "")
-        open_gaps = _build_open_gaps(g, all_callers, methods, req.usr, target_id)
+        open_gaps = _build_open_gaps(g, all_callers, methods, req.usr)
         return BaseToolResponse(
             data=all_callers,
             freshness=status,
@@ -69,14 +67,14 @@ def find_callers(conn, req: CallerRequest) -> BaseToolResponse:
 
     # ── single-symbol path (existing behaviour) ────────────────────────
     if req.depth > 1:
-        data = g.callers_of_depth(req.usr, target_id, req.depth, req.relation_types,
+        data = g.callers_of_depth(req.usr, req.depth, req.relation_types,
                                   include_inferred=req.include_inferred)
     else:
-        data = g.callers_of(req.usr, target_id, req.relation_types,
+        data = g.callers_of(req.usr, req.relation_types,
                             include_inferred=req.include_inferred)
         data = [{**d, "depth": 1} for d in data]
     _, status = g.freshness(req.build_id or "")
-    sym_name = g.symbol(req.usr, target_id)
+    sym_name = g.symbol(req.usr)
     open_gaps = _build_open_gaps_single(data, sym_name)
     return BaseToolResponse(
         data=data,
@@ -102,7 +100,6 @@ def _build_open_gaps(
     all_callers: list[dict],
     methods: list[dict],
     usr: str,
-    target_id: str,
 ) -> list[str]:
     """Build the open_gaps list for the auto-expand path.
 

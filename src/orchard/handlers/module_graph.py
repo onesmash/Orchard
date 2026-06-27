@@ -13,13 +13,11 @@ class ModuleGraphRequest(BaseToolRequest):
     """Request for querying the module dependency graph.
 
     Attributes:
-        target_id: Optional target filter.
         module_filter: Optional substring filter on module name.
         include_deps: Whether to include DependsOn edges in the response
             (default True).
     """
 
-    target_id: str | None = None
     module_filter: str | None = None
     include_deps: bool = True
 
@@ -43,7 +41,6 @@ def get_module_graph(conn, req: ModuleGraphRequest) -> BaseToolResponse:
     BaseToolResponse
         ``data = {"modules": [...], "edges": [...]}``
     """
-    target_id = req.target_id or ""
     mod_filter = req.module_filter or ""
 
     # Gather Module nodes.

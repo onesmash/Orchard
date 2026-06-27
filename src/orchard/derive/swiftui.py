@@ -70,7 +70,7 @@ def run_swiftui_derivation(conn, target_id: str, build_id: str) -> dict[str, int
         callee_rows = conn.execute(
             "MATCH (b:Symbol {id: $bid})-[r:Calls]->(c:Symbol) "
             "RETURN c.usr, c.name",
-            {"bid": make_symbol_id(target_id, busr)},
+            {"bid": make_symbol_id(busr)},
         ).get_all()
 
         for cusr, cname in callee_rows:
@@ -110,8 +110,8 @@ def _find_owner(body_usr: str, view_usrs: set[str]) -> str | None:
 
 
 def _write(conn, target_id, src_usr, tgt_usr, rel_type, build_id):
-    src_id = make_symbol_id(target_id, src_usr)
-    tgt_id = make_symbol_id(target_id, tgt_usr)
+    src_id = make_symbol_id(src_usr)
+    tgt_id = make_symbol_id(tgt_usr)
     conn.execute(
         f"MATCH (a:Symbol {{id: $src}}), (b:Symbol {{id: $tgt}}) "
         f"MERGE (a)-[:{rel_type} {{derived_from: 'derive/swiftui', "

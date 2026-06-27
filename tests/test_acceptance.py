@@ -61,7 +61,7 @@ def populated_db(tmp_db_path):
 # Scenario A: Single-target Swift-only
 def test_a_get_symbol_context_returns_structure(populated_db):
     conn, ctx = populated_db
-    req = SymbolContextRequest(usr="s:MyClass", target_id="MyLib", build_id=ctx.build_id)
+    req = SymbolContextRequest(usr="s:MyClass", build_id=ctx.build_id)
     resp = get_symbol_context(conn, req)
     assert resp.data is not None
     assert resp.data["name"] == "MyClass"
@@ -71,7 +71,7 @@ def test_a_get_symbol_context_returns_structure(populated_db):
 
 def test_a_find_callers_of_mymethod(populated_db):
     conn, ctx = populated_db
-    req = CallerRequest(usr="s:myMethod", target_id="MyLib", build_id=ctx.build_id)
+    req = CallerRequest(usr="s:myMethod", build_id=ctx.build_id)
     resp = find_callers(conn, req)
     names = [item["name"] for item in resp.data]
     assert "topLevelFunc()" in names
@@ -110,7 +110,7 @@ def test_h_symbol_context_has_open_gaps_field(populated_db):
     """
     conn, ctx = populated_db
     # populated_db seeds a single Calls edge with confidence=1.0 (high).
-    req = SymbolContextRequest(usr="s:MyClass", target_id="MyLib", build_id=ctx.build_id)
+    req = SymbolContextRequest(usr="s:MyClass", build_id=ctx.build_id)
     resp = get_symbol_context(conn, req)
     assert hasattr(resp, "open_gaps")
     assert isinstance(resp.open_gaps, list)

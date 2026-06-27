@@ -25,7 +25,7 @@ def conn_with_symbol(tmp_db_path):
 
 
 def test_get_symbol_context_found(conn_with_symbol):
-    req = SymbolContextRequest(usr="s:MyFunc", target_id="T1", build_id="b1")
+    req = SymbolContextRequest(usr="s:MyFunc", build_id="b1")
     resp = get_symbol_context(conn_with_symbol, req)
     assert resp.data["name"] == "MyFunc()"
     assert resp.data["language"] == "swift"
@@ -34,7 +34,7 @@ def test_get_symbol_context_found(conn_with_symbol):
 
 
 def test_get_symbol_context_not_found(conn_with_symbol):
-    req = SymbolContextRequest(usr="s:Missing", target_id="T1", build_id="b1")
+    req = SymbolContextRequest(usr="s:Missing", build_id="b1")
     resp = get_symbol_context(conn_with_symbol, req)
     assert resp.data is None
     assert "not found" in resp.open_gaps[0].lower()

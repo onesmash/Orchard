@@ -84,8 +84,8 @@ def test_m4_architecture_and_module_graph(tmp_db_path):
     conn.execute(
         "MATCH (a:Symbol {id: $a}), (b:Symbol {id: $b}) "
         "CREATE (a)-[:Calls {source:'test', confidence:1.0}]->(b)",
-        {"a": make_symbol_id(target_id, "s:uiFunc"),
-         "b": make_symbol_id(target_id, "s:dataFunc")},
+        {"a": make_symbol_id("s:uiFunc"),
+         "b": make_symbol_id("s:dataFunc")},
     )
 
     stats = run_architecture_derivation(conn, target_id, build_id="m4")
@@ -128,8 +128,8 @@ def test_m4_layer_violations(tmp_db_path):
     conn.execute(
         "MATCH (a:Symbol {id: $a}), (b:Symbol {id: $b}) "
         "CREATE (a)-[:Calls {source:'test', confidence:1.0}]->(b)",
-        {"a": make_symbol_id(target_id, "s:render"),
-         "b": make_symbol_id(target_id, "s:fetch")},
+        {"a": make_symbol_id("s:render"),
+         "b": make_symbol_id("s:fetch")},
     )
 
     resp = find_layer_violations(

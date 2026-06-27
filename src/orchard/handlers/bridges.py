@@ -10,7 +10,6 @@ from orchard.validation.freshness import freshness_for
 @dataclass
 class BridgesRequest(BaseToolRequest):
     usr: str = ""
-    target_id: str | None = None
 
 
 def get_cross_language_bridges(conn, req: BridgesRequest) -> BaseToolResponse:
@@ -20,8 +19,7 @@ def get_cross_language_bridges(conn, req: BridgesRequest) -> BaseToolResponse:
     the cross-language name fields, and the remote symbol's USR (+ name +
     language).
     """
-    target_id = req.target_id or ""
-    sym_id = make_symbol_id(target_id, req.usr)
+    sym_id = make_symbol_id(req.usr)
 
     rows = conn.execute(
         "MATCH (s:Symbol {id: $id})-[r:BridgesTo]-(other:Symbol) "
