@@ -315,12 +315,19 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 3. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...)
 4. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups
 
+## When Debugging Notifications
+
+1. `orchard notification-graph -n "<name>"` — find who posts and observes a notification
+2. Or query directly: `MATCH (p:Symbol)-[:Posts]->(n:Notification {{name: "kNoti_X"}})-[:Observes]->(cb:Symbol) RETURN p.name, cb.name`
+3. Observer-only notifications: `MATCH (n:Notification) WHERE NOT EXISTS {{ MATCH (:Symbol)-[:Posts]->(n) }} RETURN n.name`
+
 ## When Refactoring
 
 - **Before editing**: run `orchard_impact` on the target symbol to find all dependents.
 - **After changes**: run `orchard_find_callers` to verify no unexpected new dependents broke.
 - **Cross-language bridges**: use `orchard_find_references` to see ObjC ↔ Swift bridge edges.
-- **Renaming**: use `orchard_rename` — USR-precise, dry-run first, works without occurrence data via Symbol+Calls fallback.
+- **Renaming**: use `orchard_rename` — USR-precise, dry-run first, uses Symbol+Calls tables (no Occurrence data needed).
+- **Notification callbacks**: use `orchard notification-graph` to find @selector registrations and verify callback wiring.
 
 ## Never Do
 
@@ -343,6 +350,24 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 | `rename` | USR-precise rename (dry-run safe) | `orchard_rename({{usr: "<USR>", new_name: "X"}})` |
 | `stats` | Database overview | `orchard_stats()` |
 | `audit` | Module coverage gaps | `orchard_audit({{project_dir: "."}})` |
+| `notification-graph` | Find @selector / notification wiring | `orchard notification-graph [-n <name>]` |
+
+## Graph Schema
+
+| Node | Purpose |
+|------|---------|
+| `Symbol` | Compiler-verified symbol (class, method, function...) |
+| `Notification` | Notification name extracted from source |
+| `File` | Source file path |
+
+| Edge | Meaning | Source |
+|------|---------|--------|
+| `Calls` | A calls B | IndexStore (compiler-verified) |
+| `Posts` | A posts notification N | grep @selector (derive/notification) |
+| `Observes` | N notifies callback C | grep @selector (derive/notification) |
+| `Contains` | Class contains method | IndexStore |
+| `Inherits` / `Implements` / `Extends` | Type relations | IndexStore |
+| `BridgesTo` | ObjC ↔ Swift bridge | derive/bridge |
 
 ## Confidence Labels
 
@@ -363,6 +388,7 @@ ObjC callees carry a `semantic_role` field inline:
 |------|---------|
 | `notification_observer` | `addObserver:selector:name:object:` |
 | `notification_poster` | `postNotificationName:object:` |
+| `target_action` | `addTarget:action:forControlEvents:` |
 | `delegate_setter` | `setDelegate:` |
 | `framework_callback` | `viewDidLoad`, `application:didFinish...` |
 
