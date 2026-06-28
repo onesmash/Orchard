@@ -317,9 +317,10 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 
 ## When Debugging Notifications
 
-1. `orchard notification-graph -n "<name>"` — find who posts and observes a notification
-2. Or query directly: `MATCH (p:Symbol)-[:Posts]->(n:Notification {{name: "kNoti_X"}})-[:Observes]->(cb:Symbol) RETURN p.name, cb.name`
-3. Observer-only notifications: `MATCH (n:Notification) WHERE NOT EXISTS {{ MATCH (:Symbol)-[:Posts]->(n) }} RETURN n.name`
+1. `orchard notification-graph -n "<name>"` — CLI: find who posts and observes a notification
+2. `orchard_notification_graph({{notification_name: "<name>"}})` — MCP: same data, grouped by notification name
+3. Or query directly: `MATCH (p:Symbol)-[:Posts]->(n:Notification {{name: "kNoti_X"}})-[:Observes]->(cb:Symbol) RETURN p.name, cb.name`
+4. Observer-only notifications: `MATCH (n:Notification) WHERE NOT EXISTS {{ MATCH (:Symbol)-[:Posts]->(n) }} RETURN n.name`
 
 ## When Refactoring
 
@@ -327,7 +328,7 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 - **After changes**: run `orchard_find_callers` to verify no unexpected new dependents broke.
 - **Cross-language bridges**: use `orchard_find_references` to see ObjC ↔ Swift bridge edges.
 - **Renaming**: use `orchard_rename` — USR-precise, dry-run first, uses Symbol+Calls tables (no Occurrence data needed).
-- **Notification callbacks**: use `orchard notification-graph` to find @selector registrations and verify callback wiring.
+- **Notification callbacks**: use `orchard notification-graph` (CLI) or `orchard_notification_graph` (MCP) to find @selector registrations and verify callback wiring.
 
 ## Never Do
 
@@ -383,7 +384,7 @@ Set `include_inferred: true` to see both; default shows only compiler-verified.
 
 ## Semantic Roles (ObjC callees)
 
-ObjC callees carry a `semantic_role` field inline:
+ObjC callees in `find_callees` and `find_references` (outgoing) carry a `semantic_role` field inline:
 
 | role | Example |
 |------|---------|

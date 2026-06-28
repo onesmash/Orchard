@@ -94,6 +94,11 @@ up delegate wiring, or is an Apple framework entry point.
 orchard find_references --usr "<USR>"
 ```
 
+Returns `incoming` (callers) and `outgoing` (callees) with the same
+`confidence` + `provenance` as find_callers/find_callees.  **ObjC callees
+also carry `semantic_role`** — notification_observer, delegate_setter,
+framework_callback, etc.
+
 ### impact — Blast-radius analysis
 
 ```bash
@@ -154,6 +159,8 @@ Changes can be reverted with `git checkout`.
 
 ### notification-graph — NSNotificationCenter wiring
 
+CLI:
+
 ```bash
 # Show all notification chains:
 orchard notification-graph
@@ -164,6 +171,9 @@ orchard notification-graph -n kNoti_LogoutForUI
 # JSON output:
 orchard notification-graph -f json
 ```
+
+MCP: `orchard_notification_graph({notification_name: "..."})` — same data,
+returns notifications grouped by name with posters/observers/selectors/callbacks.
 
 Shows poster → [notification] → callback chains.  During ingest,
 Notification nodes and Posts/Observes edges are persisted to the graph.
@@ -236,6 +246,11 @@ echo '{"cmd":"search","args":{"name":"viewDidLoad","limit":5}}
 All orchard tools are available as MCP tools with session-scoped DB connection.
 The skill should prefer MCP tools when available; fall back to CLI pipe for
 batch queries.
+
+MCP tools: `orchard_search`, `orchard_find_callers`, `orchard_find_callees`,
+`orchard_find_references` (now includes semantic_role for ObjC callees),
+`orchard_notification_graph`, `orchard_impact`, `orchard_symbol`,
+`orchard_hierarchy`, `orchard_rename`, `orchard_stats`, `orchard_audit`.
 
 ## Confidence labels
 
