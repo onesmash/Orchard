@@ -295,9 +295,9 @@ def test_find_references_returns_incoming_and_outgoing(tmp_db_path, capsys):
     outgoing = payload["data"]["outgoing"]
     incoming = payload["data"]["incoming"]
     assert len(outgoing) == 1, "self calls called → 1 outgoing"
-    assert outgoing[0]["target_name"] == "called()"
+    assert outgoing[0]["name"] == "called()"
     assert len(incoming) == 1, "caller calls self → 1 incoming"
-    assert incoming[0]["caller_name"] == "caller()"
+    assert incoming[0]["name"] == "caller()"
 
 
 def test_cmd_stats_prints_db_path_and_snapshot_metadata(tmp_db_path, capsys):

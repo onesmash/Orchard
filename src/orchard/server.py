@@ -90,7 +90,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_find_references",
-        description="Find incoming and outgoing references for a symbol. Returns both callers (incoming) and callees (outgoing). Each edge includes confidence labels and provenance.",
+        description="Find incoming and outgoing references for a symbol. Returns both callers (incoming) and callees (outgoing). Each edge includes confidence (compiler-verified/inferred) and provenance labels. ObjC callees carry semantic_role (notification_observer, delegate_setter, framework_callback...) inline — no separate tool needed.",
         inputSchema={
             "type": "object",
             "properties": {
