@@ -101,7 +101,7 @@ def _grep_files(root: str, pattern: str, window: int = 5,
     When *file_list* is provided, only those files are scanned
     (incremental mode).  Otherwise the entire *root* is scanned."""
     import subprocess
-    if file_list:
+    if file_list is not None:
         # Filter to files that exist and are .m/.mm/.swift.
         srcs = [f for f in file_list
                 if os.path.isfile(f) and f.endswith(('.m', '.mm', '.swift'))]
