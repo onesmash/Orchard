@@ -64,7 +64,7 @@ orchard find_callers --usr "<USR>"
 Each caller includes:
 - `confidence`: `compiler-verified` (source_direct) or `inferred` (indexstore_relation_only)
 - `provenance`: raw reason from the IndexStore edge
-- `file_path`, `line`, `col` — when occurrence data is available
+- `file_path` from Symbol table (line/col not persisted; use grep for precise locations)
 
 ### find_callees — What does this symbol call?
 
@@ -148,16 +148,36 @@ orchard rename --usr "<USR>" --new-name "<newName>"
 orchard rename --usr "<USR>" --new-name "<newName>" --no-dry-run
 ```
 
-**How it works:**
+Uses Symbol + Calls tables to find affected files and performs
+word-boundary text search-and-replace.  Always dry-run first.
+Changes can be reverted with `git checkout`.
 
-1. Finds the symbol's file_path + callers' file_paths from the *Symbol* and
-   *Calls* tables (no re-ingest needed).
-2. When precise occurrence data (line/col) exists, edits are surgical.
-3. When only file-level info is available, does a word-boundary text
-   search-and-replace in each affected file.
-4. `--no-dry-run` writes to disk; dry-run (default) shows the plan as a diff.
+### notification-graph — NSNotificationCenter wiring
 
-**Protip:** always dry-run first.  Changes can be reverted with `git checkout`.
+```bash
+# Show all notification chains:
+orchard notification-graph
+
+# Filter by notification name:
+orchard notification-graph -n kNoti_LogoutForUI
+
+# JSON output:
+orchard notification-graph -f json
+```
+
+Shows poster → [notification] → callback chains.  During ingest,
+Notification nodes and Posts/Observes edges are persisted to the graph.
+Query them directly via Cypher for instant answers:
+
+```cypher
+-- Full chain: poster → notification → callback
+MATCH (p:Symbol)-[:Posts]->(n:Notification)-[:Observes]->(cb:Symbol)
+RETURN DISTINCT p.name, n.name, cb.name
+
+-- Who observes this notification?
+MATCH (n:Notification {name: 'kNoti_X'})-[o:Observes]->(cb:Symbol)
+RETURN DISTINCT cb.name, o.selector
+```
 
 ### stats — Database overview
 
@@ -174,17 +194,32 @@ orchard audit [--project-dir <path>]
 Shows per-module symbol counts and flags gaps (< 100 symbols for a framework
 target).
 
+## Graph Schema
+
+| Node | Purpose |
+|------|---------|
+| `Symbol` | Compiler-verified symbol |
+| `Notification` | Notification name extracted from source via grep |
+| `File` | Source file path |
+
+| Edge | Meaning | Source |
+|------|---------|--------|
+| `Calls` | A calls B | IndexStore (compiler-verified) |
+| `Posts` | A posts notification N | derive/notification |
+| `Observes` | N notifies callback C | derive/notification |
+| `Contains` | Class contains method | IndexStore |
+| `BridgesTo` | ObjC ↔ Swift | derive/bridge |
+
 ## Ingest — building the graph
 
 ```bash
 orchard ingest --project-dir /path/to/YourProject
 ```
 
-Auto-detects the Xcode workspace, DerivedData, IndexStore path, source root,
-and target name.  Writes the DB to `<project>/.orchard/graph.db`.
-
-Now also populates **File** and **Occurrence** tables (via COPY FROM bulk
-import), enabling precise line/col editing in rename.
+Auto-detects the Xcode workspace, DerivedData, IndexStore, source root, and target.
+Writes DB to `<project>/.orchard/graph.db`.  Notification/Posts/Observes are
+automatically extracted from source during ingest.  Incremental mode re-scans
+only changed files.
 
 ## Pipe mode — batch queries
 
