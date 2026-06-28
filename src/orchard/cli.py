@@ -378,13 +378,15 @@ def cmd_ingest(args: list[str]):
     try:
         from orchard.derive.notification_graph import persist_notification_graph
         t_ng = time.monotonic()
-        # Incremental: only re-scan changed files.  If IndexStore produced
-        # no new symbols, nothing changed — skip entirely.
-        changed_only = []
+        # Incremental with no changes → skip grep (empty list).
+        # Incremental with changes → scan only changed files.
+        # Full ingest → scan everything (None).
         if file_status:
-            changed_only = file_status.get("changed") or []
-        elif not r.symbols:
-            changed_only = []  # no changes → skip grep
+            changed_only = file_status.get("changed")  # list or None
+            if changed_only is None:
+                changed_only = []  # no changes → skip
+        else:
+            changed_only = None  # full scan
         ng_count = persist_notification_graph(
             conn, source_root=source_root or os.getcwd(),
             build_id="cli", changed_files=changed_only)

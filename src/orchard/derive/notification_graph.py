@@ -325,24 +325,22 @@ def persist_notification_graph(
     for noti_name, data in graph["notifications"].items():
         if noti_name == "unknown":
             continue
-        if not data["posters"] or not data["observers"]:
-            continue
 
-        for obs in data["observers"]:
-            callback = obs.get("callback")
-            if not callback:
-                continue
-            cb_id = make_symbol_id(callback["usr"])
+        if data["posters"]:
             for poster in data["posters"]:
                 posts_rows.append([
                     make_symbol_id(poster["usr"]), noti_name,
                     "0.70", "derive/notification", build_id,
                 ])
-                observes_rows.append([
-                    noti_name, cb_id,
-                    obs.get("selector") or "", "0.70",
-                    "derive/notification", build_id,
-                ])
+        for obs in data["observers"]:
+            callback = obs.get("callback")
+            if not callback:
+                continue
+            observes_rows.append([
+                noti_name, make_symbol_id(callback["usr"]),
+                obs.get("selector") or "", "0.70",
+                "derive/notification", build_id,
+            ])
 
     # Write Notification nodes via COPY FROM (skip existing).
     all_noti_names = {r[1] for r in posts_rows} | {r[0] for r in observes_rows}
@@ -419,7 +417,7 @@ def _query_persisted_graph(conn, notification_name: str = "") -> dict:
     rows = conn.execute(
         f"MATCH (p:Symbol)-[ps:Posts]->(n:Notification) {noti_filter} "
         "OPTIONAL MATCH (n)-[ob:Observes]->(cb:Symbol) "
-        "RETURN n.name, p.usr, p.name, p.module, p.file_path, "
+        "RETURN DISTINCT n.name, p.usr, p.name, p.module, p.file_path, "
         "cb.usr, cb.name, cb.module, ob.selector",
         params,
     ).get_all()
@@ -442,9 +440,10 @@ def _query_persisted_graph(conn, notification_name: str = "") -> dict:
             })
 
     # Also collect notifications that only have observers (no posters).
+    obs_filter = (noti_filter + " AND") if noti_filter else "WHERE"
     obs_rows = conn.execute(
-        f"MATCH (n:Notification) {noti_filter} "
-        "WHERE NOT EXISTS { MATCH (:Symbol)-[:Posts]->(n) } "
+        f"MATCH (n:Notification) {obs_filter} "
+        "NOT EXISTS { MATCH (:Symbol)-[:Posts]->(n) } "
         "OPTIONAL MATCH (n)-[ob:Observes]->(cb:Symbol) "
         "RETURN n.name, cb.usr, cb.name, cb.module, ob.selector",
         params,
