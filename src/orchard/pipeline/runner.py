@@ -17,8 +17,9 @@ from orchard.normalize.identity import (
     upsert_symbols,
     upsert_symbol_rels,
     upsert_calls,
-    upsert_indexstore_rels,
     upsert_references,
+    upsert_indexstore_rels,
+    upsert_files,
 )
 from orchard.search.chunker import chunk_symbols
 from orchard.search.embedder import Embedder, EmbeddingError
@@ -155,9 +156,11 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     if is_result and is_result.symbols:
         pruned = prune_missing_symbols(conn, ctx.target, {s.usr for s in all_symbols})
     upsert_symbol_rels(conn, all_rels, ctx.target, source="swift_symbolgraph")
+    file_count = upsert_files(conn, all_symbols)
     results.append(PhaseResult(
         phase="identity_normalization", build_id=ctx.build_id, data=None,
-        stats={"symbols_upserted": inserted, "symbols_pruned": pruned},
+        stats={"symbols_upserted": inserted, "symbols_pruned": pruned,
+               "files_upserted": file_count},
     ))
 
     # swiftinterface_conformances — extract ConformsTo edges from .swiftinterface

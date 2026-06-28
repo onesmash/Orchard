@@ -344,11 +344,11 @@ def cmd_ingest(args: list[str]):
         print(f"  [{i+1}/{len(targets)}] {target}: {len(syms):,} syms, "
               f"{len(r.relations):,} rels")
 
-    # File + Occurrence upsert (shared across targets).
-    from orchard.normalize.identity import upsert_files_and_occurrences
-    fc, oc = upsert_files_and_occurrences(conn, syms, r.occurrences)
-    if fc or oc:
-        print(f"  files: {fc:,}  occurrences: {oc:,}")
+    # File upsert (shared across targets).
+    from orchard.normalize.identity import upsert_files
+    fc = upsert_files(conn, syms)
+    if fc:
+        print(f"  files: {fc:,}")
 
     # SymbolGraph ingest: parse JSON and upsert its symbols + relationships.
     if ns.symbolgraph:
@@ -1080,6 +1080,82 @@ def cmd_rename(args: list[str]):
         conn.close()
 
 
+# ---------------------------------------------------------------------------
+# Notification graph command
+# ---------------------------------------------------------------------------
+
+
+def cmd_notification_graph(args: list[str]):
+    """orchard notification-graph [--notification-name <name>] [--format table|json]"""
+    import argparse, json as _json
+    p = argparse.ArgumentParser(prog="orchard notification-graph",
+                                description="Extract NSNotificationCenter publisher-observer graph")
+    p.add_argument("--db", default="", help="Path to graph.db (auto-discovered)")
+    p.add_argument("--notification-name", "-n", help="Filter by notification name")
+    p.add_argument("--format", "-f", choices=["table", "json"], default="table",
+                   help="Output format (default: table)")
+    p.add_argument("--source-root", default="",
+                   help="Source root for resolving relative paths (auto-detected)")
+    opts = p.parse_args(args)
+
+    conn = _conn(opts.db, read_only=True)
+    source_root = opts.source_root or os.getcwd()
+
+    from orchard.derive.notification_graph import build_notification_graph
+    graph = build_notification_graph(conn, source_root=source_root)
+    conn.close()
+
+    notifications = graph["notifications"]
+    if opts.notification_name:
+        notifications = {k: v for k, v in notifications.items()
+                         if opts.notification_name in k}
+
+    if opts.format == "json":
+        out = {
+            "notifications": {
+                k: {"posters": v["posters"], "observers": v["observers"]}
+                for k, v in notifications.items()
+            },
+            "target_actions": graph.get("target_actions", []),
+        }
+        print(_json.dumps(out, indent=2))
+        return
+
+    if not notifications and not graph.get("target_actions"):
+        print("(no notification or target-action edges found)")
+        return
+
+    for noti_name, data in sorted(notifications.items()):
+        print(f"Notification: {noti_name}")
+        if data["posters"]:
+            print("  Posters:")
+            for p in data["posters"]:
+                loc = f":{p['line']}" if p.get("line") else ""
+                print(f"    {p['file_path']}{loc}  {p['name']}")
+        else:
+            print("  Posters: (none found)")
+        if data["observers"]:
+            print("  Observers:")
+            for o in data["observers"]:
+                loc = f":{o['line']}" if o.get("line") else ""
+                sel = f"  @selector({o['selector']})" if o.get("selector") else ""
+                cb = f"  → {o['callback']['name']}" if o.get("callback") else ""
+                print(f"    {o['file_path']}{loc}  {o['name']}{sel}{cb}")
+        else:
+            print("  Observers: (none found)")
+        print()
+
+    # Target-action section.
+    tas = graph.get("target_actions", [])
+    if tas:
+        print(f"=== Target-Action ({len(tas)} bindings) ===")
+        for ta in tas:
+            loc = f":{ta['line']}" if ta.get("line") else ""
+            sel = f"  @selector({ta['selector']})" if ta.get("selector") else ""
+            cb = f"  → {ta['callback']['name']}" if ta.get("callback") else ""
+            print(f"  {ta['file_path']}{loc}  {ta['name']}{sel}{cb}")
+
+
 COMMANDS: dict[str, tuple] = {
     "search":        (cmd_search,        "Find symbols by name (substring or regex)"),
     "find_callers":  (cmd_find_callers,  "List all callers of a symbol"),
@@ -1094,7 +1170,8 @@ COMMANDS: dict[str, tuple] = {
     "process":       (cmd_process_list,  "List detected execution flows (Process nodes)"),
     "pipe":          (cmd_pipe,          "Batch queries via stdin JSONL (3+ queries)"),
     "setup":         (cmd_setup,         "Install MCP config + skill + download model"),
-    "rename":        (cmd_rename,        "USR-precise symbol rename with dry-run preview"),
+    "rename":             (cmd_rename,             "USR-precise symbol rename with dry-run preview"),
+    "notification-graph": (cmd_notification_graph, "NSNotificationCenter publisher-observer graph"),
 }
 
 

@@ -162,13 +162,14 @@ class GraphLookup:
         sym_id = make_symbol_id(usr)
         rows = self._conn.execute(
             f"MATCH (caller:Symbol)-[r:{rel_pipe}]->(target:Symbol {{id: $id}}) "
-            "OPTIONAL MATCH (f:File)-[:ContainsOccurrence]->(o:Occurrence {usr: caller.usr}) "
-            "WHERE o.role = 'definition' "
             "RETURN DISTINCT caller.usr, caller.name, caller.module, "
-            "caller.kind, caller.language, caller.file_path, o.line, o.col, r.reason",
+            "caller.kind, caller.language, caller.file_path, r.reason",
             {"id": sym_id},
         ).get_all()
-        preferred_rows = self._filter_inferred(rows, include_inferred)
+        # Pad rows to 9-element tuples to match _filter_inferred signature
+        # (usr, name, module, kind, language, file_path, reason) → 9-tuple
+        padded_rows = [(r[0], r[1], r[2], r[3], r[4], r[5], None, None, r[6]) for r in rows]
+        preferred_rows = self._filter_inferred(padded_rows, include_inferred)
         callers: dict[str, dict] = {}
         for r in preferred_rows:
             reason_val = r[8] or "indexstore_relation_only"
@@ -178,8 +179,8 @@ class GraphLookup:
                     "usr": r[0], "name": r[1], "module": r[2],
                     "kind": r[3], "language": r[4],
                     "file_path": r[5] or "",
-                    "line": r[6],
-                    "col": r[7],
+                    "line": None,
+                    "col": None,
                     "reason": reason_val,
                     "confidence": reason_to_confidence(reason_val),
                     "provenance": r[8] or "symbolgraph",

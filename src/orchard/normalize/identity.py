@@ -487,83 +487,36 @@ def upsert_build_snapshot(conn, ctx: BuildContext) -> None:
     )
 
 
-# ── File + Occurrence upsert ─────────────────────────────────────────
+# ── File upsert ───────────────────────────────────────────────────────
 
 
-def upsert_files_and_occurrences(
-    conn,
-    symbols: list[SymbolRecord],
-    occurrences: list,
-) -> tuple[int, int]:
-    """Upsert File and Occurrence nodes via COPY FROM CSV for bulk speed.
+def upsert_files(conn, symbols: list[SymbolRecord]) -> int:
+    """Upsert File nodes via COPY FROM CSV for bulk speed.
 
-    File nodes are derived from SymbolRecord.file_path; Occurrence nodes
-    from the IndexStore reader's occurrence JSON lines.  Returns
-    ``(file_count, occurrence_count)``.
+    File nodes are derived from SymbolRecord.file_path.
+    Returns the number of unique files upserted.
     """
     import csv, tempfile, os
-    from orchard.ingest.indexstore import OccurrenceRecord
 
-    # 1. File nodes — bulk import via COPY FROM.
     seen: set[str] = set()
     rows: list[list[str]] = []
     for s in symbols:
         if s.file_path and s.file_path not in seen:
             seen.add(s.file_path)
-            rows.append([s.file_path, s.module or "", s.language or "", ""])
-    for o in occurrences:
-        if isinstance(o, OccurrenceRecord) and o.file_path and o.file_path not in seen:
-            seen.add(o.file_path)
-            rows.append([o.file_path, "", "", ""])
+            rows.append([s.file_path, s.module or "", s.language or "", "", "false"])
 
-    file_count = 0
-    if rows:
-        f = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="")
-        try:
-            w = csv.writer(f)
-            for r in rows:
-                w.writerow(r)
-            f.close()
-            conn.execute(
-                "COPY File FROM $path (HEADER false, DELIM ',')",
-                {"path": f.name},
-            )
-            file_count = len(rows)
-        finally:
-            os.unlink(f.name)
+    if not rows:
+        return 0
 
-    # 2. Occurrence nodes — bulk import.
-    occ_rows: list[list[str]] = []
-    for o in occurrences:
-        if not isinstance(o, OccurrenceRecord):
-            continue
-        oid = f"{o.file_path}:{o.line}:{o.col}:{o.usr}"
-        occ_rows.append([oid, o.usr, o.file_path or "",
-                         str(o.line), str(o.col), o.role])
-
-    occ_count = len(occ_rows)
-    if occ_rows:
-        # Remove previous occurrence data if any.
-        conn.execute("MATCH (o:Occurrence) DETACH DELETE o")
-
-        f = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="")
-        try:
-            w = csv.writer(f)
-            for r in occ_rows:
-                w.writerow(r)
-            f.close()
-            conn.execute(
-                "COPY Occurrence FROM $path (HEADER false, DELIM ',')",
-                {"path": f.name},
-            )
-        finally:
-            os.unlink(f.name)
-
-        # Bulk-create ContainsOccurrence edges: link File to Occurrence by file_path.
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="")
+    try:
+        w = csv.writer(f)
+        for r in rows:
+            w.writerow(r)
+        f.close()
         conn.execute(
-            "MATCH (f:File), (o:Occurrence) "
-            "WHERE f.path = o.file_path "
-            "CREATE (f)-[:ContainsOccurrence]->(o)"
+            f"COPY File FROM '{f.name}' (HEADER false, DELIM ',')"
         )
-
-    return file_count, occ_count
+        return len(rows)
+    finally:
+        os.unlink(f.name)

@@ -17,8 +17,6 @@ def conn_with_calls(tmp_db_path):
         )
     conn.execute(
         "CREATE (:File {path: '/src/B.swift', module: 'M', language: 'swift', target_id: 'T1', is_generated: false})"
-        "-[:ContainsOccurrence]->"
-        "(:Occurrence {id: 'occ-b', usr: 's:B', file_path: '/src/B.swift', line: 17, col: 3, role: 'definition'})"
     )
     # B calls A, C calls A
     conn.execute(
@@ -47,8 +45,8 @@ def test_find_callers_returns_callers(conn_with_calls):
     assert "A" not in names
     caller_b = next(item for item in resp.data if item["name"] == "B")
     assert caller_b["file_path"] == "/src/B.swift"
-    assert caller_b["line"] == 17
-    assert caller_b["col"] == 3
+    assert caller_b["line"] is None
+    assert caller_b["col"] is None
     assert caller_b["reason"] == "indexstore_relation_only"
 
 

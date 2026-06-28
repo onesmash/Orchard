@@ -32,14 +32,16 @@ class RenameRequest(BaseToolRequest):
 
 
 def build_rename_plan(conn, usr: str, new_name: str) -> list[dict]:
-    """Build a sorted rename plan: every occurrence site mapped to an edit entry.
+    """Build a sorted rename plan: every known site mapped to an edit entry.
 
-    Queries the Occurrence table for all definition / reference sites of
-    *usr*, then groups by file and sorts by descending line number so that
-    applying edits top-down within a file doesn't shift subsequent positions.
+    Uses the Symbol table for the definition site and the Calls table
+    for caller file paths.  Without Occurrence data, line/col are set to 0
+    and the rename falls back to word-boundary text search in each file.
 
     Returns:
         list of dicts with keys: file_path, line, col, edit_type, old_name, new_name
+        Returns None if the symbol is not in the graph at all.
+        Returns an empty list if the symbol has no file_path or caller data.
     """
     sym_id = usr
 
@@ -52,30 +54,7 @@ def build_rename_plan(conn, usr: str, new_name: str) -> list[dict]:
         return None  # symbol not in graph at all
     current_name = name_rows[0][0]
 
-    # Try the Occurrence table first (precise line/col).
-    rows = conn.execute(
-        "MATCH (f:File)-[:ContainsOccurrence]->(o:Occurrence {usr: $usr}) "
-        "RETURN o.file_path, o.line, o.col, o.role "
-        "ORDER BY o.file_path, o.line DESC",
-        {"usr": usr},
-    ).get_all()
-
-    if rows:
-        plan: list[dict] = []
-        for r in rows:
-            role = r[3] or "reference"
-            edit_type = "declaration" if role == "definition" else "reference"
-            plan.append({
-                "file_path": r[0] or "",
-                "line": r[1] or 0,
-                "col": r[2] or 0,
-                "edit_type": edit_type,
-                "old_name": current_name,
-                "new_name": new_name,
-            })
-        return plan
-
-    # Fallback: no Occurrence data — build plan from Symbol + Calls tables.
+    # Build plan from Symbol + Calls tables.
     sym_rows = conn.execute(
         "MATCH (s:Symbol {id: $id}) RETURN s.file_path LIMIT 1",
         {"id": sym_id},

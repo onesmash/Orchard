@@ -44,7 +44,7 @@ def test_all_node_tables_created(tmp_db_path):
 
     expected_node_tables = [
         "BuildSnapshot", "Module", "Target", "File",
-        "Symbol", "Occurrence", "Chunk", "Diagnostic",
+        "Symbol", "Chunk", "Diagnostic",
     ]
     tables_result = conn.execute("CALL show_tables() RETURN *").get_all()
     table_names = {row[1] for row in tables_result}  # name is column index 1
@@ -62,7 +62,7 @@ def test_all_rel_tables_created(tmp_db_path):
 
     expected_rel_tables = [
         "ContainsFile", "ContainsTarget", "BuiltTarget", "ObservedFile",
-        "Declares", "ContainsChunk", "ContainsOccurrence", "RefersTo",
+        "Declares", "ContainsChunk",
         "Calls", "References", "Inherits", "Implements", "Imports",
         "ConformsTo", "BridgesTo", "ProducedDiagnostic",
     ]

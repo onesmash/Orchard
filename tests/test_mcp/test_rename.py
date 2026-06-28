@@ -49,28 +49,7 @@ def conn_with_rename_data(tmp_db_path):
             f"CREATE (:File {{path: '{path}', module: 'M', language: 'swift', "
             f"target_id: 'T1', is_generated: false}})"
         )
-    # Occurrences: definition of oldFunc at main.swift:10:5
-    conn.execute(
-        "MATCH (f:File {path: '/src/main.swift'}) "
-        "CREATE (f)-[:ContainsOccurrence]->"
-        "(:Occurrence {id: 'occ-def', usr: 's:oldFunc', file_path: '/src/main.swift', "
-        "line: 10, col: 5, role: 'definition'})"
-    )
-    # Occurrences: reference from callerFunc at main.swift:25:9
-    conn.execute(
-        "MATCH (f:File {path: '/src/main.swift'}) "
-        "CREATE (f)-[:ContainsOccurrence]->"
-        "(:Occurrence {id: 'occ-ref1', usr: 's:oldFunc', file_path: '/src/main.swift', "
-        "line: 25, col: 9, role: 'reference'})"
-    )
-    # Occurrences: reference from utils.swift:42:12
-    conn.execute(
-        "MATCH (f:File {path: '/src/utils.swift'}) "
-        "CREATE (f)-[:ContainsOccurrence]->"
-        "(:Occurrence {id: 'occ-ref2', usr: 's:oldFunc', file_path: '/src/utils.swift', "
-        "line: 42, col: 12, role: 'reference'})"
-    )
-    # Call edges
+    # Call edges (used by fallback to find reference sites)
     conn.execute(
         "MATCH (c:Symbol {id:'s:caller'}), (t:Symbol {id:'s:oldFunc'}) "
         "CREATE (c)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
@@ -87,30 +66,30 @@ def conn_with_rename_data(tmp_db_path):
 
 # ── AC-R1: build_rename_plan ──────────────────────────────────────
 def test_build_rename_plan_finds_definition_and_references(conn_with_rename_data):
-    """AC-R1: Plan contains 1 definition + 2 reference entries."""
+    """AC-R1: Plan contains 1 definition + 2 reference entries via fallback."""
     plan = build_rename_plan(conn_with_rename_data, "s:oldFunc", "newFunc")
 
-    assert len(plan) == 3, f"Expected 3 entries (1 def + 2 refs), got {len(plan)}"
+    # Fallback deduplicates by file: symbol + caller1 share main.swift,
+    # caller2 adds utils.swift → 2 entries (1 decl, 1 ref).
+    assert len(plan) == 2, f"Expected 2 entries (1 decl + 1 ref), got {len(plan)}"
 
     definition = [e for e in plan if e["edit_type"] == "declaration"]
     references = [e for e in plan if e["edit_type"] == "reference"]
 
     assert len(definition) == 1
     assert definition[0]["file_path"] == "/src/main.swift"
-    assert definition[0]["line"] == 10
-    assert definition[0]["col"] == 5
+    assert definition[0]["line"] == 0  # fallback: no precise location
+    assert definition[0]["col"] == 0
     assert definition[0]["old_name"] == "oldFunc"
     assert definition[0]["new_name"] == "newFunc"
 
-    assert len(references) == 2
-    ref_files = {r["file_path"] for r in references}
-    assert "/src/main.swift" in ref_files
-    assert "/src/utils.swift" in ref_files
+    assert len(references) == 1
+    assert references[0]["file_path"] == "/src/utils.swift"
 
 
 # ── AC-R2: rename_diff ────────────────────────────────────────────
 def test_rename_diff_generates_human_readable_output(conn_with_rename_data):
-    """AC-R2: rename_diff produces file-grouped, line-numbered output."""
+    """AC-R2: rename_diff produces file-grouped output with search labels."""
     plan = build_rename_plan(conn_with_rename_data, "s:oldFunc", "newFunc")
     diff_text = rename_diff(plan)
 
@@ -118,9 +97,9 @@ def test_rename_diff_generates_human_readable_output(conn_with_rename_data):
     assert "newFunc" in diff_text
     assert "/src/main.swift" in diff_text
     assert "/src/utils.swift" in diff_text
-    assert "10" in diff_text and "declaration" in diff_text  # line 10 declaration
-    assert "25" in diff_text and "reference" in diff_text   # line 25 reference
-    assert "42" in diff_text and "reference" in diff_text   # line 42 reference
+    assert "search" in diff_text  # fallback location label
+    assert "declaration" in diff_text
+    assert "reference" in diff_text
 
 
 # ── AC-R3: USR not found ──────────────────────────────────────────
@@ -184,12 +163,6 @@ def test_build_rename_plan_no_references(conn_with_rename_data):
         "CREATE (:File {path: '/src/unused.swift', module: 'M', language: 'swift', "
         "target_id: 'T1', is_generated: false})"
     )
-    conn_with_rename_data.execute(
-        "MATCH (f:File {path: '/src/unused.swift'}) "
-        "CREATE (f)-[:ContainsOccurrence]->"
-        "(:Occurrence {id: 'occ-unused', usr: 's:unused', file_path: '/src/unused.swift', "
-        "line: 1, col: 5, role: 'definition'})"
-    )
     plan = build_rename_plan(conn_with_rename_data, "s:unused", "usedFunc")
     assert len(plan) == 1
     assert plan[0]["edit_type"] == "declaration"
@@ -204,22 +177,20 @@ def test_rename_symbol_dry_run_returns_diff_without_writes(conn_with_rename_data
     assert resp.data is not None
     assert "diff" in resp.data
     assert "plan" in resp.data
-    assert len(resp.data["plan"]) == 3
+    assert len(resp.data["plan"]) == 2  # fallback: 1 decl + 1 ref (dedup by file)
     assert resp.data["dry_run"] is True
     # Since dry_run, the evidence should mention it
     assert any("dry" in s.lower() for s in resp.evidence_sources)
 
 
 def test_rename_symbol_no_dry_run_attempts_write(conn_with_rename_data, tmp_path):
-    """Non-dry-run with real file paths succeeds on writeable temp files."""
-    # Create actual files at the expected paths so write succeeds
+    """Non-dry-run with real file paths uses fallback word-boundary replace."""
     import os
     main_path = tmp_path / "main.swift"
     utils_path = tmp_path / "utils.swift"
     main_path.write_text("func oldFunc() {}\nfunc callerFunc() {\n    oldFunc()\n}\n")
-    utils_path.write_text("oldFunc()\n")
+    utils_path.write_text("func helperFunc() { oldFunc() }\n")
 
-    # Use a DB where file_path points to real temp files
     from orchard.graph.db import get_connection
     conn2 = get_connection(str(tmp_path / "rename.db"))
     init_schema(conn2)
@@ -237,31 +208,26 @@ def test_rename_symbol_no_dry_run_attempts_write(conn_with_rename_data, tmp_path
         f"container_usr: '', access_level: 'internal', origin: 'derived', "
         f"is_generated: false}})"
     )
+    # Second caller in different file to get utils.swift in plan
+    conn2.execute(
+        f"CREATE (:Symbol {{id: 's:caller2', usr: 's:caller2', precise_id: '', "
+        f"name: 'helperFunc', language: 'swift', kind: 'swift.func', module: 'M', "
+        f"target_id: 'T1', file_path: '{utils_path}', signature: '', "
+        f"container_usr: '', access_level: 'internal', origin: 'derived', "
+        f"is_generated: false}})"
+    )
     for path in [str(main_path), str(utils_path)]:
         conn2.execute(
             f"CREATE (:File {{path: '{path}', module: 'M', language: 'swift', "
             f"target_id: 'T1', is_generated: false}})"
         )
     conn2.execute(
-        f"MATCH (f:File {{path: '{main_path}'}}) "
-        f"CREATE (f)-[:ContainsOccurrence]->"
-        f"(:Occurrence {{id: 'occ-def', usr: 's:oldFunc', file_path: '{main_path}', "
-        f"line: 1, col: 6, role: 'definition'}})"
-    )
-    conn2.execute(
-        f"MATCH (f:File {{path: '{main_path}'}}) "
-        f"CREATE (f)-[:ContainsOccurrence]->"
-        f"(:Occurrence {{id: 'occ-ref1', usr: 's:oldFunc', file_path: '{main_path}', "
-        f"line: 3, col: 5, role: 'reference'}})"
-    )
-    conn2.execute(
-        f"MATCH (f:File {{path: '{utils_path}'}}) "
-        f"CREATE (f)-[:ContainsOccurrence]->"
-        f"(:Occurrence {{id: 'occ-ref2', usr: 's:oldFunc', file_path: '{utils_path}', "
-        f"line: 1, col: 1, role: 'reference'}})"
-    )
-    conn2.execute(
         f"MATCH (c:Symbol {{id:'s:caller'}}), (t:Symbol {{id:'s:oldFunc'}}) "
+        f"CREATE (c)-[:Calls {{source:'derived', confidence:1.0, provenance:'indexstore', "
+        f"build_id:'b1', reason:'source_direct'}}]->(t)"
+    )
+    conn2.execute(
+        f"MATCH (c:Symbol {{id:'s:caller2'}}), (t:Symbol {{id:'s:oldFunc'}}) "
         f"CREATE (c)-[:Calls {{source:'derived', confidence:1.0, provenance:'indexstore', "
         f"build_id:'b1', reason:'source_direct'}}]->(t)"
     )
@@ -273,7 +239,7 @@ def test_rename_symbol_no_dry_run_attempts_write(conn_with_rename_data, tmp_path
     assert resp.data["dry_run"] is False
     assert resp.data["files_modified"] > 0
 
-    # Verify files were actually modified
+    # Verify files were actually modified (fallback uses word-boundary regex)
     main_content = main_path.read_text()
     assert "oldFunc" not in main_content
     assert "newFunc" in main_content

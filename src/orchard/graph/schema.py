@@ -54,14 +54,6 @@ NODE_TABLES: list[str] = [
         origin STRING,
         is_generated BOOLEAN
     )""",
-    """CREATE NODE TABLE IF NOT EXISTS Occurrence(
-        id STRING PRIMARY KEY,
-        usr STRING,
-        file_path STRING,
-        line INT64,
-        col INT64,
-        role STRING
-    )""",
     """CREATE NODE TABLE IF NOT EXISTS Chunk(
         id STRING PRIMARY KEY,
         owner_usr STRING,
@@ -97,8 +89,6 @@ REL_TABLES: list[str] = [
     "CREATE REL TABLE IF NOT EXISTS ObservedFile(FROM BuildSnapshot TO File)",
     "CREATE REL TABLE IF NOT EXISTS Declares(FROM File TO Symbol)",
     "CREATE REL TABLE IF NOT EXISTS ContainsChunk(FROM Symbol TO Chunk)",
-    "CREATE REL TABLE IF NOT EXISTS ContainsOccurrence(FROM File TO Occurrence)",
-    "CREATE REL TABLE IF NOT EXISTS RefersTo(FROM Occurrence TO Symbol, role STRING)",
     """CREATE REL TABLE IF NOT EXISTS Calls(
         FROM Symbol TO Symbol,
         source STRING,

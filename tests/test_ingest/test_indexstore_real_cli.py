@@ -185,7 +185,7 @@ def test_installed_wheel_cli_can_ingest_minimal_index(tmp_path):
         text=True,
     )
     assert "syms" in ingest.stdout
-    assert "calls done" in ingest.stdout
+    assert "rels" in ingest.stdout
     assert db_path.exists()
 
     stats = subprocess.run(
