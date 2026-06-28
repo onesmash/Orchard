@@ -195,6 +195,16 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="orchard_notification_graph",
+        description="Query the NSNotificationCenter publisher-observer graph. Returns notifications grouped by name, each with posters (who posts) and observers (who listens, with @selector and callback symbol). Supports optional filtering by notification name.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "notification_name": {"type": "string", "description": "Filter by notification name (substring match). Omit to return all notifications."},
+            },
+        },
+    ),
 ]
 
 
@@ -383,6 +393,22 @@ def _do_audit(args: dict) -> str:
         return table + f"\n\nTotal: {total_symbols:,} symbols across {unique_modules} modules ({unique_kinds} kinds)"
 
 
+def _do_notification_graph(args: dict) -> str:
+    """Query NSNotificationCenter publisher-observer graph."""
+    import importlib
+    mod = importlib.import_module("orchard.handlers.notification_graph")
+    cls = getattr(mod, "NotificationGraphRequest")
+    fn = getattr(mod, "get_notification_graph")
+    conn = _get_conn()
+    build_id = args.get("build_id") or _default_build_id_safe(conn, "")
+    req = cls(
+        notification_name=args.get("notification_name", ""),
+        build_id=build_id,
+    )
+    result = fn(conn, req)
+    return json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=str)
+
+
 HANDLERS: dict[str, callable] = {
     "orchard_search": _do_search,
     "orchard_find_references": lambda a: _do_handler("references", "find_references", "ReferencesRequest", a),
@@ -394,6 +420,7 @@ HANDLERS: dict[str, callable] = {
     "orchard_stats": _do_stats,
     "orchard_audit": _do_audit,
     "orchard_rename": lambda a: _do_handler("rename", "rename_symbol", "RenameRequest", a),
+    "orchard_notification_graph": _do_notification_graph,
 }
 
 

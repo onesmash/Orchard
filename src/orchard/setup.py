@@ -343,7 +343,7 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 | `search` | Find symbols by name | `orchard_search({{name: "viewDidLoad"}})` |
 | `find_callers` | Who calls this symbol | `orchard_find_callers({{usr: "<USR>"}})` |
 | `find_callees` | What this symbol calls | `orchard_find_callees({{usr: "<USR>"}})` |
-| `find_references` | Incoming + outgoing references | `orchard_find_references({{usr: "<USR>"}})` |
+| `find_references` | Incoming + outgoing references (with semantic_role for ObjC) | `orchard_find_references({{usr: "<USR>"}})` |
 | `impact` | Blast radius before editing | `orchard_impact({{usr: "<USR>"}})` |
 | `symbol` | Symbol metadata | `orchard_symbol({{usr: "<USR>"}})` |
 | `hierarchy` | Type hierarchy | `orchard_hierarchy({{usr: "<USR>"}})` |
@@ -351,6 +351,7 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 | `stats` | Database overview | `orchard_stats()` |
 | `audit` | Module coverage gaps | `orchard_audit({{project_dir: "."}})` |
 | `notification-graph` | Find @selector / notification wiring | `orchard notification-graph [-n <name>]` |
+| `notification_graph` | NSNotificationCenter publisher-observer graph (MCP) | `orchard_notification_graph({{notification_name: "..."}})` |
 
 ## Graph Schema
 
