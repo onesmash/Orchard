@@ -374,6 +374,19 @@ def cmd_ingest(args: list[str]):
     except Exception:
         pass  # skip on mock/test databases
 
+    # Notification graph: persist Notification nodes + Posts/Observes edges.
+    try:
+        from orchard.derive.notification_graph import persist_notification_graph
+        t_ng = time.monotonic()
+        ng_count = persist_notification_graph(
+            conn, source_root=source_root or os.getcwd(),
+            build_id="cli")
+        if ng_count:
+            print(f"  notification-graph: {ng_count:,} edges "
+                  f"({time.monotonic()-t_ng:.1f}s)")
+    except Exception as e:
+        pass  # skip when source files are unavailable
+
     # Process detection via entry-point scoring + BFS tracing.
     try:
         from orchard.derive.process_detection import detect_processes
@@ -1101,8 +1114,18 @@ def cmd_notification_graph(args: list[str]):
     conn = _conn(opts.db, read_only=True)
     source_root = opts.source_root or os.getcwd()
 
-    from orchard.derive.notification_graph import build_notification_graph
-    graph = build_notification_graph(conn, source_root=source_root)
+    # Try persisted data first, fall back to dynamic grep.
+    from orchard.derive.notification_graph import (
+        build_notification_graph, _query_persisted_graph,
+    )
+    graph = _query_persisted_graph(conn, opts.notification_name)
+    if not graph["notifications"]:
+        graph = build_notification_graph(conn, source_root=source_root)
+        if opts.notification_name:
+            graph["notifications"] = {
+                k: v for k, v in graph["notifications"].items()
+                if opts.notification_name in k
+            }
     conn.close()
 
     notifications = graph["notifications"]

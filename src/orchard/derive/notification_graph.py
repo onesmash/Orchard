@@ -94,34 +94,59 @@ def _find_block_in_file(
 # ── Graph builder ─────────────────────────────────────────────────────
 
 
+def _grep_files(root: str, pattern: str, window: int = 5) -> dict[str, tuple[int, str]]:
+    """Run grep -rn and return {realpath: (line, block)} with context lines."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["grep", "-rnE", f"-A{window}", "--include=*.m", "--include=*.mm",
+             "--include=*.swift", pattern, os.path.realpath(root)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return {}
+
+    results: dict[str, tuple[int, str]] = {}
+    current_file = None
+    current_block: list[str] = []
+    current_line = 0
+    for line in out.stdout.splitlines():
+        if not line.strip():
+            continue
+        m = re.match(r'^(.+?):(\d+):(.*)$', line)
+        if m:
+            # Save previous block (merge into existing for same file).
+            if current_file and current_block:
+                rp = os.path.realpath(current_file)
+                if rp in results:
+                    # Merge: extend existing block with new match's context.
+                    _prev_ln, _prev_block = results[rp]
+                    results[rp] = (_prev_ln, _prev_block + "\n" + "\n".join(current_block))
+                else:
+                    results[rp] = (current_line, "\n".join(current_block))
+            current_file = m.group(1)
+            current_line = int(m.group(2))
+            current_block = [m.group(3)]
+        else:
+            ctx = re.match(r'^.+?-(\d+)-(.*)$', line)
+            if ctx:
+                current_block.append(ctx.group(2))
+    if current_file and current_block:
+        rp = os.path.realpath(current_file)
+        if rp in results:
+            _prev_ln, _prev_block = results[rp]
+            results[rp] = (_prev_ln, _prev_block + "\n" + "\n".join(current_block))
+        else:
+            results[rp] = (current_line, "\n".join(current_block))
+    return results
+
+
 def build_notification_graph(
     conn, source_root: str = ""
 ) -> dict:
-    """Extract notification publisher and observer graph.
-
-    Finds all Calls edges where the callee is an NSNotificationCenter
-    method, then reads source files at observer registration sites to
-    extract ``@selector(xxx)`` and notification name strings.
-
-    Groups results by notification name, linking each observer to its
-    callback symbol in the graph.
-
-    Args:
-        conn: Ladybug connection.
-        source_root: Optional prefix to resolve relative paths.
-
-    Returns:
-        Dict with keys:
-          - ``publishers``: flat list of publisher entries
-          - ``observers``: flat list of observer entries
-          - ``notifications``: dict keyed by notification name, each
-            containing ``posters`` and ``observers`` lists.
-    """
+    """Extract notification publisher and observer graph."""
     from orchard.derive.objc_semantics import classify_objc_message
 
-    # Exact selector matching avoids false positives from KVO
-    # (addObserver:forKeyPath:...) and custom addObserver wrappers.
-    # Also finds target-action patterns (addTarget:action:forControlEvents:).
     rows = conn.execute(
         "MATCH (caller:Symbol)-[r:Calls]->(callee:Symbol) "
         "WHERE callee.name IN ["
@@ -137,6 +162,24 @@ def build_notification_graph(
         "caller.file_path, callee.name",
     ).get_all()
 
+    # Pre-scan: one grep pass for all patterns (avoid 4× filesystem scan).
+    raw = _grep_files(source_root, r"@selector|postNotificationName|addObserver")
+    # Split results by pattern match.
+    sel_files: dict[str, tuple[int, str]] = {}
+    ns_files: dict[str, tuple[int, str]] = {}
+    post_files: dict[str, tuple[int, str]] = {}
+    obs_files: dict[str, tuple[int, str]] = {}
+    for fp, (ln, block) in raw.items():
+        if "@selector" in block:
+            sel_files[fp] = (ln, block)
+        if "NSSelectorFromString" in block:
+            ns_files[fp] = (ln, block)
+        if "postNotificationName" in block:
+            post_files[fp] = (ln, block)
+        if "addObserver" in block:
+            obs_files[fp] = (ln, block)
+
+    # Process each row using cached results.
     publishers: list[dict] = []
     observers: list[dict] = []
     target_actions: list[dict] = []
@@ -148,19 +191,20 @@ def build_notification_graph(
         )
         role = classify_objc_message(callee_name)
 
-        # Resolve absolute path.
         abs_path = file_path
         if source_root and not os.path.isabs(abs_path):
             abs_path = os.path.join(source_root, abs_path)
 
+        selector = None
+        noti_name = "unknown"
+        line_num = 0
+
         if role == "notification_poster":
-            # Read source to extract notification name.
-            line_info = _find_block_in_file(abs_path, "postNotificationName")
-            noti_name = "unknown"
-            line_num = 0
-            if line_info:
-                line_num, line_text = line_info
-                noti_name = parse_post_notification_line(line_text) or "unknown"
+            # Look up from grep results.
+            gi = post_files.get(os.path.realpath(abs_path))
+            if gi:
+                line_num = gi[0]
+                noti_name = parse_post_notification_line(gi[1]) or "unknown"
 
             entry = {
                 "usr": usr,
@@ -174,36 +218,30 @@ def build_notification_graph(
             notifications.setdefault(noti_name, {"posters": [], "observers": []})
             notifications[noti_name]["posters"].append(entry)
 
-        elif role == "notification_observer":
-            # Search directly for @selector — handles direct calls, macros,
-            # and wrapper methods uniformly.  Falls back to NSSelectorFromString
-            # for dynamic selectors, then addObserver for block-based patterns.
-            line_info = (_find_block_in_file(abs_path, "@selector")
-                         or _find_block_in_file(abs_path, "NSSelectorFromString")
-                         or _find_block_in_file(abs_path, "addObserver"))
-            selector = None
-            noti_name = "unknown"
-            line_num = 0
-            callback: dict | None = None
-
-            if line_info:
-                line_num, line_text = line_info
-                sel_match = _SELECTOR_RE.search(line_text)
-                if sel_match:
-                    selector = sel_match.group(1)
-                else:
-                    ns_sel = re.search(r'NSSelectorFromString\(\s*@?"(\w+:?)"\)', line_text)
-                    if ns_sel:
-                        selector = ns_sel.group(1)
-                    else:
+        elif role in ("notification_observer", "target_action"):
+            # Try @selector first, then NSSelectorFromString, then addObserver.
+            for gset in [sel_files, ns_files, obs_files]:
+                gi = gset.get(os.path.realpath(abs_path))
+                if gi:
+                    line_num, line_text = gi[0], gi[1]
+                    sel_match = _SELECTOR_RE.search(line_text)
+                    if sel_match:
+                        selector = sel_match.group(1)
+                    elif gset is ns_files:
+                        ns_sel = re.search(r'NSSelectorFromString\(\s*@?"(\w+:?)"\)', line_text)
+                        if ns_sel:
+                            selector = ns_sel.group(1)
+                    elif gset is obs_files:
                         parsed = parse_addobserver_line(line_text)
                         if parsed:
                             selector, noti_name = parsed[0], parsed[1] or noti_name
-                name_match = _NOTIFICATION_NAME_RE.search(line_text)
-                if name_match:
-                    noti_name = _clean_name(name_match.group(1))
+                    name_match = _NOTIFICATION_NAME_RE.search(line_text)
+                    if name_match:
+                        noti_name = _clean_name(name_match.group(1))
+                    break
 
             # Link @selector to the callback symbol.
+            callback = None
             if selector:
                 cb_rows = conn.execute(
                     "MATCH (s:Symbol) WHERE s.name = $sel "
@@ -220,61 +258,191 @@ def build_notification_graph(
                     }
 
             entry = {
-                "usr": usr,
-                "name": name,
-                "module": module,
-                "file_path": file_path,
-                "line": line_num,
-                "selector": selector,
-                "notification_name": noti_name,
+                "usr": usr, "name": name, "module": module,
+                "file_path": file_path, "line": line_num,
+                "selector": selector, "notification_name": noti_name,
                 "callback": callback,
             }
-            observers.append(entry)
-            notifications.setdefault(noti_name, {"posters": [], "observers": []})
-            notifications[noti_name]["observers"].append(entry)
-
-        elif role == "target_action":
-            # Read source to extract @selector from addTarget:action:...
-            line_info = _find_block_in_file(abs_path, "addTarget:")
-            selector = None
-            line_num = 0
-            callback = None
-
-            if line_info:
-                line_num, line_text = line_info
-                sel_match = _SELECTOR_RE.search(line_text)
-                if sel_match:
-                    selector = sel_match.group(1)
-
-            # Link @selector to the callback symbol.
-            if selector:
-                cb_rows = conn.execute(
-                    "MATCH (s:Symbol) WHERE s.name = $sel "
-                    "AND s.file_path = $fp "
-                    "RETURN s.usr, s.name, s.kind, s.module LIMIT 1",
-                    {"sel": selector, "fp": file_path},
-                ).get_all()
-                if cb_rows:
-                    callback = {
-                        "usr": cb_rows[0][0],
-                        "name": cb_rows[0][1],
-                        "kind": cb_rows[0][2],
-                        "module": cb_rows[0][3] or "",
-                    }
-
-            target_actions.append({
-                "usr": usr,
-                "name": name,
-                "module": module,
-                "file_path": file_path,
-                "line": line_num,
-                "selector": selector,
-                "callback": callback,
-            })
+            if role == "target_action":
+                target_actions.append(entry)
+            else:
+                observers.append(entry)
+                notifications.setdefault(noti_name, {"posters": [], "observers": []})
+                notifications[noti_name]["observers"].append(entry)
 
     return {
         "publishers": publishers,
         "observers": observers,
         "target_actions": target_actions,
+        "notifications": notifications,
+    }
+
+
+# ── Persist to graph ───────────────────────────────────────────────────
+
+
+def persist_notification_graph(
+    conn, source_root: str = "", build_id: str = ""
+) -> int:
+    """Persist Notification nodes, Posts and Observes edges to the graph.
+
+    Builds the notification graph from Calls edges + source grep, then
+    writes Notification nodes and edges via COPY FROM for bulk speed.
+    Idempotent — repeated calls with the same data produce no new edges.
+
+    Returns:
+        Total number of Posts + Observes edges written.
+    """
+    import csv, tempfile, os
+
+    graph = build_notification_graph(conn, source_root=source_root)
+
+    # Build Posts edges: poster symbol → Notification node.
+    posts_rows: list[list[str]] = []
+    # Build Observes edges: Notification node → callback symbol.
+    observes_rows: list[list[str]] = []
+
+    for noti_name, data in graph["notifications"].items():
+        if noti_name == "unknown":
+            continue
+        if not data["posters"] or not data["observers"]:
+            continue
+
+        for obs in data["observers"]:
+            callback = obs.get("callback")
+            if not callback:
+                continue
+            cb_id = make_symbol_id(callback["usr"])
+            for poster in data["posters"]:
+                posts_rows.append([
+                    make_symbol_id(poster["usr"]), noti_name,
+                    "0.70", "derive/notification", build_id,
+                ])
+                observes_rows.append([
+                    noti_name, cb_id,
+                    obs.get("selector") or "", "0.70",
+                    "derive/notification", build_id,
+                ])
+
+    # Write Notification nodes via COPY FROM (skip existing).
+    all_noti_names = {r[1] for r in posts_rows} | {r[0] for r in observes_rows}
+    if all_noti_names:
+        existing = conn.execute(
+            "MATCH (n:Notification) RETURN n.name"
+        ).get_all()
+        existing_names = {r[0] for r in existing}
+        new_names = sorted(all_noti_names - existing_names)
+        if new_names:
+            nf = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".csv", delete=False, newline="")
+            try:
+                w = csv.writer(nf)
+                for name in new_names:
+                    w.writerow([name])
+                nf.close()
+                conn.execute(
+                    f"COPY Notification FROM '{nf.name}' "
+                    "(HEADER false, DELIM ',')"
+                )
+            finally:
+                os.unlink(nf.name)
+
+    # Write Posts edges.
+    count = 0
+    if posts_rows:
+        pf = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, newline="")
+        try:
+            w = csv.writer(pf, quoting=csv.QUOTE_ALL)
+            for r in posts_rows:
+                w.writerow(r)
+            pf.close()
+            conn.execute(
+                f"COPY Posts FROM '{pf.name}' (HEADER false, DELIM ',')"
+            )
+            count += len(posts_rows)
+        finally:
+            os.unlink(pf.name)
+
+    # Write Observes edges.
+    if observes_rows:
+        of = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, newline="")
+        try:
+            w = csv.writer(of, quoting=csv.QUOTE_ALL)
+            for r in observes_rows:
+                w.writerow(r)
+            of.close()
+            conn.execute(
+                f"COPY Observes FROM '{of.name}' (HEADER false, DELIM ',')"
+            )
+            count += len(observes_rows)
+        finally:
+            os.unlink(of.name)
+
+    return count
+
+
+def _query_persisted_graph(conn, notification_name: str = "") -> dict:
+    """Query persisted Notification nodes and Posts/Observes edges.
+
+    Returns the same shape as ``build_notification_graph`` so the CLI
+    can use either source transparently.
+    """
+    noti_filter = ""
+    params: dict = {}
+    if notification_name:
+        noti_filter = "WHERE n.name CONTAINS $name"
+        params["name"] = notification_name
+
+    notifications: dict[str, dict] = {}
+    rows = conn.execute(
+        f"MATCH (p:Symbol)-[ps:Posts]->(n:Notification) {noti_filter} "
+        "OPTIONAL MATCH (n)-[ob:Observes]->(cb:Symbol) "
+        "RETURN n.name, p.usr, p.name, p.module, p.file_path, "
+        "cb.usr, cb.name, cb.module, ob.selector",
+        params,
+    ).get_all()
+
+    for r in rows:
+        noti_name = r[0]
+        posters = notifications.setdefault(noti_name, {"posters": [], "observers": []})
+        # Poster
+        posters["posters"].append({
+            "usr": r[1], "name": r[2], "module": r[3] or "",
+            "file_path": r[4] or "", "line": 0, "notification_name": noti_name,
+        })
+        # Observer callback
+        if r[5]:
+            posters["observers"].append({
+                "usr": "", "name": "", "module": "", "file_path": "",
+                "line": 0, "selector": r[8] or "",
+                "notification_name": noti_name,
+                "callback": {"usr": r[5], "name": r[6], "module": r[7] or ""},
+            })
+
+    # Also collect notifications that only have observers (no posters).
+    obs_rows = conn.execute(
+        f"MATCH (n:Notification) {noti_filter} "
+        "WHERE NOT EXISTS { MATCH (:Symbol)-[:Posts]->(n) } "
+        "OPTIONAL MATCH (n)-[ob:Observes]->(cb:Symbol) "
+        "RETURN n.name, cb.usr, cb.name, cb.module, ob.selector",
+        params,
+    ).get_all()
+    for r in obs_rows:
+        noti_name = r[0]
+        data = notifications.setdefault(noti_name, {"posters": [], "observers": []})
+        if r[1]:
+            data["observers"].append({
+                "usr": "", "name": "", "module": "", "file_path": "",
+                "line": 0, "selector": r[4] or "",
+                "notification_name": noti_name,
+                "callback": {"usr": r[1], "name": r[2], "module": r[3] or ""},
+            })
+
+    return {
+        "publishers": [],
+        "observers": [],
+        "target_actions": [],
         "notifications": notifications,
     }

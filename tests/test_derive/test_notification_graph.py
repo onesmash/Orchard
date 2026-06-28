@@ -6,6 +6,7 @@ from orchard.graph.db import get_connection, init_schema
 from orchard.derive.notification_graph import (
     parse_addobserver_line,
     build_notification_graph,
+    persist_notification_graph,
 )
 
 
@@ -177,4 +178,54 @@ def test_build_notification_graph_empty_without_observers(tmp_path):
     assert graph["publishers"] == []
     assert graph["observers"] == []
     assert graph["target_actions"] == []
-    conn.close()
+
+
+# ── RED: persist_notification_graph ───────────────────────────────────
+
+def test_persist_creates_notification_nodes_and_edges(conn_with_notifications):
+    """Posts and Observes edges link posters to callbacks via Notification nodes."""
+    conn, tmp_path = conn_with_notifications
+    count = persist_notification_graph(conn, source_root=str(tmp_path),
+                                       build_id="b1")
+
+    assert count > 0  # at least one Notifies pair written
+
+    # Verify Notification node created
+    n_rows = conn.execute(
+        "MATCH (n:Notification {name: $name}) RETURN n.name",
+        {"name": "kSomethingHappened"},
+    ).get_all()
+    assert len(n_rows) == 1
+
+    # Verify Posts edge: trigger → Notification
+    p_rows = conn.execute(
+        "MATCH (s:Symbol {name: 'trigger'})-[r:Posts]->(n:Notification {name: 'kSomethingHappened'}) "
+        "RETURN r.confidence"
+    ).get_all()
+    assert len(p_rows) == 1
+    assert float(p_rows[0][0]) == 0.70
+
+    # Verify Observes edge: Notification → callback
+    o_rows = conn.execute(
+        "MATCH (n:Notification {name: 'kSomethingHappened'})-[r:Observes]->"
+        "(cb:Symbol {name: 'handleSomething:'}) "
+        "RETURN r.selector"
+    ).get_all()
+    assert len(o_rows) == 1
+    assert o_rows[0][0] == "handleSomething:"
+
+
+def test_persist_is_idempotent(conn_with_notifications):
+    """Second call with same data should not create duplicates."""
+    conn, tmp_path = conn_with_notifications
+    c1 = persist_notification_graph(conn, source_root=str(tmp_path),
+                                    build_id="b1")
+    c2 = persist_notification_graph(conn, source_root=str(tmp_path),
+                                    build_id="b2")
+
+    assert c1 == c2  # same number of edges written
+    # Verify no duplicate Notification nodes
+    n_rows = conn.execute(
+        "MATCH (n:Notification {name: 'kSomethingHappened'}) RETURN count(n)"
+    ).get_all()
+    assert n_rows[0][0] == 1  # still only one

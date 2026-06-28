@@ -109,6 +109,22 @@ REL_TABLES: list[str] = [
     "CREATE REL TABLE IF NOT EXISTS Implements(FROM Symbol TO Symbol, source STRING, confidence DOUBLE, reason STRING)",
     "CREATE REL TABLE IF NOT EXISTS Imports(FROM File TO File, kind STRING)",
     "CREATE REL TABLE IF NOT EXISTS ConformsTo(FROM Symbol TO Symbol, source STRING, confidence DOUBLE, reason STRING)",
+    """CREATE NODE TABLE IF NOT EXISTS Notification(
+        name STRING PRIMARY KEY
+    )""",
+    """CREATE REL TABLE IF NOT EXISTS Posts(
+        FROM Symbol TO Notification,
+        confidence DOUBLE,
+        provenance STRING,
+        build_id STRING
+    )""",
+    """CREATE REL TABLE IF NOT EXISTS Observes(
+        FROM Notification TO Symbol,
+        selector STRING,
+        confidence DOUBLE,
+        provenance STRING,
+        build_id STRING
+    )""",
     """CREATE REL TABLE IF NOT EXISTS BridgesTo(
         FROM Symbol TO Symbol,
         bridge_kind STRING,
