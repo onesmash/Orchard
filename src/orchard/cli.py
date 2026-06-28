@@ -378,9 +378,12 @@ def cmd_ingest(args: list[str]):
     try:
         from orchard.derive.notification_graph import persist_notification_graph
         t_ng = time.monotonic()
+        changed_only = None
+        if file_status:
+            changed_only = file_status.get("changed")
         ng_count = persist_notification_graph(
             conn, source_root=source_root or os.getcwd(),
-            build_id="cli")
+            build_id="cli", changed_files=changed_only)
         if ng_count:
             print(f"  notification-graph: {ng_count:,} edges "
                   f"({time.monotonic()-t_ng:.1f}s)")

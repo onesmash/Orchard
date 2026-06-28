@@ -94,15 +94,25 @@ def _find_block_in_file(
 # ── Graph builder ─────────────────────────────────────────────────────
 
 
-def _grep_files(root: str, pattern: str, window: int = 5) -> dict[str, tuple[int, str]]:
-    """Run grep -rn and return {realpath: (line, block)} with context lines."""
+def _grep_files(root: str, pattern: str, window: int = 5,
+                file_list: list[str] | None = None) -> dict[str, tuple[int, str]]:
+    """Run grep -rn and return {realpath: (line, block)} with context lines.
+
+    When *file_list* is provided, only those files are scanned
+    (incremental mode).  Otherwise the entire *root* is scanned."""
     import subprocess
+    if file_list:
+        # Filter to files that exist and are .m/.mm/.swift.
+        srcs = [f for f in file_list
+                if os.path.isfile(f) and f.endswith(('.m', '.mm', '.swift'))]
+        if not srcs:
+            return {}
+        cmd = ["grep", "-rnE", f"-A{window}", pattern] + srcs
+    else:
+        cmd = ["grep", "-rnE", f"-A{window}", "--include=*.m", "--include=*.mm",
+               "--include=*.swift", pattern, os.path.realpath(root)]
     try:
-        out = subprocess.run(
-            ["grep", "-rnE", f"-A{window}", "--include=*.m", "--include=*.mm",
-             "--include=*.swift", pattern, os.path.realpath(root)],
-            capture_output=True, text=True, timeout=30,
-        )
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return {}
 
@@ -142,9 +152,13 @@ def _grep_files(root: str, pattern: str, window: int = 5) -> dict[str, tuple[int
 
 
 def build_notification_graph(
-    conn, source_root: str = ""
+    conn, source_root: str = "", changed_files: list[str] | None = None,
 ) -> dict:
-    """Extract notification publisher and observer graph."""
+    """Extract notification publisher and observer graph.
+
+    When *changed_files* is provided (incremental ingest), only those
+    files are re-scanned; unchanged files keep their existing edges.
+    """
     from orchard.derive.objc_semantics import classify_objc_message
 
     rows = conn.execute(
@@ -162,8 +176,12 @@ def build_notification_graph(
         "caller.file_path, callee.name",
     ).get_all()
 
-    # Pre-scan: one grep pass for all patterns (avoid 4× filesystem scan).
-    raw = _grep_files(source_root, r"@selector|postNotificationName|addObserver")
+    # Pre-scan: if incremental, only grep changed files.
+    if changed_files is not None:
+        raw = _grep_files(source_root, r"@selector|postNotificationName|addObserver",
+                          file_list=changed_files)
+    else:
+        raw = _grep_files(source_root, r"@selector|postNotificationName|addObserver")
     # Split results by pattern match.
     sel_files: dict[str, tuple[int, str]] = {}
     ns_files: dict[str, tuple[int, str]] = {}
@@ -282,12 +300,13 @@ def build_notification_graph(
 
 
 def persist_notification_graph(
-    conn, source_root: str = "", build_id: str = ""
+    conn, source_root: str = "", build_id: str = "",
+    changed_files: list[str] | None = None,
 ) -> int:
     """Persist Notification nodes, Posts and Observes edges to the graph.
 
-    Builds the notification graph from Calls edges + source grep, then
-    writes Notification nodes and edges via COPY FROM for bulk speed.
+    When *changed_files* is provided (incremental ingest), only those
+    files are re-scanned for @selector/notification patterns.
     Idempotent — repeated calls with the same data produce no new edges.
 
     Returns:
@@ -295,7 +314,8 @@ def persist_notification_graph(
     """
     import csv, tempfile, os
 
-    graph = build_notification_graph(conn, source_root=source_root)
+    graph = build_notification_graph(conn, source_root=source_root,
+                                     changed_files=changed_files)
 
     # Build Posts edges: poster symbol → Notification node.
     posts_rows: list[list[str]] = []
