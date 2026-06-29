@@ -39,6 +39,11 @@ func logProgress(_ message: String) {
   progressOut.write("[orchard-indexstore-reader +\(elapsedSeconds())] \(message)\n".data(using: .utf8)!)
 }
 
+func stageSeconds(since start: Date) -> String {
+  let dt = Date().timeIntervalSince(start)
+  return String(format: "%.3fs", dt)
+}
+
 // MARK: - Argument parsing
 
 let args = CommandLine.arguments
@@ -129,13 +134,14 @@ logProgress("resolved libIndexStore at \(dylibPath)")
 
 // MARK: - Open IndexStoreDB (per-run temp database)
 
-let dbPath = NSTemporaryDirectory() + "orchard-indexstore-db-\(getpid())"
-try? FileManager.default.removeItem(atPath: dbPath)
+let dbPath = persistentDatabasePath(storePath: storePath)
 try? FileManager.default.createDirectory(atPath: dbPath, withIntermediateDirectories: true)
-defer { try? FileManager.default.removeItem(atPath: dbPath) }
 
-logProgress("opening IndexStoreDB with temp databasePath=\(dbPath)")
+logProgress("opening IndexStoreDB with persistent databasePath=\(dbPath)")
+let libraryStart = Date()
 let library = try IndexStoreLibrary(dylibPath: dylibPath)
+logProgress("IndexStoreLibrary loaded in \(stageSeconds(since: libraryStart))")
+let dbOpenStart = Date()
 let db = try IndexStoreDB(
   storePath: storePath,
   databasePath: dbPath,
@@ -143,9 +149,10 @@ let db = try IndexStoreDB(
   waitUntilDoneInitializing: true,
   listenToUnitEvents: false
 )
-logProgress("IndexStoreDB opened; starting initial scan")
+logProgress("IndexStoreDB opened in \(stageSeconds(since: dbOpenStart)); starting initial scan")
+let initialScanStart = Date()
 db.pollForUnitChangesAndWait(isInitialScan: true)
-logProgress("initial scan completed")
+logProgress("initial scan completed in \(stageSeconds(since: initialScanStart))")
 
 // MARK: - Role normalization
 // SymbolRole.description yields abbreviated pipe-joined strings (e.g.
@@ -234,6 +241,7 @@ if let root = sourceRoot {
   let fm = FileManager.default
   let baseURL = URL(fileURLWithPath: root)
   logProgress("enumerating source files under sourceRoot")
+  let enumerationStart = Date()
   if let enumerator = fm.enumerator(at: baseURL, includingPropertiesForKeys: nil) {
     while let url = enumerator.nextObject() as? URL {
       if sourceExtensions.contains(url.pathExtension) {
@@ -242,11 +250,13 @@ if let root = sourceRoot {
       }
     }
   }
+  logProgress("filesystem enumeration completed in \(stageSeconds(since: enumerationStart))")
 } else {
   FileHandle.standardError.write(
     "warning: no --source-root given; falling back to slow allSymbolNames discovery\n".data(using: .utf8)!
   )
   logProgress("discovering file paths via allSymbolNames fallback")
+  let fallbackDiscoveryStart = Date()
   var seen = Set<String>()
   for name in db.allSymbolNames() {
     for occ in db.canonicalOccurrences(ofName: name) {
@@ -255,6 +265,7 @@ if let root = sourceRoot {
     }
   }
   filePaths = Array(seen)
+  logProgress("allSymbolNames discovery completed in \(stageSeconds(since: fallbackDiscoveryStart))")
 }
 
 logProgress("discovered \(filePaths.count) source files to inspect")

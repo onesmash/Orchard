@@ -197,8 +197,12 @@ def cmd_ingest(args: list[str]):
                          "Auto-detected from project name if omitted.")
     ap.add_argument("--db", default="",
                     help="Graph database path (default: <project>/.orchard/graph.db)")
-    ap.add_argument("--incremental", action="store_true",
-                    help="Only ingest files changed since last ingest")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--incremental", dest="incremental", action="store_true",
+                      default=True,
+                      help="Incremental ingest (default): only ingest files changed since last ingest")
+    mode.add_argument("--full", dest="incremental", action="store_false",
+                      help="Disable incremental mode and rebuild from the entire IndexStore")
     ap.add_argument("--symbolgraph", default="",
                     help="Path to a SymbolGraph JSON file to ingest alongside IndexStore data")
     ns = ap.parse_args(args)
@@ -215,6 +219,7 @@ def cmd_ingest(args: list[str]):
 
     index_store = ns.index_store
     source_root = str(Path(ns.source_root).resolve()) if ns.source_root else None
+    state_path = Path(ns.project_dir).resolve() / ".orchard" / "ingest-state.json"
 
     # Parse comma-separated targets.
     targets: list[str] = [t.strip() for t in ns.target.split(",") if t.strip()] if ns.target else []
@@ -268,10 +273,11 @@ def cmd_ingest(args: list[str]):
     incremental_since: float | None = None
     old_state: dict | None = None
     if ns.incremental:
+        print(f"incremental: state path {state_path}")
         old_state = load_state(project_dir)
         if old_state:
             incremental_since = old_state.get("last_ingest_ts")
-            print(f"incremental: last ingest was {incremental_since}")
+            print(f"incremental: last_ingest_ts {incremental_since}")
             prev_targets = old_state.get("targets", [])
             if prev_targets:
                 print(f"incremental: previously ingested targets: "
@@ -283,10 +289,12 @@ def cmd_ingest(args: list[str]):
     # ingest, skip the entire scan (~100ms vs ~90s).  The unit directory mtime
     # is shared across all targets in the same IndexStore.
     if ns.incremental and incremental_since is not None:
+        print(f"incremental: index-store {index_store}")
         unit_ts = _unit_dir_mtime(index_store)
+        print(f"incremental: unit_ts {unit_ts}")
         if unit_ts <= incremental_since:
-            print(f"incremental: no new units (unit mtime {unit_ts} <= "
-                  f"{incremental_since})")
+            print(f"incremental: fast path hit (unit_ts {unit_ts} <= "
+                  f"last_ingest_ts {incremental_since})")
             conn.close()
             return
 

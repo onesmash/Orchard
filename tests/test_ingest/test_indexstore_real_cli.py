@@ -34,6 +34,13 @@ public func caller() -> Int { return callee() }
 public struct Thing { public func method() {} }
 """
 
+REAL_ZOOM_STORE = Path(
+    "/Users/hui.xu/Work/SourceCode/Xcode/Zoom-aenxrzlrezagxyceipvtgcusrnlu/Index.noindex/DataStore"
+)
+REAL_EXTENSION_SIRI_ROOT = Path(
+    "/Users/hui.xu/Work/SourceCode/Zoom_Client/ios-client/Zoom/ExtensionSiri"
+)
+
 
 def _cli_available() -> bool:
     try:
@@ -196,3 +203,25 @@ def test_installed_wheel_cli_can_ingest_minimal_index(tmp_path):
     ).stdout
     assert "Symbol:" in stats
     assert "Calls:" in stats
+
+
+@pytest.mark.skipif(
+    not REAL_ZOOM_STORE.exists() or not REAL_EXTENSION_SIRI_ROOT.exists(),
+    reason="requires local Zoom DerivedData store and ExtensionSiri sources",
+)
+def test_real_zoom_extension_siri_preserves_objc_sdk_symbols():
+    result, _ = read_index_store(
+        str(REAL_ZOOM_STORE),
+        target_id="T",
+        source_root=str(REAL_EXTENSION_SIRI_ROOT),
+    )
+
+    intent_handler_symbols = {
+        symbol.name
+        for symbol in result.symbols
+        if symbol.file_path.endswith("IntentHandler.m")
+    }
+
+    assert "stringByAppendingString:" in intent_handler_symbols
+    assert "INPersonHandleTypePhoneNumber" in intent_handler_symbols
+    assert "ZMSiriCallIdentifierPrefix" in intent_handler_symbols

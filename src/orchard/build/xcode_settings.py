@@ -112,6 +112,9 @@ def _project_paths_from(project: str) -> list[str]:
         sibling = p.with_suffix(".xcodeproj")
         if sibling.is_dir():
             paths.insert(0, str(sibling))  # prefer xcodeproj match
+        nested = p.parent / p.stem / f"{p.stem}.xcodeproj"
+        if nested.is_dir():
+            paths.insert(0, str(nested))
     elif p.suffix == ".xcodeproj":
         sibling = p.with_suffix(".xcworkspace")
         if sibling.is_dir():

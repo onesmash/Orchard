@@ -54,3 +54,32 @@ def test_match_derived_data_prefers_larger_datastore_when_access_times_tie(tmp_p
 
     candidates = match_derived_data(str(project))
     assert candidates[0][0] == str(big)
+
+
+def test_match_derived_data_accepts_nested_xcodeproj_for_workspace(tmp_path, monkeypatch):
+    dd_root = tmp_path / "DerivedData"
+    dd_root.mkdir()
+    workspace = tmp_path / "ios-client" / "Zoom.xcworkspace"
+    workspace.parent.mkdir(parents=True)
+    workspace.mkdir()
+    nested_project = workspace.parent / "Zoom" / "Zoom.xcodeproj"
+    nested_project.parent.mkdir()
+    nested_project.mkdir()
+
+    monkeypatch.setattr("orchard.build.xcode_settings.get_derived_data_path", lambda: str(dd_root))
+
+    entry = dd_root / "Zoom-aenx"
+    datastore = entry / "Index.noindex" / "DataStore"
+    datastore.mkdir(parents=True)
+    (entry / "info.plist").write_bytes(
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        b'"http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+        b'<plist version="1.0"><dict>'
+        b'<key>WorkspacePath</key><string>' + str(nested_project).encode() + b'</string>'
+        b'<key>LastAccessedDate</key><string>2026-06-29T00:00:00Z</string>'
+        b'</dict></plist>'
+    )
+
+    candidates = match_derived_data(str(workspace))
+    assert candidates[0][0] == str(entry)

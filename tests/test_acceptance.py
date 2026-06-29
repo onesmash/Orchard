@@ -351,6 +351,107 @@ def test_cmd_ingest_resolves_relative_source_root(tmp_path, monkeypatch):
     assert captured["source_root"] == str(tmp_path.resolve())
 
 
+def test_cmd_ingest_defaults_to_incremental(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    captured: dict[str, object] = {}
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
+        captured["incremental_since"] = incremental_since
+        return IndexStoreResult(), None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.state.load_state",
+        lambda _project_dir: {"last_ingest_ts": 123.0, "targets": ["T"], "index_store_paths": {"T": "/fake/store"}},
+    )
+    monkeypatch.setattr("orchard.ingest.indexstore._unit_dir_mtime", lambda _path: 124.0)
+    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "T",
+        "--db", str(tmp_path / "graph.db"),
+    ])
+
+    assert captured["incremental_since"] == 123.0
+
+
+def test_cmd_ingest_full_disables_incremental(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    captured: dict[str, object] = {}
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
+        captured["incremental_since"] = incremental_since
+        return IndexStoreResult(), None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.state.load_state",
+        lambda _project_dir: {"last_ingest_ts": 123.0, "targets": ["T"], "index_store_paths": {"T": "/fake/store"}},
+    )
+    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "T",
+        "--db", str(tmp_path / "graph.db"),
+        "--full",
+    ])
+
+    assert captured["incremental_since"] is None
+
+
+def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monkeypatch, capsys):
+    from orchard.cli import cmd_ingest
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.state.load_state",
+        lambda _project_dir: {"last_ingest_ts": 123.0, "targets": ["T"], "index_store_paths": {"T": "/fake/store"}},
+    )
+    monkeypatch.setattr("orchard.ingest.indexstore._unit_dir_mtime", lambda _path: 120.0)
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "T",
+        "--db", str(tmp_path / "graph.db"),
+        "--incremental",
+    ])
+
+    out = capsys.readouterr().out
+    state_path = tmp_path / ".orchard" / "ingest-state.json"
+    assert f"incremental: state path {state_path}" in out
+    assert "incremental: last_ingest_ts 123.0" in out
+    assert "incremental: index-store /fake/store" in out
+    assert "incremental: unit_ts 120.0" in out
+    assert "incremental: fast path hit" in out
+
+
 def test_cmd_stats_reports_parent_database_discovery(tmp_path, capsys, monkeypatch):
     parent = tmp_path / "parent"
     child = parent / "child"
