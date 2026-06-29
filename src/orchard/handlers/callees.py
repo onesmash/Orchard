@@ -30,7 +30,7 @@ class CalleeRequest(BaseToolRequest):
     depth: int = 1
     relation_types: list[str] = field(default_factory=lambda: ["Calls"])
     include_inferred: bool = False
-    include_notification_bridges: bool = False
+    include_notification_bridges: bool = True
 
 
 def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:

@@ -229,8 +229,8 @@ def test_find_callees_includes_notification_bridges(conn_with_calls):
     assert bridge["callback"]["name"] == "handleNotification:"
 
 
-def test_find_callees_notification_bridges_default_off(conn_with_calls):
-    """AC-5: notification_bridges only appear when requested."""
+def test_find_callees_notification_bridges_default_on(conn_with_calls):
+    """AC-5: notification_bridges appear by default when semantic_role=notification_observer."""
     from orchard.handlers.callees import find_callees, CalleeRequest
 
     conn_with_calls.execute(
@@ -246,7 +246,25 @@ def test_find_callees_notification_bridges_default_off(conn_with_calls):
         "build_id:'b1', reason:'source_direct'}]->(nc)"
     )
 
-    # Default: include_notification_bridges=False (no cross-reference).
+    # Set up notification data so bridges can resolve.
+    conn_with_calls.execute(
+        "CREATE (:Symbol {id: 's:cb', usr: 's:cb', precise_id: '', "
+        "name: 'handleNoti:', language: 'objc', kind: 'objc.method', "
+        "module: 'M', target_id: 'T1', file_path: '/src/a.mm', signature: '', "
+        "container_usr: '', access_level: 'internal', origin: 'derived', "
+        "is_generated: false})"
+    )
+    conn_with_calls.execute(
+        "CREATE (:Notification {name: 'kNoti_Default'})"
+    )
+    conn_with_calls.execute(
+        "MATCH (n:Notification {name:'kNoti_Default'}), (cb:Symbol {id:'s:cb'}) "
+        "CREATE (n)-[:Observes {selector:'handleNoti:', "
+        "observer_usr:'s:A', observer_name:'A', observer_file_path:'/src/a.mm', "
+        "confidence:0.7, provenance:'derive/notification', build_id:'b1'}]->(cb)"
+    )
+
+    # Default: include_notification_bridges=True (opt-out with =false).
     req = CalleeRequest(usr="s:A", build_id="b1",
                         include_inferred=True,
                         relation_types=["Calls"])
@@ -255,6 +273,8 @@ def test_find_callees_notification_bridges_default_off(conn_with_calls):
     observer = next(item for item in resp.data
                     if item["name"] == "addObserver:selector:name:object:")
     assert observer.get("semantic_role") == "notification_observer"
-    assert "notification_bridges" not in observer, (
-        "bridges should be absent when not requested"
+    assert "notification_bridges" in observer, (
+        "bridges should appear by default for notification_observer callees"
     )
+    assert len(observer["notification_bridges"]) >= 1
+    assert observer["notification_bridges"][0]["notification_name"] == "kNoti_Default"
