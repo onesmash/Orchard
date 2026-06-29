@@ -20,13 +20,13 @@ class TestChunkSymbols:
         conn.execute(
             "CREATE (:Symbol {"
             "id: 'MyApp:Foo', usr: 's:Foo', name: 'Foo', kind: 'struct',"
-            "target_id: 'MyApp', signature: 'public struct Foo'"
+            "signature: 'public struct Foo'"
             "})",
         )
         conn.execute(
             "CREATE (:Symbol {"
             "id: 'MyApp:doIt', usr: 's:doIt()', name: 'doIt', kind: 'function',"
-            "target_id: 'MyApp', signature: 'func doIt()'"
+            "signature: 'func doIt()'"
             "})",
         )
 
@@ -68,8 +68,7 @@ class TestChunkSymbols:
 
         conn.execute(
             "CREATE (:Symbol {"
-            "id: 'MyApp:Bar', usr: 's:Bar', name: 'Bar', kind: 'class',"
-            "target_id: 'MyApp'"
+            "id: 'MyApp:Bar', usr: 's:Bar', name: 'Bar', kind: 'class'"
             "})",
         )
 
@@ -77,5 +76,31 @@ class TestChunkSymbols:
         assert len(chunks) == 1
         assert chunks[0].content == "class Bar"
         assert chunks[0].chunk_kind == "type"
+
+        conn.close()
+
+    def test_chunk_symbols_reads_whole_compiled_scope_without_target_filter(
+        self, tmp_db_path: str,
+    ) -> None:
+        conn = get_connection(tmp_db_path)
+        init_schema(conn)
+
+        conn.execute(
+            "CREATE (:Symbol {"
+            "id: 's:ZoomOnly', usr: 's:ZoomOnly', name: 'ZoomOnly', kind: 'function',"
+            "signature: 'func ZoomOnly()'"
+            "})",
+        )
+        conn.execute(
+            "CREATE (:Symbol {"
+            "id: 's:ZPSOnly', usr: 's:ZPSOnly', name: 'ZPSOnly', kind: 'function',"
+            "signature: 'func ZPSOnly()'"
+            "})",
+        )
+
+        chunks = chunk_symbols(conn, "compiled-scope")
+
+        assert {c.owner_usr for c in chunks} == {"s:ZoomOnly", "s:ZPSOnly"}
+        assert all(c.chunk_id.startswith("compiled-scope:") for c in chunks)
 
         conn.close()

@@ -103,7 +103,7 @@ def conn_with_notifications(tmp_path):
         conn.execute(
             f"CREATE (:Symbol {{id: '{sym_data[0]}', usr: '{sym_data[0]}', "
             f"precise_id: '', name: '{sym_data[1]}', language: '{sym_data[2]}', "
-            f"kind: '{sym_data[3]}', module: '{sym_data[5]}', target_id: 'T', "
+            f"kind: '{sym_data[3]}', module: '{sym_data[5]}', "
             f"file_path: '{sym_data[4]}', signature: '', container_usr: '', "
             f"access_level: 'internal', origin: 'derived', is_generated: false}})"
         )
@@ -112,7 +112,7 @@ def conn_with_notifications(tmp_path):
     for path in [str(observer_file), str(poster_file)]:
         conn.execute(
             f"CREATE (:File {{path: '{path}', module: 'MyModule', "
-            f"language: 'objc', target_id: 'T', is_generated: false}})"
+            f"language: 'objc', is_generated: false}})"
         )
 
     # Calls: setupNotifications → addObserver:selector:name:object:
@@ -169,7 +169,7 @@ def test_build_notification_graph_empty_without_observers(tmp_path):
     conn.execute(
         "CREATE (:Symbol {id: 's:x', usr: 's:x', precise_id: '', "
         "name: 'someFunc', language: 'swift', kind: 'swift.func', "
-        "module: 'M', target_id: 'T', file_path: '/f.swift', "
+        "module: 'M', file_path: '/f.swift', "
         "signature: '', container_usr: '', access_level: 'internal', "
         "origin: 'derived', is_generated: false})"
     )

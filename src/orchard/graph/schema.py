@@ -34,7 +34,6 @@ NODE_TABLES: list[str] = [
         path STRING PRIMARY KEY,
         module STRING,
         language STRING,
-        target_id STRING,
         is_generated BOOLEAN
     )""",
     """CREATE NODE TABLE IF NOT EXISTS Symbol(
@@ -46,7 +45,6 @@ NODE_TABLES: list[str] = [
         language STRING,
         kind STRING,
         module STRING,
-        target_id STRING,
         file_path STRING,
         signature STRING,
         container_usr STRING,

@@ -12,11 +12,11 @@ def conn_with_calls(tmp_db_path):
         conn.execute(
             f"CREATE (:Symbol {{id: '{sym_id}', usr: 's:{name}', precise_id: '', "
             f"name: '{name}', language: 'swift', kind: 'swift.func', module: 'M', "
-            f"target_id: 'T1', file_path: '/src/{name}.swift', signature: '', container_usr: '', "
+            f"file_path: '/src/{name}.swift', signature: '', container_usr: '', "
             f"access_level: 'internal', origin: 'derived', is_generated: false}})"
         )
     conn.execute(
-        "CREATE (:File {path: '/src/B.swift', module: 'M', language: 'swift', target_id: 'T1', is_generated: false})"
+        "CREATE (:File {path: '/src/B.swift', module: 'M', language: 'swift', is_generated: false})"
     )
     # B calls A, C calls A
     conn.execute(
@@ -151,7 +151,7 @@ def test_find_callees_includes_semantic_role_for_objc(conn_with_calls):
     conn_with_calls.execute(
         "CREATE (:Symbol {id: 's:addObs', usr: 's:addObs', precise_id: '', "
         "name: 'addObserver:selector:name:object:', language: 'objc', "
-        "kind: 'objc.method', module: 'M', target_id: 'T1', "
+        "kind: 'objc.method', module: 'M', "
         "file_path: '/src/a.mm', signature: '', container_usr: '', "
         "access_level: 'internal', origin: 'derived', is_generated: false})"
     )
@@ -186,14 +186,14 @@ def test_find_callees_includes_notification_bridges(conn_with_calls):
     conn_with_calls.execute(
         "CREATE (:Symbol {id: 's:addObs', usr: 's:addObs', precise_id: '', "
         "name: 'addObserver:selector:name:object:', language: 'objc', "
-        "kind: 'objc.method', module: 'M', target_id: 'T1', "
+        "kind: 'objc.method', module: 'M', "
         "file_path: '/src/a.mm', signature: '', container_usr: '', "
         "access_level: 'internal', origin: 'derived', is_generated: false})"
     )
     conn_with_calls.execute(
         "CREATE (:Symbol {id: 's:callback', usr: 's:callback', precise_id: '', "
         "name: 'handleNotification:', language: 'objc', kind: 'objc.method', "
-        "module: 'M', target_id: 'T1', file_path: '/src/a.mm', signature: '', "
+        "module: 'M', file_path: '/src/a.mm', signature: '', "
         "container_usr: '', access_level: 'internal', origin: 'derived', "
         "is_generated: false})"
     )
@@ -236,7 +236,7 @@ def test_find_callees_notification_bridges_default_on(conn_with_calls):
     conn_with_calls.execute(
         "CREATE (:Symbol {id: 's:addObs', usr: 's:addObs', precise_id: '', "
         "name: 'addObserver:selector:name:object:', language: 'objc', "
-        "kind: 'objc.method', module: 'M', target_id: 'T1', "
+        "kind: 'objc.method', module: 'M', "
         "file_path: '/src/a.mm', signature: '', container_usr: '', "
         "access_level: 'internal', origin: 'derived', is_generated: false})"
     )
@@ -250,7 +250,7 @@ def test_find_callees_notification_bridges_default_on(conn_with_calls):
     conn_with_calls.execute(
         "CREATE (:Symbol {id: 's:cb', usr: 's:cb', precise_id: '', "
         "name: 'handleNoti:', language: 'objc', kind: 'objc.method', "
-        "module: 'M', target_id: 'T1', file_path: '/src/a.mm', signature: '', "
+        "module: 'M', file_path: '/src/a.mm', signature: '', "
         "container_usr: '', access_level: 'internal', origin: 'derived', "
         "is_generated: false})"
     )

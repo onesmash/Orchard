@@ -19,7 +19,7 @@ def test_init_schema_creates_tables(tmp_db_path):
     conn.execute(
         "CREATE (:Symbol {id: 's:MyFunc', usr: 's:MyFunc', "
         "precise_id: '', name: 'MyFunc', language: 'swift', kind: 'function', "
-        "module: 'MyModule', target_id: 'MyTarget', file_path: '/src/f.swift', "
+        "module: 'MyModule', file_path: '/src/f.swift', "
         "signature: '', container_usr: '', access_level: 'internal', "
         "origin: 'indexstore', is_generated: false})"
     )

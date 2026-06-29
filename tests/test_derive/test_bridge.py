@@ -5,7 +5,7 @@ from orchard.ingest.symbolgraph import SymbolRecord
 from orchard.derive.bridge import run_bridge_recovery
 
 
-def _seed_mixed_symbols(conn, target_id):
+def _seed_mixed_symbols(conn, scope_id):
     """Seed Swift and ObjC symbols that share names."""
     syms = [
         SymbolRecord(usr="s:swiftFunc", precise_id="", name="swiftFunc",
@@ -21,7 +21,7 @@ def _seed_mixed_symbols(conn, target_id):
                      file_path="/src/Lib.swift", signature="() -> Void",
                      access_level="public", container_usr=None),
     ]
-    upsert_symbols(conn, syms, target_id)
+    upsert_symbols(conn, syms, scope_id)
 
 
 def test_bridge_recovery_name_match(tmp_db_path):
@@ -29,9 +29,9 @@ def test_bridge_recovery_name_match(tmp_db_path):
     BridgesTo edges with confidence 0.70."""
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "MyTarget"
-    _seed_mixed_symbols(conn, target_id)
-    stats = run_bridge_recovery(conn, target_id, build_id="b3")
+    scope_id = "MyTarget"
+    _seed_mixed_symbols(conn, scope_id)
+    stats = run_bridge_recovery(conn, scope_id, build_id="b3")
     assert stats["bridges_by_name"] + stats["bridges_by_usr"] >= 1
     assert stats["total"] == 2
 
@@ -55,13 +55,13 @@ def test_bridge_recovery_idempotent(tmp_db_path):
     """Running twice should report zero new edges on the second pass."""
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "MyTarget"
-    _seed_mixed_symbols(conn, target_id)
-    stats1 = run_bridge_recovery(conn, target_id, build_id="b3")
+    scope_id = "MyTarget"
+    _seed_mixed_symbols(conn, scope_id)
+    stats1 = run_bridge_recovery(conn, scope_id, build_id="b3")
     assert stats1["bridges_by_name"] + stats1["bridges_by_usr"] >= 1
     assert stats1["total"] == 2
 
-    stats2 = run_bridge_recovery(conn, target_id, build_id="b3")
+    stats2 = run_bridge_recovery(conn, scope_id, build_id="b3")
     assert stats2["total"] == 0  # no new edges written (idempotent)
 
     # Confirm exactly 2 BridgesTo edges exist (no duplicates).
@@ -75,7 +75,7 @@ def test_bridge_recovery_idempotent(tmp_db_path):
 def test_bridge_recovery_usr_based_when_names_differ(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "MyTarget"
+    scope_id = "MyTarget"
     upsert_symbols(
         conn,
         [
@@ -105,10 +105,10 @@ def test_bridge_recovery_usr_based_when_names_differ(tmp_db_path):
                 swift_display_name="PTEntranceViewController.handleMoreSelected(_:_:)",
             ),
         ],
-        target_id,
+        scope_id,
     )
 
-    stats = run_bridge_recovery(conn, target_id, build_id="b4")
+    stats = run_bridge_recovery(conn, scope_id, build_id="b4")
     assert stats["bridges_by_usr"] == 2
     rows = conn.execute(
         "MATCH (a:Symbol)-[r:BridgesTo]->(b:Symbol) "
@@ -119,4 +119,47 @@ def test_bridge_recovery_usr_based_when_names_differ(tmp_db_path):
     assert all(float(r[3]) >= 0.95 for r in rows)
     assert any(r[4] == "-[PTEntranceViewController handleMoreSelectedWithTag:withParams:]" for r in rows)
     assert any(r[5] == "PTEntranceViewController.handleMoreSelected(_:_:)" for r in rows)
+    conn.close()
+
+
+def test_bridge_recovery_reads_whole_compiled_scope(tmp_db_path):
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    upsert_symbols(
+        conn,
+        [
+            SymbolRecord(
+                usr="s:SharedSwift",
+                precise_id="",
+                name="sharedFunc",
+                kind="function",
+                module="Zoom",
+                language="swift",
+                file_path="/src/Zoom/Shared.swift",
+                signature="() -> Void",
+                access_level="public",
+                container_usr=None,
+            ),
+            SymbolRecord(
+                usr="c:SharedObjC",
+                precise_id="",
+                name="sharedFunc",
+                kind="function",
+                module="zPSApp",
+                language="objc",
+                file_path="/src/zPSApp/Shared.m",
+                signature="() -> Void",
+                access_level="public",
+                container_usr=None,
+            ),
+        ],
+        "Zoom",
+    )
+
+    stats = run_bridge_recovery(conn, "compiled-scope", build_id="b5")
+    assert stats["total"] == 2
+    rows = conn.execute(
+        "MATCH (a:Symbol)-[:BridgesTo]->(b:Symbol) RETURN a.usr, b.usr ORDER BY a.usr, b.usr"
+    ).get_all()
+    assert rows == [["c:SharedObjC", "s:SharedSwift"], ["s:SharedSwift", "c:SharedObjC"]]
     conn.close()

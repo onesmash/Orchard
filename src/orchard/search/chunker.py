@@ -1,6 +1,6 @@
 """Symbol chunker for embedding projection.
 
-Produces ChunkRecord instances from Symbol nodes within a target.
+Produces ChunkRecord instances from Symbol nodes within the current build scope.
 """
 
 from __future__ import annotations
@@ -16,17 +16,16 @@ class ChunkRecord:
     content: str
 
 
-def chunk_symbols(conn, target_id: str) -> list[ChunkRecord]:
-    """Produce one ChunkRecord per Symbol in *target_id*.
+def chunk_symbols(conn, scope_id: str) -> list[ChunkRecord]:
+    """Produce one ChunkRecord per Symbol in the current build scope.
 
     Content is formatted as ``"{kind} {name}: {signature}"``.
     Chunk kind is ``"type"`` for struct/class/enum/protocol, ``"method"``
     for everything else.
     """
     rows = conn.execute(
-        "MATCH (s:Symbol) WHERE s.target_id = $tid "
+        "MATCH (s:Symbol) "
         "RETURN s.usr, s.name, s.kind, s.signature",
-        {"tid": target_id},
     ).get_all()
 
     chunks: list[ChunkRecord] = []
@@ -38,7 +37,7 @@ def chunk_symbols(conn, target_id: str) -> list[ChunkRecord]:
         )
         chunks.append(
             ChunkRecord(
-                chunk_id=f"{target_id}:{usr}:chunk:{chunk_kind}:{i}",
+                chunk_id=f"{scope_id}:{usr}:chunk:{chunk_kind}:{i}",
                 owner_usr=usr,
                 chunk_kind=chunk_kind,
                 content=content,

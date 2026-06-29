@@ -30,7 +30,7 @@ class SymbolGraphResult:
     relationships: list[SymbolRelRecord] = field(default_factory=list)
 
 
-def parse_symbolgraph(path: str, target_id: str) -> SymbolGraphResult:
+def parse_symbolgraph(path: str, scope_id: str) -> SymbolGraphResult:
     with open(path) as f:
         data = json.load(f)
     module_name = data.get("module", {}).get("name", "")

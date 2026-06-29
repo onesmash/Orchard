@@ -9,7 +9,7 @@ def _sym(conn, sid, usr, name, kind="struct", mod="M"):
     conn.execute(
         f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', precise_id: '', "
         f"name: '{name}', language: 'swift', kind: '{kind}', module: '{mod}', "
-        f"target_id: 'M5', file_path: '', signature: '', container_usr: '', "
+        f"file_path: '', signature: '', container_usr: '', "
         f"access_level: 'public', origin: 'symbolgraph', is_generated: false}})"
     )
 
@@ -33,7 +33,7 @@ def test_m5_full_flow_with_conforms_and_calls(tmp_db_path):
     conn.execute(f"MATCH (a:Symbol {{id: 's:Root:body'}}), (b:Symbol {{id: 's:Home'}}) CREATE (a)-[:Calls]->(b)")
 
     # Body member of AppRootView also calls NavigationLink.
-    conn.execute(f"CREATE (n:Symbol {{id: 's:NavLink', usr: 's:NavLink', name: 'NavigationLink', language: 'swift', kind: 'struct', module: 'SwiftUI', target_id: '{tid}'}})")
+    conn.execute(f"CREATE (n:Symbol {{id: 's:NavLink', usr: 's:NavLink', name: 'NavigationLink', language: 'swift', kind: 'struct', module: 'SwiftUI'}})")
     conn.execute(f"MATCH (a:Symbol {{id: 's:Root:body'}}), (b:Symbol {{id: 's:NavLink'}}) CREATE (a)-[:Calls]->(b)")
 
     stats = run_swiftui_derivation(conn, tid, build_id="m5")

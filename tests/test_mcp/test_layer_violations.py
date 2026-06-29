@@ -11,7 +11,6 @@ from orchard.handlers.layer_violations import (
 def conn_with_layered_calls(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "T"
 
     # Seed symbols in UI, Data, and Service modules.
     syms = [
@@ -27,10 +26,10 @@ def conn_with_layered_calls(tmp_db_path):
         conn.execute(
             "MERGE (s:Symbol {id: $id}) "
             "SET s.usr=$usr, s.precise_id='', s.name=$name, s.language=$lang, "
-            "s.kind='function', s.module=$mod, s.target_id=$tid, s.file_path='', "
+            "s.kind='function', s.module=$mod, s.file_path='', "
             "s.signature='', s.container_usr='', s.access_level='public', "
             "s.origin='test', s.is_generated=false",
-            {"id": sid, "usr": usr, "name": name, "mod": mod, "lang": lang, "tid": target_id},
+            {"id": sid, "usr": usr, "name": name, "mod": mod, "lang": lang},
         )
 
     # Create Calls edges:
@@ -70,7 +69,7 @@ def conn_with_layered_calls(tmp_db_path):
 
 def test_find_layer_violations_ui_to_data(conn_with_layered_calls):
     """Detects UI -> Data violations."""
-    req = LayerViolationRequest(target_id="T", build_id="b1")
+    req = LayerViolationRequest(scope_id="T", build_id="b1")
     resp = find_layer_violations(conn_with_layered_calls, req)
     assert resp.data["total"] == 3
     assert resp.data["by_pattern"] == {
@@ -88,7 +87,7 @@ def test_find_layer_violations_ui_to_data(conn_with_layered_calls):
 
 def test_find_layer_violations_no_details(conn_with_layered_calls):
     """With include_details=False, USR/name are omitted."""
-    req = LayerViolationRequest(target_id="T", build_id="b1", include_details=False)
+    req = LayerViolationRequest(scope_id="T", build_id="b1", include_details=False)
     resp = find_layer_violations(conn_with_layered_calls, req)
     assert resp.data["total"] == 3
     v = resp.data["violations"][0]
@@ -97,12 +96,43 @@ def test_find_layer_violations_no_details(conn_with_layered_calls):
 
 
 def test_find_layer_violations_none(tmp_db_path):
-    """No matching target returns empty violations."""
+    """No matching scope returns empty violations."""
     conn = get_connection(tmp_db_path)
     init_schema(conn)
     # Empty DB — no symbols, no calls.
-    req = LayerViolationRequest(target_id="NoSuchTarget", build_id="b1")
+    req = LayerViolationRequest(scope_id="NoSuchTarget", build_id="b1")
     resp = find_layer_violations(conn, req)
     assert resp.data["total"] == 0
     assert "no layer violations found" in resp.open_gaps
+    conn.close()
+
+
+def test_find_layer_violations_reads_whole_compiled_scope(tmp_db_path):
+    """Legacy scope input should not hide violations from the current build scope."""
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+
+    conn.execute(
+        "MERGE (s:Symbol {id: 's:ui'}) "
+        "SET s.usr='s:ui', s.precise_id='', s.name='render', s.language='swift', "
+        "s.kind='function', s.module='UIKit', s.file_path='', "
+        "s.signature='', s.container_usr='', s.access_level='public', "
+        "s.origin='test', s.is_generated=false"
+    )
+    conn.execute(
+        "MERGE (s:Symbol {id: 's:data'}) "
+        "SET s.usr='s:data', s.precise_id='', s.name='fetch', s.language='swift', "
+        "s.kind='function', s.module='DataLayer', s.file_path='', "
+        "s.signature='', s.container_usr='', s.access_level='public', "
+        "s.origin='test', s.is_generated=false"
+    )
+    conn.execute(
+        "MATCH (a:Symbol {id: 's:ui'}), (b:Symbol {id: 's:data'}) "
+        "MERGE (a)-[:Calls {source: 'test', build_id: 'b1'}]->(b)"
+    )
+
+    req = LayerViolationRequest(scope_id="compiled-scope", build_id="b1")
+    resp = find_layer_violations(conn, req)
+    assert resp.data["total"] == 1
+    assert resp.data["by_pattern"] == {"UI→Data": 1}
     conn.close()

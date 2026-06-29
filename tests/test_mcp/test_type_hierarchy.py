@@ -15,7 +15,7 @@ def conn_with_hierarchy(tmp_db_path):
         conn.execute(
             f"CREATE (:Symbol {{id: '{sym_id}', usr: 's:{name}', precise_id: '', "
             f"name: '{name}', language: 'swift', kind: '{kind}', module: 'M', "
-            f"target_id: 'T1', file_path: '', signature: '', container_usr: '', "
+            f"file_path: '', signature: '', container_usr: '', "
             f"access_level: 'public', origin: 'swift_symbolgraph', is_generated: false}})"
         )
     conn.execute(

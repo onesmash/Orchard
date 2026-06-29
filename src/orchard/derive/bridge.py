@@ -238,7 +238,7 @@ def _record_pair(
         pairs[pair_key] = (kind, confidence)
 
 
-def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
+def run_bridge_recovery(conn, scope_id: str, build_id: str) -> dict[str, int]:
     """Find cross-language bridge candidates and write BridgesTo edges.
 
     Strategies (in priority order):
@@ -252,8 +252,8 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
     ----------
     conn
         Open Ladybug connection.
-    target_id
-        The build target identifier.
+    scope_id
+        Legacy scope label retained for API stability.
     build_id
         The build snapshot identifier.
 
@@ -271,11 +271,10 @@ def run_bridge_recovery(conn, target_id: str, build_id: str) -> dict[str, int]:
     before_count = int(before[0][0]) if before else 0
 
     rows = conn.execute(
-        "MATCH (s:Symbol {target_id: $tid}) "
+        "MATCH (s:Symbol) "
         "WHERE s.language IN ['swift','objc'] "
         "RETURN s.usr, s.language, s.kind, s.name, s.file_path, "
         "s.signature, s.swift_display_name",
-        {"tid": target_id},
     ).get_all()
     profiles = [_build_bridge_profile(row) for row in rows]
     swift_profiles = [p for p in profiles if p.language == "swift"]

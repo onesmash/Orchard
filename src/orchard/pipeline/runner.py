@@ -21,7 +21,7 @@ from orchard.normalize.identity import (
     upsert_indexstore_rels,
     upsert_files,
 )
-from orchard.search.chunker import chunk_symbols
+from orchard.search.chunker import ChunkRecord, chunk_symbols
 from orchard.search.embedder import Embedder, EmbeddingError
 
 
@@ -97,6 +97,34 @@ def _merge_symbol_sources(
         if not merged.precise_id:
             merged.precise_id = line.usr
     return list(by_usr.values())
+
+
+def _chunk_records_from_symbols(
+    symbols: list[SymbolRecord], scope_id: str,
+) -> list[ChunkRecord]:
+    """Build embedding chunks from the in-memory symbol batch.
+
+    The pipeline normally re-reads Symbol nodes from the graph. When that
+    round-trip yields no rows despite having a non-empty current symbol batch,
+    fall back to the normalized in-memory symbols so embedding_projection
+    still represents the current compiled scope deterministically.
+    """
+    chunks: list[ChunkRecord] = []
+    for i, sym in enumerate(symbols):
+        sig = sym.signature or ""
+        content = f"{sym.kind} {sym.name}: {sig}".strip() if sig else f"{sym.kind} {sym.name}"
+        chunk_kind = (
+            "type" if sym.kind in ("struct", "class", "enum", "protocol") else "method"
+        )
+        chunks.append(
+            ChunkRecord(
+                chunk_id=f"{scope_id}:{sym.usr}:chunk:{chunk_kind}:{i}",
+                owner_usr=sym.usr,
+                chunk_kind=chunk_kind,
+                content=content,
+            )
+        )
+    return chunks
 
 
 async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResult]:
@@ -175,21 +203,20 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
                 # Match type -> Symbol by name.  Collisions are possible
                 # across modules; the first name-match wins.
                 sym_rows = conn.execute(
-                    "MATCH (s:Symbol {target_id: $tid}) "
+                    "MATCH (s:Symbol) "
                     "WHERE s.name = $name RETURN s.usr",
-                    {"tid": ctx.target, "name": c.type_name},
+                    {"name": c.type_name},
                 ).get_all()
                 proto_rows = conn.execute(
-                    "MATCH (p:Symbol {target_id: $tid}) "
+                    "MATCH (p:Symbol) "
                     "WHERE p.name = $name RETURN p.usr",
-                    {"tid": ctx.target, "name": c.protocol_name},
+                    {"name": c.protocol_name},
                 ).get_all()
                 if sym_rows and proto_rows:
                     conn.execute(
                         "MATCH (a:Symbol {id: $src}), (b:Symbol {id: $dst}) "
                         "MERGE (a)-[:ConformsTo {source: 'swiftinterface'}]->(b)",
-                        {"src": f"{ctx.target}:{sym_rows[0][0]}",
-                         "dst": f"{ctx.target}:{proto_rows[0][0]}"},
+                        {"src": sym_rows[0][0], "dst": proto_rows[0][0]},
                     )
                     conformances_written += 1
         if si_paths:
@@ -207,7 +234,9 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
     ))
 
     # embedding_projection — chunk symbols and embed them
-    embed_chunks = chunk_symbols(conn, ctx.target)
+    embed_chunks = chunk_symbols(conn, ctx.build_id)
+    if not embed_chunks and all_symbols:
+        embed_chunks = _chunk_records_from_symbols(all_symbols, ctx.build_id)
     embed_written = 0
     embed_warnings: list[str] = []
     try:
@@ -228,11 +257,10 @@ async def run_ingest_pipeline(ctx: BuildContext, db_path: str) -> list[PhaseResu
                         "emb": vec,
                     },
                 )
-                sid = f"{ctx.target}:{chunk.owner_usr}"
                 conn.execute(
                     "MATCH (s:Symbol {id: $sid}), (c:Chunk {id: $cid}) "
                     "MERGE (s)-[:ContainsChunk]->(c)",
-                    {"sid": sid, "cid": chunk.chunk_id},
+                    {"sid": chunk.owner_usr, "cid": chunk.chunk_id},
                 )
                 embed_written += 1
     except EmbeddingError as e:

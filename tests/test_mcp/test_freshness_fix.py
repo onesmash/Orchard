@@ -80,7 +80,7 @@ def test_find_callers_without_explicit_build_id_gets_one_injected(tmp_db_path):
         conn.execute(
             f"CREATE (:Symbol {{id: '{sym_id}', usr: 's:{name}', precise_id: '', "
             f"name: '{name}', language: 'swift', kind: 'swift.func', module: 'M', "
-            f"target_id: 'T1', file_path: '/src/{name}.swift', signature: '', "
+            f"file_path: '/src/{name}.swift', signature: '', "
             f"container_usr: '', access_level: 'internal', origin: 'derived', "
             f"is_generated: false}})"
         )
@@ -100,7 +100,7 @@ def test_find_callers_without_explicit_build_id_gets_one_injected(tmp_db_path):
     try:
         result_json = server_mod._do_handler(
             "callers", "find_callers", "CallerRequest",
-            {"usr": "s:A", "target_id": "T1"},  # no build_id!
+            {"usr": "s:A"},  # no build_id!
         )
         import json
         result = json.loads(result_json)
@@ -139,7 +139,7 @@ def test_symbol_context_without_explicit_build_id_gets_one_injected(tmp_db_path)
     conn.execute(
         "CREATE (:Symbol {id: 's:MyFunc', usr: 's:MyFunc', precise_id: 's:MyFunc', "
         "name: 'MyFunc()', language: 'swift', kind: 'swift.func', module: 'M', "
-        "target_id: 'T1', file_path: '/src/f.swift', signature: 'func MyFunc()', "
+        "file_path: '/src/f.swift', signature: 'func MyFunc()', "
         "container_usr: '', access_level: 'internal', origin: 'swift_symbolgraph', "
         "is_generated: false})"
     )
@@ -153,7 +153,7 @@ def test_symbol_context_without_explicit_build_id_gets_one_injected(tmp_db_path)
     try:
         result_json = server_mod._do_handler(
             "symbol_context", "get_symbol_context", "SymbolContextRequest",
-            {"usr": "s:MyFunc", "target_id": "T1"},  # no build_id!
+            {"usr": "s:MyFunc"},  # no build_id!
         )
         import json
         result = json.loads(result_json)

@@ -48,7 +48,7 @@ def populated_db(tmp_db_path):
                      file_path="/src/MyLib.swift", signature="func topLevelFunc()",
                      access_level="public"),
     ]
-    upsert_symbols(conn, symbols, target_id="MyLib")
+    upsert_symbols(conn, symbols, scope_id="MyLib")
     # topLevelFunc calls myMethod
     conn.execute(
         "MATCH (a:Symbol {id:'s:topLevel'}), (b:Symbol {id:'s:myMethod'}) "
@@ -140,7 +140,7 @@ def test_cli_find_callers_defaults_to_latest_build(tmp_db_path, capsys):
                      kind="swift.func", module="MyLib", language="swift",
                      file_path="/src/MyLib.swift", signature="func caller()",
                      access_level="public"),
-    ], target_id="MyLib")
+    ], scope_id="MyLib")
     conn.execute(
         "MATCH (a:Symbol {id:'s:caller'}), (b:Symbol {id:'s:callee'}) "
         "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'test', build_id:$bid}]->(b)",
@@ -154,7 +154,7 @@ def test_cli_find_callers_defaults_to_latest_build(tmp_db_path, capsys):
     assert payload["build_id"] == ctx.build_id
 
 
-def test_cli_find_callers_prefers_latest_build_for_target(tmp_db_path, capsys):
+def test_cli_find_callers_uses_latest_build_globally(tmp_db_path, capsys):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
 
@@ -189,9 +189,9 @@ def test_cli_find_callers_prefers_latest_build_for_target(tmp_db_path, capsys):
                      kind="swift.func", module="T1", language="swift",
                      file_path="/src/T1.swift", signature="func caller()",
                      access_level="public"),
-    ], target_id="T1")
+    ], scope_id="T1")
     conn.execute(
-        "MATCH (a:Symbol {id:'T1:s:caller'}), (b:Symbol {id:'T1:s:callee'}) "
+        "MATCH (a:Symbol {id:'s:caller'}), (b:Symbol {id:'s:callee'}) "
         "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'test', build_id:$bid}]->(b)",
         {"bid": ctx1.build_id},
     )
@@ -199,7 +199,7 @@ def test_cli_find_callers_prefers_latest_build_for_target(tmp_db_path, capsys):
 
     cmd_find_callers(["--usr", "s:callee", "--target", "T1", "--db", tmp_db_path])
     payload = json.loads(capsys.readouterr().out)
-    assert payload["build_id"] == ctx1.build_id
+    assert payload["build_id"] == ctx2.build_id
 
 
 def test_find_callees_with_relation_types(tmp_db_path, capsys):
@@ -216,7 +216,7 @@ def test_find_callees_with_relation_types(tmp_db_path, capsys):
         SymbolRecord(usr="s:c", precise_id="s:c", name="c()", kind="swift.func",
                      module="MyLib", language="swift", file_path="/src/c.swift",
                      signature="", access_level="public"),
-    ], target_id="MyLib")
+    ], scope_id="MyLib")
     # a -[:Calls]-> b, b -[:Inherits]-> c
     conn.execute("MATCH (a:Symbol {id:'s:a'}), (b:Symbol {id:'s:b'}) "
                  "CREATE (a)-[:Calls {source:'test',confidence:1.0}]->(b)")
@@ -251,7 +251,7 @@ def test_search_by_file_path(tmp_db_path, capsys):
         SymbolRecord(usr="s:b", precise_id="s:b", name="b()", kind="swift.func",
                      module="MyLib", language="swift", file_path="/src/Other.swift",
                      signature="", access_level="public"),
-    ], target_id="MyLib")
+    ], scope_id="MyLib")
     conn.close()
 
     # --file matches file_path substring
@@ -282,7 +282,7 @@ def test_find_references_returns_incoming_and_outgoing(tmp_db_path, capsys):
         SymbolRecord(usr="s:caller", precise_id="s:caller", name="caller()", kind="swift.func",
                      module="MyLib", language="swift", file_path="/src/Ref.swift",
                      signature="", access_level="public"),
-    ], target_id="MyLib")
+    ], scope_id="MyLib")
     # self calls called, caller calls self
     conn.execute("MATCH (a:Symbol {id:'s:self'}), (b:Symbol {id:'s:called'}) "
                  "CREATE (a)-[:Calls {source:'test',confidence:1.0}]->(b)")
@@ -332,8 +332,8 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, incremental_since=None, targets=None):
-        captured["target_id"] = target_id
+    def fake_read_index_store(index_store_path, scope_id, incremental_since=None, targets=None):
+        captured["scope_id"] = scope_id
         captured["targets"] = targets
         return IndexStoreResult(), None
 
@@ -352,13 +352,14 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
 
     cmd_ingest([
         "--project-dir", str(tmp_path),
         "--target", "Zoom",
     ])
 
-    assert captured["target_id"] == "Zoom"
+    assert captured["scope_id"] == "Zoom"
     assert captured["targets"] == ["Zoom", "zPSApp"]
 
 
@@ -372,20 +373,21 @@ def test_cmd_ingest_defaults_to_incremental(tmp_path, monkeypatch):
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, targets=None):
+    def fake_read_index_store(index_store_path, scope_id, source_root=None, incremental_since=None, targets=None):
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
     monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
     monkeypatch.setattr(
         "orchard.ingest.state.load_state",
-        lambda _project_dir: {"last_ingest_ts": 123.0, "targets": ["T"], "index_store_paths": {"T": "/fake/store"}},
+        lambda _project_dir: {"last_ingest_ts": 123.0, "compiled_targets": ["T"], "index_store_path": "/fake/store"},
     )
     monkeypatch.setattr("orchard.ingest.indexstore._unit_dir_mtime", lambda _path: 124.0)
     monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
 
     cmd_ingest([
         "--index-store", "/fake/store",
@@ -407,19 +409,20 @@ def test_cmd_ingest_full_disables_incremental(tmp_path, monkeypatch):
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, targets=None):
+    def fake_read_index_store(index_store_path, scope_id, source_root=None, incremental_since=None, targets=None):
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
     monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
     monkeypatch.setattr(
         "orchard.ingest.state.load_state",
-        lambda _project_dir: {"last_ingest_ts": 123.0, "targets": ["T"], "index_store_paths": {"T": "/fake/store"}},
+        lambda _project_dir: {"last_ingest_ts": 123.0, "compiled_targets": ["T"], "index_store_path": "/fake/store"},
     )
     monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
 
     cmd_ingest([
         "--index-store", "/fake/store",
@@ -442,9 +445,10 @@ def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monke
     monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
     monkeypatch.setattr(
         "orchard.ingest.state.load_state",
-        lambda _project_dir: {"last_ingest_ts": 123.0, "targets": ["T"], "index_store_paths": {"T": "/fake/store"}},
+        lambda _project_dir: {"last_ingest_ts": 123.0, "compiled_targets": ["T"], "index_store_path": "/fake/store"},
     )
     monkeypatch.setattr("orchard.ingest.indexstore._unit_dir_mtime", lambda _path: 120.0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
 
     cmd_ingest([
         "--index-store", "/fake/store",
@@ -463,7 +467,7 @@ def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monke
     assert "incremental: fast path hit" in out
 
 
-def test_cmd_ingest_merges_targets_into_existing_state(tmp_path, monkeypatch):
+def test_cmd_ingest_replaces_state_with_latest_compiled_scope(tmp_path, monkeypatch):
     from orchard.cli import cmd_ingest
     from orchard.ingest.indexstore import IndexStoreResult
 
@@ -476,8 +480,8 @@ def test_cmd_ingest_merges_targets_into_existing_state(tmp_path, monkeypatch):
         "orchard.ingest.state.load_state",
         lambda _project_dir: {
             "last_ingest_ts": 123.0,
-            "targets": ["Zoom"],
-            "index_store_paths": {"Zoom": "/old/store"},
+            "compiled_targets": ["Zoom"],
+            "index_store_path": "/old/store",
         },
     )
     monkeypatch.setattr(
@@ -487,6 +491,7 @@ def test_cmd_ingest_merges_targets_into_existing_state(tmp_path, monkeypatch):
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
 
     cmd_ingest([
         "--index-store", "/new/store",
@@ -498,11 +503,187 @@ def test_cmd_ingest_merges_targets_into_existing_state(tmp_path, monkeypatch):
 
     state_path = tmp_path / ".orchard" / "ingest-state.json"
     data = json.loads(state_path.read_text(encoding="utf-8"))
-    assert data["targets"] == ["Zoom", "zPSApp"]
-    assert data["index_store_paths"] == {
-        "Zoom": "/old/store",
-        "zPSApp": "/new/store",
-    }
+    assert data["compiled_targets"] == ["zPSApp"]
+    assert data["index_store_path"] == "/new/store"
+
+
+def test_cmd_ingest_persists_compiled_scope_state(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    project = tmp_path / "Zoom.xcodeproj"
+    project.mkdir()
+    derived_data = tmp_path / "Zoom-abc"
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: (IndexStoreResult(), None),
+    )
+    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(project))
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.match_derived_data",
+        lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
+    )
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+
+    cmd_ingest([
+        "--project-dir", str(tmp_path),
+        "--target", "Zoom",
+    ])
+
+    state_path = tmp_path / ".orchard" / "ingest-state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert data["compiled_targets"] == ["Zoom", "zPSApp"]
+    assert data["index_store_path"] == str(derived_data / "Index.noindex" / "DataStore")
+    assert "targets" not in data
+    assert "index_store_paths" not in data
+
+
+def test_cmd_ingest_logs_and_upserts_compiled_scope_once(tmp_path, monkeypatch, capsys):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult, SymbolLineRecord
+
+    project = tmp_path / "Zoom.xcodeproj"
+    project.mkdir()
+    derived_data = tmp_path / "Zoom-abc"
+    calls: dict[str, int] = {"symbols": 0, "calls": 0, "struct": 0}
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: (
+            IndexStoreResult(
+                symbols=[
+                    SymbolLineRecord(
+                        usr="s:Shared",
+                        name="Shared",
+                        symbol_kind="function",
+                        language="swift",
+                        module="Zoom",
+                        file_path="/src/Shared.swift",
+                    )
+                ]
+            ),
+            None,
+        ),
+    )
+    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(project))
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.match_derived_data",
+        lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
+    )
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr(
+        "orchard.normalize.identity.upsert_symbols",
+        lambda *args, **kwargs: calls.__setitem__("symbols", calls["symbols"] + 1) or 0,
+    )
+    monkeypatch.setattr(
+        "orchard.normalize.identity.upsert_calls",
+        lambda *args, **kwargs: calls.__setitem__("calls", calls["calls"] + 1) or 0,
+    )
+    monkeypatch.setattr(
+        "orchard.normalize.identity.upsert_indexstore_rels",
+        lambda *args, **kwargs: calls.__setitem__("struct", calls["struct"] + 1) or 0,
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_files", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+
+    cmd_ingest([
+        "--project-dir", str(tmp_path),
+        "--target", "Zoom",
+    ])
+
+    out = capsys.readouterr().out
+    assert "scope: Zoom,zPSApp" in out
+    assert "[1/2]" not in out
+    assert "[2/2]" not in out
+    assert calls == {"symbols": 1, "calls": 1, "struct": 1}
+
+
+def test_cmd_ingest_persists_build_snapshot_for_freshness(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    captured: dict[str, object] = {}
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: (IndexStoreResult(), None),
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(
+        "orchard.normalize.identity.upsert_build_snapshot",
+        lambda _conn, ctx: captured.update(
+            {
+                "build_id": ctx.build_id,
+                "target": ctx.target,
+                "workspace_root": ctx.workspace_root,
+                "index_store_path": ctx.index_store_path,
+            },
+        ),
+    )
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "Zoom",
+        "--db", str(tmp_path / "graph.db"),
+        "--full",
+    ])
+
+    assert captured["build_id"]
+    assert captured["target"] == "Zoom"
+    assert captured["workspace_root"] == str(tmp_path.resolve())
+    assert captured["index_store_path"] == "/fake/store"
+
+
+def test_cmd_ingest_writes_build_snapshot_to_db(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest, _default_build_id
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    db_path = tmp_path / "graph.db"
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: (IndexStoreResult(), None),
+    )
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "Zoom",
+        "--db", str(db_path),
+        "--full",
+    ])
+
+    conn = get_connection(str(db_path))
+    build_id = _default_build_id(conn, "Zoom")
+    rows = conn.execute(
+        "MATCH (b:BuildSnapshot) RETURN b.id, b.index_store_path, b.workspace_root"
+    ).get_all()
+    conn.close()
+
+    assert build_id is not None
+    assert rows == [[build_id, "/fake/store", str(tmp_path.resolve())]]
 
 
 def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypatch):
@@ -515,8 +696,8 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, targets=None):
-        captured["target_id"] = target_id
+    def fake_read_index_store(index_store_path, scope_id, source_root=None, incremental_since=None, targets=None):
+        captured["scope_id"] = scope_id
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
@@ -525,8 +706,8 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
         "orchard.ingest.state.load_state",
         lambda _project_dir: {
             "last_ingest_ts": 123.0,
-            "targets": ["Zoom"],
-            "index_store_paths": {"Zoom": "/fake/store"},
+            "compiled_targets": ["Zoom"],
+            "index_store_path": "/fake/store",
         },
     )
     monkeypatch.setattr("orchard.ingest.indexstore._unit_dir_mtime", lambda _path: 120.0)
@@ -534,6 +715,7 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
 
     cmd_ingest([
         "--index-store", "/fake/store",
@@ -543,7 +725,7 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
         "--incremental",
     ])
 
-    assert captured["target_id"] == "zPSApp"
+    assert captured["scope_id"] == "zPSApp"
     assert captured["incremental_since"] == 123.0
 
 
@@ -589,7 +771,7 @@ def test_cli_json_output_not_polluted_by_parent_db_notice(tmp_path, capsys, monk
         SymbolRecord(usr="s:caller", precise_id="s:caller", name="caller()",
                      kind="swift.func", module="MyLib", language="swift",
                      file_path="/src/MyLib.swift", signature="", access_level="public"),
-    ], target_id="MyLib")
+    ], scope_id="MyLib")
     conn.execute(
         "MATCH (a:Symbol {id:'s:caller'}), (b:Symbol {id:'s:callee'}) "
         "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'test', build_id:$bid}]->(b)",
@@ -638,6 +820,7 @@ def test_cmd_ingest_defaults_db_to_real_project_directory(tmp_path, monkeypatch)
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
 
     cmd_ingest(["--project-dir", str(cwd_parent), "--target", "Zoom"])
 

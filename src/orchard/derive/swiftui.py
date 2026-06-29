@@ -13,7 +13,7 @@ from __future__ import annotations
 from orchard.normalize.identity import make_symbol_id
 
 
-def run_swiftui_derivation(conn, target_id: str, build_id: str) -> dict[str, int]:
+def run_swiftui_derivation(conn, scope_id: str, build_id: str) -> dict[str, int]:
     """Derive ViewTree and NavigationFlow edges from real graph data.
 
     Algorithm:
@@ -37,10 +37,9 @@ def run_swiftui_derivation(conn, target_id: str, build_id: str) -> dict[str, int
 
     # 1. View-conforming Symbols.
     view_rows = conn.execute(
-        "MATCH (s:Symbol {target_id: $tid})-[r:ConformsTo]->(p:Symbol) "
+        "MATCH (s:Symbol)-[r:ConformsTo]->(p:Symbol) "
         "WHERE p.name = 'View' AND p.kind = 'protocol' "
         "RETURN s.usr, s.name",
-        {"tid": target_id},
     ).get_all()
     view_usrs = {r[0] for r in view_rows}
     if not view_usrs:
@@ -48,10 +47,9 @@ def run_swiftui_derivation(conn, target_id: str, build_id: str) -> dict[str, int
 
     # 2. Body-like members and their callees.
     body_rows = conn.execute(
-        "MATCH (s:Symbol {target_id: $tid}) "
+        "MATCH (s:Symbol) "
         "WHERE s.kind IN ['instanceProperty', 'instanceMethod'] "
         "RETURN s.usr, s.name",
-        {"tid": target_id},
     ).get_all()
 
     body_usrs: set[str] = set()
@@ -79,7 +77,7 @@ def run_swiftui_derivation(conn, target_id: str, build_id: str) -> dict[str, int
                 # The body USR typically contains the view USR as prefix.
                 owner_usr = _find_owner(busr, view_usrs)
                 if owner_usr:
-                    _write(conn, target_id, owner_usr, cusr, "ViewTree", build_id)
+                    _write(conn, scope_id, owner_usr, cusr, "ViewTree", build_id)
                     vt_written += 1
 
         # 4. NavigationLink detection.
@@ -89,7 +87,7 @@ def run_swiftui_derivation(conn, target_id: str, build_id: str) -> dict[str, int
                 owner_usr = _find_owner(busr, view_usrs)
                 if owner_usr:
                     for other in view_usrs - {owner_usr}:
-                        _write(conn, target_id, owner_usr, other,
+                        _write(conn, scope_id, owner_usr, other,
                                "NavigationFlow", build_id)
                         nf_written += 1
                     break  # one NavigationLink per body is enough
@@ -109,7 +107,7 @@ def _find_owner(body_usr: str, view_usrs: set[str]) -> str | None:
     return next(iter(view_usrs), None)
 
 
-def _write(conn, target_id, src_usr, tgt_usr, rel_type, build_id):
+def _write(conn, scope_id, src_usr, tgt_usr, rel_type, build_id):
     src_id = make_symbol_id(src_usr)
     tgt_id = make_symbol_id(tgt_usr)
     conn.execute(

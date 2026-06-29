@@ -139,6 +139,44 @@ async def test_pipeline_embedding_projection_handles_embedder_down(ctx, tmp_db_p
 
 
 @pytest.mark.asyncio
+async def test_pipeline_embedding_projection_falls_back_to_current_symbol_batch(
+    ctx, tmp_db_path,
+):
+    from orchard.ingest.indexstore import IndexStoreResult
+    from orchard.ingest.symbolgraph import SymbolGraphResult, SymbolRecord
+
+    sg = SymbolGraphResult(
+        symbols=[
+            SymbolRecord(
+                usr="s:Fallback",
+                precise_id="",
+                name="Fallback",
+                kind="struct",
+                module="M",
+                language="swift",
+                file_path=None,
+                signature=None,
+                access_level="public",
+                container_usr=None,
+            )
+        ],
+        relationships=[],
+    )
+
+    with (
+        patch("orchard.pipeline.runner.read_index_store", return_value=(IndexStoreResult(), None)),
+        patch("orchard.pipeline.runner.parse_symbolgraph", return_value=sg),
+        patch("orchard.pipeline.runner.discover_symbolgraph_paths", return_value=["/x.json"]),
+        patch("orchard.pipeline.runner.chunk_symbols", return_value=[]),
+    ):
+        results = await run_ingest_pipeline(ctx, db_path=tmp_db_path)
+
+    embed_phase = next(r for r in results if r.phase == "embedding_projection")
+    assert embed_phase.stats["chunks"] == 1
+    assert embed_phase.stats["embedded"] == 1
+
+
+@pytest.mark.asyncio
 async def test_pipeline_merge_prefers_indexstore_path_and_name(ctx, tmp_db_path):
     from orchard.ingest.indexstore import IndexStoreResult, SymbolLineRecord
     from orchard.ingest.symbolgraph import SymbolRecord, SymbolGraphResult

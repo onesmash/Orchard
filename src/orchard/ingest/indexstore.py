@@ -183,7 +183,7 @@ def _unit_dir_mtime(index_store_path: str) -> float:
 
 def read_index_store(
     index_store_path: str,
-    target_id: str,
+    scope_id: str,
     source_root: str | None = None,
     source_roots: list[str] | None = None,
     incremental_since: float | None = None,

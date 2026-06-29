@@ -33,7 +33,7 @@ def conn_with_notifications(tmp_db_path):
         conn.execute(
             f"CREATE (:Symbol {{id: '{sym_id}', usr: 's:{name}', precise_id: '', "
             f"name: '{name}', language: 'objc', kind: '{kind}', module: 'M', "
-            f"target_id: 'T1', file_path: '{file_path}', signature: '', container_usr: '', "
+            f"file_path: '{file_path}', signature: '', container_usr: '', "
             f"access_level: 'internal', origin: 'derived', is_generated: false}})"
         )
 
@@ -156,7 +156,7 @@ def test_notification_graph_observer_only(conn_with_notifications):
     conn_with_notifications.execute(
         "CREATE (:Symbol {id: 's:E', usr: 's:silentObserver()', precise_id: '', "
         "name: 'silentObserver()', language: 'objc', kind: 'objc.method', "
-        "module: 'M', target_id: 'T1', file_path: '/src/Silent.m', signature: '', "
+        "module: 'M', file_path: '/src/Silent.m', signature: '', "
         "container_usr: '', access_level: 'internal', origin: 'derived', "
         "is_generated: false})"
     )

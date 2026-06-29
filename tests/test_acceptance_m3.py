@@ -24,7 +24,7 @@ def test_m3_bridge_recovery_and_impact(tmp_db_path):
     """
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "M3Target"
+    scope_id = "M3Target"
 
     # 1. Seed Swift + ObjC symbols with same name (loadData)
     upsert_symbols(conn, [
@@ -37,10 +37,10 @@ def test_m3_bridge_recovery_and_impact(tmp_db_path):
         SymbolRecord(usr="s:otherFunc", precise_id="", name="otherFunc", kind="function",
                      module="M", language="swift", file_path="/src/Data.swift",
                      signature="()", access_level="public", container_usr=None),
-    ], target_id)
+    ], scope_id)
 
     # 2. Run bridge recovery
-    stats = run_bridge_recovery(conn, target_id, build_id="m3")
+    stats = run_bridge_recovery(conn, scope_id, build_id="m3")
     assert stats["total"] >= 2  # bidirectional BridgesTo
 
     # 3. Query bridges

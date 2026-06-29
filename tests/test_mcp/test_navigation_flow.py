@@ -14,7 +14,7 @@ def conn_with_nav_flows(tmp_db_path):
         conn.execute(
             "MERGE (s:Symbol {id: $id}) "
             "SET s.usr=$usr, s.precise_id='', s.name=$name, s.language='swift', "
-            "s.kind='struct', s.module='MyApp', s.target_id='T', s.file_path='', "
+            "s.kind='struct', s.module='MyApp', s.file_path='', "
             "s.signature='', s.container_usr='', s.access_level='public', "
             "s.origin='test', s.is_generated=false",
             {"id": f"T:{usr}", "usr": usr, "name": name},

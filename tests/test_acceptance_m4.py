@@ -15,7 +15,7 @@ def test_m4_semantic_search_fts_fallback(tmp_db_path):
     """semantic_search returns FTS results when Chunks exist (no embedding needed)."""
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "M4Target"
+    scope_id = "M4Target"
 
     # Seed Symbols + Chunks
     upsert_symbols(
@@ -34,7 +34,7 @@ def test_m4_semantic_search_fts_fallback(tmp_db_path):
                 access_level="public", container_usr=None,
             ),
         ],
-        target_id,
+        scope_id,
     )
 
     conn.execute(
@@ -60,7 +60,7 @@ def test_m4_architecture_and_module_graph(tmp_db_path):
     """architecture_derivation + get_module_graph end-to-end."""
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "M4Target"
+    scope_id = "M4Target"
 
     upsert_symbols(
         conn,
@@ -78,7 +78,7 @@ def test_m4_architecture_and_module_graph(tmp_db_path):
                 container_usr=None,
             ),
         ],
-        target_id,
+        scope_id,
     )
     # uiFunc calls dataFunc (cross-module)
     conn.execute(
@@ -88,7 +88,7 @@ def test_m4_architecture_and_module_graph(tmp_db_path):
          "b": make_symbol_id("s:dataFunc")},
     )
 
-    stats = run_architecture_derivation(conn, target_id, build_id="m4")
+    stats = run_architecture_derivation(conn, scope_id, build_id="m4")
     assert stats["module_deps"] >= 1
 
     # get_module_graph
@@ -105,7 +105,7 @@ def test_m4_layer_violations(tmp_db_path):
     """find_layer_violations detects UI→Data crossing."""
     conn = get_connection(tmp_db_path)
     init_schema(conn)
-    target_id = "M4Target"
+    scope_id = "M4Target"
 
     upsert_symbols(
         conn,
@@ -123,7 +123,7 @@ def test_m4_layer_violations(tmp_db_path):
                 container_usr=None,
             ),
         ],
-        target_id,
+        scope_id,
     )
     conn.execute(
         "MATCH (a:Symbol {id: $a}), (b:Symbol {id: $b}) "

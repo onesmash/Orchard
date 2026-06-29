@@ -6,7 +6,7 @@ from orchard.ingest.symbolgraph import parse_symbolgraph
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "sample_symbols.json"
 
 def test_parse_symbolgraph_symbols(tmp_path):
-    result = parse_symbolgraph(str(FIXTURE), target_id="MyTarget")
+    result = parse_symbolgraph(str(FIXTURE), scope_id="MyTarget")
     assert len(result.symbols) == 2
     func = next(s for s in result.symbols if s.name == "MyFunc()")
     assert func.usr == "s:8MyModule6MyFuncyyF"
@@ -15,7 +15,7 @@ def test_parse_symbolgraph_symbols(tmp_path):
     assert func.kind == "swift.func"
 
 def test_parse_symbolgraph_relationships(tmp_path):
-    result = parse_symbolgraph(str(FIXTURE), target_id="MyTarget")
+    result = parse_symbolgraph(str(FIXTURE), scope_id="MyTarget")
     assert len(result.relationships) == 1
     rel = result.relationships[0]
     assert rel.source_usr == "s:8MyModule6MyFuncyyF"
@@ -23,6 +23,6 @@ def test_parse_symbolgraph_relationships(tmp_path):
     assert rel.rel_kind == "memberOf"
 
 def test_parse_symbolgraph_access_level():
-    result = parse_symbolgraph(str(FIXTURE), target_id="MyTarget")
+    result = parse_symbolgraph(str(FIXTURE), scope_id="MyTarget")
     cls = next(s for s in result.symbols if s.name == "MyClass")
     assert cls.access_level == "public"

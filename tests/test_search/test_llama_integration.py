@@ -102,7 +102,7 @@ def test_real_llama_full_pipeline_embed_to_search():
                 access_level="public", container_usr=None,
             ),
         ],
-        target_id="LlamaTest",
+        scope_id="LlamaTest",
     )
 
     chunks = chunk_symbols(conn, "LlamaTest")

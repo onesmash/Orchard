@@ -47,19 +47,19 @@ class LayerViolationRequest(BaseToolRequest):
     """Request for detecting layer boundary violations.
 
     Attributes:
-        target_id: The build target identifier.
+        scope_id: Legacy scope label retained for API stability.
         include_details: When True (default), each violation includes the
             specific caller/callee symbol USRs and names.
     """
 
-    target_id: str | None = None
+    scope_id: str | None = None
     include_details: bool = True
 
 
 def find_layer_violations(conn, req: LayerViolationRequest) -> BaseToolResponse:
     """Find Calls edges that violate heuristic layer boundaries.
 
-    Scans all Calls edges for the given target, classifies each caller and
+    Scans all Calls edges for the current build scope, classifies each caller and
     callee module into a layer (ui, data, service, or unknown), then reports
     matches against the predefined violation patterns (UI→Data and Data→Service).
 
@@ -75,24 +75,13 @@ def find_layer_violations(conn, req: LayerViolationRequest) -> BaseToolResponse:
     BaseToolResponse
         ``data = {"violations": [...], "total": N, "by_pattern": {...}}``
     """
-    target_id = req.target_id or ""
-
     # Fetch all Calls edges with module info.
-    if target_id:
-        rows = conn.execute(
-            "MATCH (caller:Symbol {target_id: $tid})-[r:Calls]->(callee:Symbol {target_id: $tid}) "
-            "WHERE caller.module IS NOT NULL AND callee.module IS NOT NULL "
-            "RETURN caller.usr, caller.name, caller.module, "
-            "callee.usr, callee.name, callee.module",
-            {"tid": target_id},
-        ).get_all()
-    else:
-        rows = conn.execute(
-            "MATCH (caller:Symbol)-[r:Calls]->(callee:Symbol) "
-            "WHERE caller.module IS NOT NULL AND callee.module IS NOT NULL "
-            "RETURN caller.usr, caller.name, caller.module, "
-            "callee.usr, callee.name, callee.module"
-        ).get_all()
+    rows = conn.execute(
+        "MATCH (caller:Symbol)-[r:Calls]->(callee:Symbol) "
+        "WHERE caller.module IS NOT NULL AND callee.module IS NOT NULL "
+        "RETURN caller.usr, caller.name, caller.module, "
+        "callee.usr, callee.name, callee.module"
+    ).get_all()
 
     # Classify and detect violations.
     violations: list[dict] = []

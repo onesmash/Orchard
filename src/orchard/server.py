@@ -54,7 +54,7 @@ def _get_conn():
     return _conn
 
 
-def _default_build_id_safe(conn, target_id: str = "") -> str | None:
+def _default_build_id_safe(conn, scope_id: str = "") -> str | None:
     """Return the latest build snapshot ID, or None if none exists.
 
     Wraps ``cli._default_build_id`` with error handling so that freshness
@@ -62,7 +62,7 @@ def _default_build_id_safe(conn, target_id: str = "") -> str | None:
     """
     try:
         from orchard.cli import _default_build_id
-        return _default_build_id(conn, target_id)
+        return _default_build_id(conn, scope_id)
     except Exception:
         return None
 
@@ -166,7 +166,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_rename",
-        description="USR-precise rename: preview or apply a symbol rename across all occurrence sites (definition + references). Dry-run by default — returns a diff plan without modifying files. USR alone provides unambiguous symbol identity — no target_id needed.",
+        description="USR-precise rename: preview or apply a symbol rename across all occurrence sites (definition + references). Dry-run by default — returns a diff plan without modifying files. USR alone provides unambiguous symbol identity.",
         inputSchema={
             "type": "object",
             "properties": {

@@ -57,20 +57,12 @@ def _print_json(obj):
     print(json.dumps(obj, indent=2, ensure_ascii=False, default=str))
 
 
-def _latest_build_snapshot(conn, target_id: str = "") -> dict[str, str] | None:
-    if target_id:
-        rows = conn.execute(
-            "MATCH (b:BuildSnapshot)-[:BuiltTarget]->(t:Target {id: $target_id}) "
-            "RETURN b.id, b.created_at, b.commit_sha, b.index_store_path, b.sdk, b.configuration "
-            "ORDER BY b.created_at DESC LIMIT 1",
-            {"target_id": target_id},
-        ).get_all()
-    else:
-        rows = conn.execute(
-            "MATCH (b:BuildSnapshot) "
-            "RETURN b.id, b.created_at, b.commit_sha, b.index_store_path, b.sdk, b.configuration "
-            "ORDER BY b.created_at DESC LIMIT 1"
-        ).get_all()
+def _latest_build_snapshot(conn, scope_id: str = "") -> dict[str, str] | None:
+    rows = conn.execute(
+        "MATCH (b:BuildSnapshot) "
+        "RETURN b.id, b.created_at, b.commit_sha, b.index_store_path, b.sdk, b.configuration "
+        "ORDER BY b.created_at DESC LIMIT 1"
+    ).get_all()
     if not rows:
         return None
     row = rows[0]
@@ -84,21 +76,9 @@ def _latest_build_snapshot(conn, target_id: str = "") -> dict[str, str] | None:
     }
 
 
-def _default_build_id(conn, target_id: str = "") -> str | None:
-    snapshot = _latest_build_snapshot(conn, target_id)
+def _default_build_id(conn, scope_id: str = "") -> str | None:
+    snapshot = _latest_build_snapshot(conn, scope_id)
     return snapshot["id"] if snapshot else None
-
-
-def _merge_ingest_state(
-    old_state: dict | None,
-    targets: list[str],
-    index_store_paths: dict[str, str],
-) -> tuple[list[str], dict[str, str]]:
-    previous_targets = old_state.get("targets", []) if old_state else []
-    merged_targets = list(dict.fromkeys([*previous_targets, *targets]))
-    merged_index_store_paths = dict(old_state.get("index_store_paths", {}) if old_state else {})
-    merged_index_store_paths.update(index_store_paths)
-    return merged_targets, merged_index_store_paths
 
 
 def _parse_caller_callee_args(args: list[str]) -> tuple[str, str, str, bool, bool, int, list[str]]:
@@ -217,8 +197,10 @@ def cmd_ingest(args: list[str]):
                     help="Path to a SymbolGraph JSON file to ingest alongside IndexStore data")
     ns = ap.parse_args(args)
     from orchard.ingest.indexstore import read_index_store, _unit_dir_mtime
+    from orchard.build.context import BuildContext, make_build_id
     from orchard.normalize.identity import (
         upsert_symbols, upsert_calls, upsert_indexstore_rels,
+        upsert_build_snapshot,
         delete_symbols_for_files,
     )
     from orchard.ingest.symbolgraph import SymbolRecord
@@ -294,7 +276,24 @@ def cmd_ingest(args: list[str]):
 
     conn = _conn(ns.db)
     project_dir = str(Path(ns.project_dir).resolve())
-    index_store_paths = {t: index_store for t in targets}
+    ctx = BuildContext(
+        build_id="",
+        build_system="xcodebuild",
+        workspace_root=project_dir,
+        scheme=None,
+        target=entry_target,
+        configuration="debug",
+        sdk="",
+        triple="",
+        toolchain_id="xcode",
+        derived_data_path=derived_data_root,
+        index_store_path=index_store,
+        symbolgraph_output_path=ns.symbolgraph or None,
+        commit_sha=None,
+        build_config_hash=f"cli:{','.join(targets) or entry_target}",
+    )
+    ctx.build_id = make_build_id(ctx)
+    upsert_build_snapshot(conn, ctx)
 
     # Resolve incremental mode.
     incremental_since: float | None = None
@@ -304,7 +303,7 @@ def cmd_ingest(args: list[str]):
         if old_state:
             incremental_since = old_state.get("last_ingest_ts")
             print(f"incremental: last_ingest_ts {incremental_since}")
-            prev_targets = old_state.get("targets", [])
+            prev_targets = old_state.get("compiled_targets", [])
             if prev_targets:
                 print(f"incremental: previously ingested targets: "
                       f"{','.join(prev_targets)}")
@@ -318,7 +317,7 @@ def cmd_ingest(args: list[str]):
         print(f"incremental: index-store {index_store}")
         unit_ts = _unit_dir_mtime(index_store)
         print(f"incremental: unit_ts {unit_ts}")
-        prev_targets = set(old_state.get("targets", []) if old_state else [])
+        prev_targets = set(old_state.get("compiled_targets", []) if old_state else [])
         requested_targets = set(targets)
         if unit_ts <= incremental_since and requested_targets.issubset(prev_targets):
             print(f"incremental: fast path hit (unit_ts {unit_ts} <= "
@@ -340,7 +339,7 @@ def cmd_ingest(args: list[str]):
         changed = file_status.get("changed", [])
         all_files = file_status.get("all", [])
         old_files = set(old_state.get("files", []) if old_state else [])
-        old_targets = old_state.get("targets", targets) if old_state else targets
+        old_targets = old_state.get("compiled_targets", targets) if old_state else targets
         deleted_files = old_files - set(all_files)
         to_clean = changed + list(deleted_files)
         if to_clean:
@@ -354,10 +353,8 @@ def cmd_ingest(args: list[str]):
         if not r.symbols and not r.relations:
             # No changes — update state and exit.
             all_list = file_status.get("all", []) if file_status else []
-            merged_targets, merged_index_store_paths = _merge_ingest_state(
-                old_state, targets, index_store_paths)
-            save_state(project_dir, touch_timestamp(), merged_targets,
-                       merged_index_store_paths, files=all_list)
+            save_state(project_dir, touch_timestamp(), targets,
+                       index_store, files=all_list)
             print("incremental: no changes detected")
             conn.close()
             return
@@ -365,23 +362,21 @@ def cmd_ingest(args: list[str]):
     print(f"ingest: {r.elapsed_s}s  {len(r.symbols):,} syms  "
           f"{len(r.relations):,} rels  {len(targets)} target(s)")
 
-    # Upsert all symbols and relations for each target.
-    # The IndexStore contains records for all built targets; each target gets
-    # its own scoped copy in the graph keyed by ``{target}:{usr}``.
-    for i, target in enumerate(targets):
-        syms = [SymbolRecord(usr=s.usr, precise_id="", name=s.name,
-                             kind=_map_indexstore_kind(s.symbol_kind),
-                             module=s.module or target, language=s.language,
-                             file_path=s.file_path or "", signature="",
-                             access_level="public", container_usr=None)
-                for s in r.symbols]
-        upsert_symbols(conn, syms, target)
-        upsert_calls(conn, r.relations, target, source="indexstore",
-                     build_id="cli")
-        upsert_indexstore_rels(conn, r.relations, target, source="indexstore",
-                               build_id="cli")
-        print(f"  [{i+1}/{len(targets)}] {target}: {len(syms):,} syms, "
-              f"{len(r.relations):,} rels")
+    # Treat the compiled targets as one build scope rather than duplicating
+    # the same symbol/relation ingest work once per target.
+    scope_target = entry_target
+    syms = [SymbolRecord(usr=s.usr, precise_id="", name=s.name,
+                         kind=_map_indexstore_kind(s.symbol_kind),
+                         module=s.module or scope_target, language=s.language,
+                         file_path=s.file_path or "", signature="",
+                         access_level="public", container_usr=None)
+            for s in r.symbols]
+    upsert_symbols(conn, syms, scope_target)
+    upsert_calls(conn, r.relations, scope_target, source="indexstore",
+                 build_id=ctx.build_id)
+    upsert_indexstore_rels(conn, r.relations, scope_target, source="indexstore",
+                           build_id=ctx.build_id)
+    print(f"  scope: {','.join(targets)}")
 
     # File upsert (shared across targets).
     from orchard.normalize.identity import upsert_files
@@ -428,7 +423,7 @@ def cmd_ingest(args: list[str]):
             changed_only = None  # full scan
         ng_count = persist_notification_graph(
             conn, source_root=project_dir,
-            build_id="cli", changed_files=changed_only)
+            build_id=ctx.build_id, changed_files=changed_only)
         if ng_count:
             print(f"  notification-graph: {ng_count:,} edges "
                   f"({time.monotonic()-t_ng:.1f}s)")
@@ -452,13 +447,11 @@ def cmd_ingest(args: list[str]):
     # Persist state for next incremental run.
     # Full ingest: only save timestamp (no file list — we don't need it).
     # Incremental: save timestamp + file list from CLI output.
-    merged_targets, merged_index_store_paths = _merge_ingest_state(
-        old_state, targets, index_store_paths)
     if file_status and "all" in file_status:
-        save_state(project_dir, touch_timestamp(), merged_targets, merged_index_store_paths,
+        save_state(project_dir, touch_timestamp(), targets, index_store,
                    files=file_status["all"])
     else:
-        save_state(project_dir, touch_timestamp(), merged_targets, merged_index_store_paths)
+        save_state(project_dir, touch_timestamp(), targets, index_store)
 
 
 def cmd_search(args: list[str]):

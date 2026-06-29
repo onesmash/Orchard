@@ -1,8 +1,7 @@
 """
 Identity normalization for Orchard Apple Semantic Graph.
 
-Provides target-scoped composite key generation and graph upsert helpers
-for symbols, relationships, and build snapshots.
+Provides graph upsert helpers for symbols, relationships, and build snapshots.
 """
 
 from __future__ import annotations
@@ -35,23 +34,46 @@ def make_symbol_id(usr: str) -> str:
     return usr
 
 
+def _symbol_mutable_fields(symbol: SymbolRecord) -> tuple[str, ...]:
+    return (
+        symbol.precise_id or "",
+        symbol.name,
+        symbol.swift_display_name or "",
+        symbol.language,
+        symbol.kind,
+        symbol.module,
+        symbol.file_path or "",
+        symbol.signature or "",
+        symbol.container_usr or "",
+        symbol.access_level,
+    )
+
+
 _SYMBOL_BATCH_SIZE = 2000
 _EDGE_BATCH_SIZE = 200
 
 
-def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
+def upsert_symbols(conn, symbols: list[SymbolRecord], scope_id: str) -> int:
     """Upsert Symbol nodes via COPY FROM CSV — fast bulk import."""
     import csv, tempfile, os
     t0 = time.monotonic()
-    # Pre-fetch existing IDs so we only COPY new symbols (idempotent without
-    # IGNORE_ERRORS, which would mask real schema violations).
-    # IDs are now USR-only (sourcekit-lsp convention), so fetch all IDs.
+    # Pre-fetch existing symbol metadata so we can avoid redundant per-symbol
+    # UPDATEs on later compiled targets that share identical USR records.
     id_rows = conn.execute(
-        "MATCH (s:Symbol) RETURN s.id",
+        "MATCH (s:Symbol) "
+        "RETURN s.id, s.precise_id, s.name, s.swift_display_name, "
+        "s.language, s.kind, s.module, s.file_path, s.signature, "
+        "s.container_usr, s.access_level",
     ).get_all()
-    existing = {r[0] for r in id_rows}
+    existing = {
+        row[0]: tuple((value or "") for value in row[1:])
+        for row in id_rows
+    }
     existing_rows = {make_symbol_id(s.usr): s for s in symbols if make_symbol_id(s.usr) in existing}
+    updated = 0
     for sym_id, s in existing_rows.items():
+        if existing[sym_id] == _symbol_mutable_fields(s):
+            continue
         conn.execute(
             "MATCH (s:Symbol {id: $id}) "
             "SET s.precise_id=$precise_id, s.name=$name, s.swift_display_name=$swift_display_name, "
@@ -71,11 +93,12 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
                 "access_level": s.access_level,
             },
         )
+        updated += 1
     new = [s for s in symbols if make_symbol_id(s.usr) not in existing]
     if not new:
         _perf_probes.setdefault("upsert_symbols_s", 0.0)
         _perf_probes.setdefault("upsert_symbols_n", 0)
-        return len(existing_rows)
+        return len(new) + updated
     csv_path = os.path.join(tempfile.mkdtemp(), "symbols.csv")
     with open(csv_path, "w", newline="") as fh:
         w = csv.writer(fh, quoting=csv.QUOTE_ALL)
@@ -84,7 +107,7 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
                 make_symbol_id(s.usr),
                 s.usr, s.precise_id or "", s.name, s.swift_display_name or "",
                 s.language, s.kind,
-                s.module, target_id, s.file_path or "", s.signature or "",
+                s.module, s.file_path or "", s.signature or "",
                 s.container_usr or "", s.access_level, "swift_symbolgraph", "false",
             ])
     if _progress:
@@ -96,20 +119,19 @@ def upsert_symbols(conn, symbols: list[SymbolRecord], target_id: str) -> int:
     t = round(time.monotonic() - t0, 3)
     _perf_probes.setdefault("upsert_symbols_s", t)
     _perf_probes.setdefault("upsert_symbols_n", len(symbols))
-    return len(new) + len(existing_rows)
+    return len(new) + updated
 
 
-def prune_missing_symbols(conn, target_id: str, active_usrs: set[str]) -> int:
-    """Delete target-scoped Symbol nodes whose USRs are absent from this build."""
+def prune_missing_symbols(conn, scope_id: str, active_usrs: set[str]) -> int:
+    """Delete Symbol nodes whose USRs are absent from this build scope."""
     rows = conn.execute(
-        "MATCH (s:Symbol {target_id: $tid}) RETURN s.usr",
-        {"tid": target_id},
+        "MATCH (s:Symbol) RETURN s.usr",
     ).get_all()
     stale_usrs = [r[0] for r in rows if r[0] not in active_usrs]
     for usr in stale_usrs:
         conn.execute(
-            "MATCH (s:Symbol {target_id: $tid, usr: $usr}) DETACH DELETE s",
-            {"tid": target_id, "usr": usr},
+            "MATCH (s:Symbol {usr: $usr}) DETACH DELETE s",
+            {"usr": usr},
         )
     return len(stale_usrs)
 
@@ -138,7 +160,7 @@ _INDEXSTORE_REL_TO_TABLE: dict[str, str] = {
 def upsert_symbol_rels(
     conn,
     rels: list[SymbolRelRecord],
-    target_id: str,
+    scope_id: str,
     source: str,
 ) -> int:
     """Upsert symbol relationship edges into the graph.
@@ -152,8 +174,8 @@ def upsert_symbol_rels(
         An open Ladybug connection.
     rels:
         List of SymbolRelRecord objects to write.
-    target_id:
-        The build target identifier used to namespace symbol IDs.
+    scope_id:
+        Legacy scope label retained for API stability.
     source:
         Provenance tag stored on each edge (e.g. a symbolgraph filename).
 
@@ -185,7 +207,7 @@ def upsert_symbol_rels(
 def _ensure_symbol_ids_exist(
     conn,
     usr_names: dict[str, str],  # sid → name
-    target_id: str,
+    scope_id: str,
 ) -> int:
     """Create placeholder Symbol nodes for the given IDs if they don't exist.
 
@@ -215,7 +237,6 @@ def _ensure_symbol_ids_exist(
                 "objc",        # language
                 "unknown",     # kind
                 "",            # module
-                target_id,     # target_id
                 "",            # file_path
                 "",            # signature
                 "",            # container_usr
@@ -230,7 +251,7 @@ def _ensure_symbol_ids_exist(
 
 def _collect_missing_endpoints(
     rels: list[RelationRecord],
-    target_id: str,
+    scope_id: str,
     existing_ids: set,
 ) -> dict[str, str]:
     """Return ``{sid: name}`` for endpoint USRs not present in *existing_ids*."""
@@ -247,7 +268,7 @@ def _collect_missing_endpoints(
 def upsert_indexstore_rels(
     conn,
     rels: list[RelationRecord],
-    target_id: str,
+    scope_id: str,
     source: str,
     build_id: str,
 ) -> int:
@@ -261,15 +282,14 @@ def upsert_indexstore_rels(
     t0 = time.monotonic()
     # Pre-fetch existing Symbol IDs.
     id_rows = conn.execute(
-        "MATCH (s:Symbol {target_id: $tid}) RETURN s.id",
-        {"tid": target_id},
+        "MATCH (s:Symbol) RETURN s.id",
     ).get_all()
     existing_ids = {r[0] for r in id_rows}
 
     # Create placeholder symbols for endpoints we don't have yet (typically
     # system framework symbols like NSObject, UIView).
-    missing = _collect_missing_endpoints(rels, target_id, existing_ids)
-    placeholder_count = _ensure_symbol_ids_exist(conn, missing, target_id)
+    missing = _collect_missing_endpoints(rels, scope_id, existing_ids)
+    placeholder_count = _ensure_symbol_ids_exist(conn, missing, scope_id)
     existing_ids.update(missing.keys())
 
     # Group by target table.
@@ -321,7 +341,7 @@ def upsert_indexstore_rels(
 def upsert_calls(
     conn,
     relations: list[RelationRecord],
-    target_id: str,
+    scope_id: str,
     source: str,
     build_id: str,
 ) -> int:
@@ -342,8 +362,7 @@ def upsert_calls(
     t0 = time.monotonic()
     # Pre-fetch existing Symbol IDs for placeholder creation.
     id_rows = conn.execute(
-        "MATCH (s:Symbol {target_id: $tid}) RETURN s.id",
-        {"tid": target_id},
+        "MATCH (s:Symbol) RETURN s.id",
     ).get_all()
     existing_ids = {r[0] for r in id_rows}
 
@@ -364,8 +383,8 @@ def upsert_calls(
 
     # Create placeholder symbols for caller/callee USRs not yet in the DB.
     missing = _collect_missing_endpoints(
-        [r for r in relations if r.role == "calledBy"], target_id, existing_ids)
-    _ensure_symbol_ids_exist(conn, missing, target_id)
+        [r for r in relations if r.role == "calledBy"], scope_id, existing_ids)
+    _ensure_symbol_ids_exist(conn, missing, scope_id)
 
     import csv, tempfile, os
     csv_path = os.path.join(tempfile.mkdtemp(), "calls.csv")
@@ -395,7 +414,7 @@ def upsert_calls(
 def upsert_references(
     conn,
     relations: list[RelationRecord],
-    target_id: str,
+    scope_id: str,
     source: str,
 ) -> int:
     """Upsert References edges from IndexStore relations.
@@ -423,7 +442,7 @@ def upsert_references(
 
 def delete_symbols_for_files(
     conn,
-    target_id: str,
+    scope_id: str,
     file_paths: list[str],
 ) -> int:
     """Delete Symbol nodes (and cascade edges) for the given file paths.
@@ -434,11 +453,11 @@ def delete_symbols_for_files(
     count = 0
     for fp in file_paths:
         r = conn.execute(
-            "MATCH (s:Symbol {target_id: $tid}) "
+            "MATCH (s:Symbol) "
             "WHERE s.file_path = $fp "
             "DETACH DELETE s "
             "RETURN count(*)",
-            {"tid": target_id, "fp": fp},
+            {"fp": fp},
         ).get_all()
         count += r[0][0] if r else 0
     return count
@@ -479,14 +498,13 @@ def upsert_build_snapshot(conn, ctx: BuildContext) -> None:
         },
     )
     conn.execute(
-        "MERGE (t:Target {id: $target_id}) "
-        "SET t.name = $target_name, t.sdk = $sdk, t.configuration = $configuration, t.triple = $triple "
+        "MERGE (t:Target {id: $target}) "
+        "SET t.name = $target, t.sdk = $sdk, t.configuration = $configuration, t.triple = $triple "
         "WITH t "
         "MATCH (b:BuildSnapshot {id: $build_id}) "
         "MERGE (b)-[:BuiltTarget]->(t)",
         {
-            "target_id": ctx.target,
-            "target_name": ctx.target,
+            "target": ctx.target,
             "sdk": ctx.sdk,
             "configuration": ctx.configuration,
             "triple": ctx.triple,
@@ -511,7 +529,7 @@ def upsert_files(conn, symbols: list[SymbolRecord]) -> int:
     for s in symbols:
         if s.file_path and s.file_path not in seen:
             seen.add(s.file_path)
-            rows.append([s.file_path, s.module or "", s.language or "", "", "false"])
+            rows.append([s.file_path, s.module or "", s.language or "", "false"])
 
     if not rows:
         return 0

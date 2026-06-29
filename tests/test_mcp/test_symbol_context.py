@@ -10,7 +10,7 @@ def conn_with_symbol(tmp_db_path):
     conn.execute(
         "CREATE (:Symbol {id: 's:MyFunc', usr: 's:MyFunc', precise_id: 's:MyFunc', "
         "name: 'MyFunc()', language: 'swift', kind: 'swift.func', module: 'MyModule', "
-        "target_id: 'T1', file_path: '/src/f.swift', signature: 'func MyFunc()', "
+        "file_path: '/src/f.swift', signature: 'func MyFunc()', "
         "container_usr: '', access_level: 'internal', origin: 'swift_symbolgraph', "
         "is_generated: false})"
     )

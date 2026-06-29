@@ -23,7 +23,7 @@ def conn_with_rename_data(tmp_db_path):
     conn.execute(
         "CREATE (:Symbol {id: 's:oldFunc', usr: 's:oldFunc', precise_id: '', "
         "name: 'oldFunc', language: 'swift', kind: 'swift.func', module: 'M', "
-        "target_id: 'T1', file_path: '/src/main.swift', signature: 'func oldFunc()', "
+        "file_path: '/src/main.swift', signature: 'func oldFunc()', "
         "container_usr: '', access_level: 'internal', origin: 'derived', "
         "is_generated: false})"
     )
@@ -31,7 +31,7 @@ def conn_with_rename_data(tmp_db_path):
     conn.execute(
         "CREATE (:Symbol {id: 's:caller', usr: 's:caller', precise_id: '', "
         "name: 'callerFunc', language: 'swift', kind: 'swift.func', module: 'M', "
-        "target_id: 'T1', file_path: '/src/main.swift', signature: 'func callerFunc()', "
+        "file_path: '/src/main.swift', signature: 'func callerFunc()', "
         "container_usr: '', access_level: 'internal', origin: 'derived', "
         "is_generated: false})"
     )
@@ -39,7 +39,7 @@ def conn_with_rename_data(tmp_db_path):
     conn.execute(
         "CREATE (:Symbol {id: 's:caller2', usr: 's:caller2', precise_id: '', "
         "name: 'anotherCaller', language: 'swift', kind: 'swift.func', module: 'M', "
-        "target_id: 'T1', file_path: '/src/utils.swift', signature: '', "
+        "file_path: '/src/utils.swift', signature: '', "
         "container_usr: '', access_level: 'internal', origin: 'derived', "
         "is_generated: false})"
     )
@@ -47,7 +47,7 @@ def conn_with_rename_data(tmp_db_path):
     for path in ["/src/main.swift", "/src/utils.swift"]:
         conn.execute(
             f"CREATE (:File {{path: '{path}', module: 'M', language: 'swift', "
-            f"target_id: 'T1', is_generated: false}})"
+            f"is_generated: false}})"
         )
     # Call edges (used by fallback to find reference sites)
     conn.execute(
@@ -118,7 +118,7 @@ def test_build_rename_plan_fallback_without_occurrences(tmp_db_path):
     conn.execute(
         "CREATE (:Symbol {id: 's:noOcc', usr: 's:noOcc', precise_id: '', "
         "name: 'noOccurrenceSymbol', language: 'swift', kind: 'swift.func', "
-        "module: 'M', target_id: 'T1', file_path: '/src/none.swift', "
+        "module: 'M', file_path: '/src/none.swift', "
         "signature: '', container_usr: '', access_level: 'internal', "
         "origin: 'derived', is_generated: false})"
     )
@@ -137,7 +137,7 @@ def test_rename_symbol_dry_run_works_without_occurrences(tmp_db_path):
     conn.execute(
         "CREATE (:Symbol {id: 's:noOcc', usr: 's:noOcc', precise_id: '', "
         "name: 'noOccurrenceSymbol', language: 'swift', kind: 'swift.func', "
-        "module: 'M', target_id: 'T1', file_path: '/src/none.swift', "
+        "module: 'M', file_path: '/src/none.swift', "
         "signature: '', container_usr: '', access_level: 'internal', "
         "origin: 'derived', is_generated: false})"
     )
@@ -155,13 +155,13 @@ def test_build_rename_plan_no_references(conn_with_rename_data):
     conn_with_rename_data.execute(
         "CREATE (:Symbol {id: 's:unused', usr: 's:unused', precise_id: '', "
         "name: 'unusedFunc', language: 'swift', kind: 'swift.func', module: 'M', "
-        "target_id: 'T1', file_path: '/src/unused.swift', signature: '', "
+        "file_path: '/src/unused.swift', signature: '', "
         "container_usr: '', access_level: 'internal', origin: 'derived', "
         "is_generated: false})"
     )
     conn_with_rename_data.execute(
         "CREATE (:File {path: '/src/unused.swift', module: 'M', language: 'swift', "
-        "target_id: 'T1', is_generated: false})"
+        "is_generated: false})"
     )
     plan = build_rename_plan(conn_with_rename_data, "s:unused", "usedFunc")
     assert len(plan) == 1
@@ -197,14 +197,14 @@ def test_rename_symbol_no_dry_run_attempts_write(conn_with_rename_data, tmp_path
     conn2.execute(
         f"CREATE (:Symbol {{id: 's:oldFunc', usr: 's:oldFunc', precise_id: '', "
         f"name: 'oldFunc', language: 'swift', kind: 'swift.func', module: 'M', "
-        f"target_id: 'T1', file_path: '{main_path}', signature: 'func oldFunc()', "
+        f"file_path: '{main_path}', signature: 'func oldFunc()', "
         f"container_usr: '', access_level: 'internal', origin: 'derived', "
         f"is_generated: false}})"
     )
     conn2.execute(
         f"CREATE (:Symbol {{id: 's:caller', usr: 's:caller', precise_id: '', "
         f"name: 'callerFunc', language: 'swift', kind: 'swift.func', module: 'M', "
-        f"target_id: 'T1', file_path: '{main_path}', signature: '', "
+        f"file_path: '{main_path}', signature: '', "
         f"container_usr: '', access_level: 'internal', origin: 'derived', "
         f"is_generated: false}})"
     )
@@ -212,14 +212,14 @@ def test_rename_symbol_no_dry_run_attempts_write(conn_with_rename_data, tmp_path
     conn2.execute(
         f"CREATE (:Symbol {{id: 's:caller2', usr: 's:caller2', precise_id: '', "
         f"name: 'helperFunc', language: 'swift', kind: 'swift.func', module: 'M', "
-        f"target_id: 'T1', file_path: '{utils_path}', signature: '', "
+        f"file_path: '{utils_path}', signature: '', "
         f"container_usr: '', access_level: 'internal', origin: 'derived', "
         f"is_generated: false}})"
     )
     for path in [str(main_path), str(utils_path)]:
         conn2.execute(
             f"CREATE (:File {{path: '{path}', module: 'M', language: 'swift', "
-            f"target_id: 'T1', is_generated: false}})"
+            f"is_generated: false}})"
         )
     conn2.execute(
         f"MATCH (c:Symbol {{id:'s:caller'}}), (t:Symbol {{id:'s:oldFunc'}}) "

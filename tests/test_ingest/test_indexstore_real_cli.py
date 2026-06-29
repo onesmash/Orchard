@@ -87,7 +87,7 @@ def test_real_cli_read_index_store_produces_calledby(tmp_path):
     lib_path = _build_index(src_dir, index_path)
 
     # Real CLI run + real parse (no mock).
-    result, _ = read_index_store(str(index_path), target_id="T")
+    result, _ = read_index_store(str(index_path), scope_id="T")
 
     # Our source defines caller() and callee(); find their USRs.
     our_usrs = {occ.usr for occ in result.occurrences if occ.file_path == lib_path}
@@ -118,9 +118,9 @@ def test_real_cli_read_index_store_produces_calledby(tmp_path):
                          file_path=lib_path, signature=None,
                          access_level="public", container_usr=None),
         ],
-        target_id="T",
+        scope_id="T",
     )
-    written = upsert_calls(conn, result.relations, target_id="T",
+    written = upsert_calls(conn, result.relations, scope_id="T",
                            source="indexstore", build_id="b-real")
     assert written >= 1
 
@@ -210,7 +210,7 @@ def test_installed_wheel_cli_can_ingest_minimal_index(tmp_path):
 def test_real_zoom_extension_siri_preserves_objc_sdk_symbols():
     result, _ = read_index_store(
         str(REAL_ZOOM_STORE),
-        target_id="T",
+        scope_id="T",
         source_root=str(REAL_EXTENSION_SIRI_ROOT),
     )
 

@@ -7,7 +7,7 @@ and detects dependency cycles in the module graph.
 from __future__ import annotations
 
 
-def run_architecture_derivation(conn, target_id: str, build_id: str) -> dict[str, int]:
+def run_architecture_derivation(conn, scope_id: str, build_id: str) -> dict[str, int]:
     """Build Module DEPENDS_ON edges from cross-module Calls/References and detect cycles.
 
     Queries for:
@@ -25,8 +25,9 @@ def run_architecture_derivation(conn, target_id: str, build_id: str) -> dict[str
     ----------
     conn
         Open Ladybug connection.
-    target_id
-        The build target identifier (used to filter symbols by target).
+    scope_id
+        Legacy scope label retained for API stability. The current
+        implementation derives module dependencies from the whole build scope.
     build_id
         The build snapshot identifier (stored on DEPENDS_ON edges for traceability).
 
@@ -56,11 +57,10 @@ def run_architecture_derivation(conn, target_id: str, build_id: str) -> dict[str
     # 2. Discover cross-module Calls edges.
     # ------------------------------------------------------------------
     calls_rows = conn.execute(
-        "MATCH (a:Symbol {target_id: $tid})-[r:Calls]->(b:Symbol {target_id: $tid}) "
+        "MATCH (a:Symbol)-[r:Calls]->(b:Symbol) "
         "WHERE a.module IS NOT NULL AND b.module IS NOT NULL "
         "  AND a.module <> b.module "
         "RETURN DISTINCT a.module, b.module",
-        {"tid": target_id},
     ).get_all()
 
     for row in calls_rows:
@@ -73,11 +73,10 @@ def run_architecture_derivation(conn, target_id: str, build_id: str) -> dict[str
     # 3. Discover cross-module References edges.
     # ------------------------------------------------------------------
     refs_rows = conn.execute(
-        "MATCH (a:Symbol {target_id: $tid})-[r:References]->(b:Symbol {target_id: $tid}) "
+        "MATCH (a:Symbol)-[r:References]->(b:Symbol) "
         "WHERE a.module IS NOT NULL AND b.module IS NOT NULL "
         "  AND a.module <> b.module "
         "RETURN DISTINCT a.module, b.module",
-        {"tid": target_id},
     ).get_all()
 
     union_pairs: set[tuple[str, str]] = set(existing_pairs)

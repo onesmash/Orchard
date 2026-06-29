@@ -37,7 +37,7 @@ def conn_with_chunks(tmp_db_path):
             "CREATE (:Symbol {"
             f"id: '{sid}', usr: '{usr}', precise_id: '', "
             f"name: '{name}', language: 'swift', kind: '{kind}', "
-            f"module: '{module}', target_id: 'MyApp', file_path: '', "
+            f"module: '{module}', file_path: '', "
             f"signature: '', container_usr: '', access_level: 'public', "
             f"origin: 'symbolgraph', is_generated: false"
             "})"
@@ -121,7 +121,7 @@ def conn_for_fts(tmp_db_path):
             ("MyApp:s:doIt", "s:doIt()", "doIt", "function", "MyApp"),
             ("MyApp:s:empty", "s:empty", "emptyFunc", "function", "MyApp"),
         ]:
-            conn.execute(f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', precise_id: '', name: '{name}', language: 'swift', kind: '{kind}', module: '{module}', target_id: 'MyApp', file_path: '', signature: '', container_usr: '', access_level: 'public', origin: 'symbolgraph', is_generated: false}})")
+            conn.execute(f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', precise_id: '', name: '{name}', language: 'swift', kind: '{kind}', module: '{module}', file_path: '', signature: '', container_usr: '', access_level: 'public', origin: 'symbolgraph', is_generated: false}})")
         for cid, usr, kind, content in [
             ("MyApp:s:Foo:chunk:type:0", "s:Foo", "type", "struct Foo: public struct Foo"),
             ("MyApp:s:doIt:chunk:method:1", "s:doIt()", "method", "function doIt: func doIt()"),

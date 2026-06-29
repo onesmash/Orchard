@@ -27,7 +27,7 @@ def conn_with_mixed_symbols(tmp_db_path):
         conn.execute(
             f"CREATE (:Symbol {{id: '{sym_id}', usr: '{sym_id}', precise_id: '', "
             f"name: '{name}', language: 'objc', kind: '{kind}', module: 'Zoom', "
-            f"target_id: 'Zoom', file_path: '/src/meeting.mm', signature: '', "
+            f"file_path: '/src/meeting.mm', signature: '', "
             f"container_usr: '', access_level: 'internal', origin: 'derived', "
             f"is_generated: false}})"
         )

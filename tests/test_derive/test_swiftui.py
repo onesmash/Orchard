@@ -7,7 +7,7 @@ def _sym(conn, sid, usr, name, kind="struct", mod="M"):
     conn.execute(
         f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', precise_id: '', "
         f"name: '{name}', language: 'swift', kind: '{kind}', module: '{mod}', "
-        f"target_id: 'T', file_path: '', signature: '', container_usr: '', "
+        f"file_path: '', signature: '', container_usr: '', "
         f"access_level: 'public', origin: 'symbolgraph', is_generated: false}})"
     )
 
@@ -97,4 +97,46 @@ def test_no_views_no_edges(tmp_db_path):
     init_schema(conn)
     stats = run_swiftui_derivation(conn, "T", build_id="b1")
     assert stats["view_tree_edges"] == 0 and stats["nav_flow_edges"] == 0
+    conn.close()
+
+
+def test_viewtree_reads_whole_compiled_scope(tmp_db_path):
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+
+    conn.execute(
+        "CREATE (:Symbol {id: 's:Root', usr: 's:Root', precise_id: '', "
+        "name: 'RootView', language: 'swift', kind: 'struct', module: 'Zoom', "
+        "file_path: '', signature: '', container_usr: '', "
+        "access_level: 'public', origin: 'symbolgraph', is_generated: false})"
+    )
+    conn.execute(
+        "CREATE (:Symbol {id: 's:Child', usr: 's:Child', precise_id: '', "
+        "name: 'ChildView', language: 'swift', kind: 'struct', module: 'zPSApp', "
+        "file_path: '', signature: '', container_usr: '', "
+        "access_level: 'public', origin: 'symbolgraph', is_generated: false})"
+    )
+    conn.execute(
+        "CREATE (:Symbol {id: 'v:V', usr: 'v:V', precise_id: '', "
+        "name: 'View', language: 'swift', kind: 'protocol', module: 'SwiftUI', "
+        "file_path: '', signature: '', container_usr: '', "
+        "access_level: 'public', origin: 'symbolgraph', is_generated: false})"
+    )
+    conn.execute(
+        "CREATE (:Symbol {id: 's:Root:body', usr: 's:Root:body', precise_id: '', "
+        "name: 'body', language: 'swift', kind: 'instanceProperty', module: 'Zoom', "
+        "file_path: '', signature: '', container_usr: '', "
+        "access_level: 'public', origin: 'symbolgraph', is_generated: false})"
+    )
+    _conforms(conn, "s:Root", "v:V")
+    _conforms(conn, "s:Child", "v:V")
+    _calls(conn, "s:Root:body", "s:Child")
+
+    stats = run_swiftui_derivation(conn, "compiled-scope", build_id="b1")
+    assert stats["view_tree_edges"] == 1
+
+    rows = conn.execute(
+        "MATCH (a:Symbol)-[:ViewTree]->(b:Symbol) RETURN a.name, b.name"
+    ).get_all()
+    assert rows == [["RootView", "ChildView"]]
     conn.close()

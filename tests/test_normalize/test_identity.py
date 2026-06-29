@@ -33,7 +33,7 @@ def test_upsert_symbols_inserts_nodes(conn):
             access_level="internal",
         )
     ]
-    count = upsert_symbols(conn, symbols, target_id="T1")
+    count = upsert_symbols(conn, symbols, scope_id="T1")
     assert count == 1
     rows = conn.execute("MATCH (s:Symbol {id: 's:MyFunc'}) RETURN s.name").get_all()
     assert rows[0][0] == "MyFunc()"
@@ -45,8 +45,8 @@ def test_upsert_symbols_idempotent(conn):
                      module="M", language="swift", file_path=None, signature=None,
                      access_level="public")
     ]
-    upsert_symbols(conn, symbols, target_id="T1")
-    upsert_symbols(conn, symbols, target_id="T1")
+    upsert_symbols(conn, symbols, scope_id="T1")
+    upsert_symbols(conn, symbols, scope_id="T1")
     rows = conn.execute("MATCH (s:Symbol) RETURN count(s)").get_all()
     assert rows[0][0] == 1
 
@@ -62,12 +62,47 @@ def test_upsert_symbols_updates_existing_node_fields(conn):
                      module="M", language="objc", file_path="/right/A.m", signature="",
                      access_level="public", swift_display_name="swiftName(_:)")
     ]
-    upsert_symbols(conn, original, target_id="T1")
-    upsert_symbols(conn, corrected, target_id="T1")
+    upsert_symbols(conn, original, scope_id="T1")
+    upsert_symbols(conn, corrected, scope_id="T1")
     rows = conn.execute(
         "MATCH (s:Symbol {id: 's:A'}) RETURN s.name, s.file_path, s.swift_display_name"
     ).get_all()
     assert rows == [["objcName:", "/right/A.m", "swiftName(_:)"]]
+
+
+def test_upsert_symbols_skips_redundant_updates_for_existing_metadata(conn):
+    sym = SymbolRecord(
+        usr="s:Shared",
+        precise_id="s:Shared",
+        name="Shared",
+        kind="swift.struct",
+        module="M",
+        language="swift",
+        file_path="/src/shared.swift",
+        signature="",
+        access_level="public",
+    )
+    upsert_symbols(conn, [sym], scope_id="TargetA")
+
+    class RecordingConn:
+        def __init__(self, inner):
+            self.inner = inner
+            self.queries = []
+
+        def execute(self, query, params=None):
+            self.queries.append(query)
+            if params is None:
+                return self.inner.execute(query)
+            return self.inner.execute(query, params)
+
+    recording = RecordingConn(conn)
+    upsert_symbols(recording, [sym], scope_id="TargetB")
+
+    redundant_updates = [
+        q for q in recording.queries
+        if "SET s.precise_id=$precise_id" in q
+    ]
+    assert redundant_updates == []
 
 
 def test_upsert_different_targets_no_collision(conn):
@@ -75,15 +110,14 @@ def test_upsert_different_targets_no_collision(conn):
     sym = SymbolRecord(usr="s:Shared", precise_id="s:Shared", name="Shared",
                        kind="swift.struct", module="M", language="swift",
                        file_path=None, signature=None, access_level="public")
-    upsert_symbols(conn, [sym], target_id="TargetA")
-    upsert_symbols(conn, [sym], target_id="TargetB")
-    rows = conn.execute("MATCH (s:Symbol) RETURN s.id, s.target_id ORDER BY s.id").get_all()
+    upsert_symbols(conn, [sym], scope_id="TargetA")
+    upsert_symbols(conn, [sym], scope_id="TargetB")
+    rows = conn.execute("MATCH (s:Symbol) RETURN s.id ORDER BY s.id").get_all()
     assert len(rows) == 1
     assert rows[0][0] == "s:Shared"  # USR-only ID
-    assert rows[0][1] == "TargetA"   # target_id set at first insert, not updated
 
 
-def _seed_two_symbols(conn, target_id):
+def _seed_two_symbols(conn, scope_id):
     """Seed two minimal Symbol records: caller() and callee()."""
     syms = [
         SymbolRecord(usr="c:caller()", precise_id="", name="caller",
@@ -95,16 +129,16 @@ def _seed_two_symbols(conn, target_id):
                      file_path=None, signature=None,
                      access_level="public", container_usr=None),
     ]
-    upsert_symbols(conn, syms, target_id)
+    upsert_symbols(conn, syms, scope_id)
 
 
 def test_upsert_calls_writes_calledby_edge_with_caller_as_to(conn):
-    target_id = "MyLib"
-    _seed_two_symbols(conn, target_id)
+    scope_id = "MyLib"
+    _seed_two_symbols(conn, scope_id)
     # role calledBy: from_usr (callee) is called by to_usr (caller)
     # => caller calls callee => Calls(caller -> callee)
     rels = [RelationRecord(from_usr="c:callee()", to_usr="c:caller()", role="calledBy")]
-    written = upsert_calls(conn, rels, target_id, source="indexstore",
+    written = upsert_calls(conn, rels, scope_id, source="indexstore",
                            build_id="build-1")
     assert written == 1
     rows = conn.execute(
@@ -114,8 +148,8 @@ def test_upsert_calls_writes_calledby_edge_with_caller_as_to(conn):
 
 
 def test_upsert_calls_marks_source_direct_when_call_occurrence_present(conn):
-    target_id = "T"
-    _seed_two_symbols(conn, target_id)
+    scope_id = "T"
+    _seed_two_symbols(conn, scope_id)
     rels = [
         RelationRecord(
             from_usr="c:callee()",
@@ -127,7 +161,7 @@ def test_upsert_calls_marks_source_direct_when_call_occurrence_present(conn):
             col=4,
         )
     ]
-    upsert_calls(conn, rels, target_id, source="indexstore", build_id="b1")
+    upsert_calls(conn, rels, scope_id, source="indexstore", build_id="b1")
     rows = conn.execute(
         "MATCH (:Symbol {usr:'c:caller()'})-[r:Calls]->(:Symbol {usr:'c:callee()'}) RETURN r.reason"
     ).get_all()
@@ -135,10 +169,10 @@ def test_upsert_calls_marks_source_direct_when_call_occurrence_present(conn):
 
 
 def test_upsert_calls_skips_unknown_role(conn):
-    target_id = "MyLib"
-    _seed_two_symbols(conn, target_id)
+    scope_id = "MyLib"
+    _seed_two_symbols(conn, scope_id)
     rels = [RelationRecord(from_usr="c:callee()", to_usr="c:caller()", role="childOf")]
-    assert upsert_calls(conn, rels, target_id, source="indexstore", build_id="b") == 0
+    assert upsert_calls(conn, rels, scope_id, source="indexstore", build_id="b") == 0
     rows = conn.execute("MATCH ()-[r:Calls]->() RETURN count(r)").get_all()
     assert rows[0][0] == 0
 
@@ -148,31 +182,29 @@ def test_upsert_calls_reuses_existing_global_symbol_from_other_target(conn):
         SymbolRecord(usr="s:shared", precise_id="s:shared", name="shared", kind="swift.func",
                      module="M", language="swift", file_path="/src/shared.swift",
                      signature="", access_level="public"),
-    ], target_id="T1")
+    ], scope_id="T1")
 
     rels = [RelationRecord(from_usr="s:shared", to_usr="s:newCaller", role="calledBy")]
 
-    written = upsert_calls(conn, rels, target_id="T2", source="indexstore", build_id="b2")
+    written = upsert_calls(conn, rels, scope_id="T2", source="indexstore", build_id="b2")
 
     assert written == 1
     rows = conn.execute(
         "MATCH (a:Symbol)-[:Calls]->(b:Symbol) RETURN a.usr, b.usr ORDER BY a.usr, b.usr"
     ).get_all()
     assert rows == [["s:newCaller", "s:shared"]]
-    symbols = conn.execute(
-        "MATCH (s:Symbol) RETURN s.usr, s.target_id, s.origin ORDER BY s.usr"
-    ).get_all()
+    symbols = conn.execute("MATCH (s:Symbol) RETURN s.usr, s.origin ORDER BY s.usr").get_all()
     assert symbols == [
-        ["s:newCaller", "T2", "indexstore_placeholder"],
-        ["s:shared", "T1", "swift_symbolgraph"],
+        ["s:newCaller", "indexstore_placeholder"],
+        ["s:shared", "swift_symbolgraph"],
     ]
 
 
 def test_upsert_references_writes_edge(conn):
-    target_id = "MyLib"
-    _seed_two_symbols(conn, target_id)
+    scope_id = "MyLib"
+    _seed_two_symbols(conn, scope_id)
     rels = [RelationRecord(from_usr="c:caller()", to_usr="c:callee()", role="references")]
-    written = upsert_references(conn, rels, target_id, source="indexstore")
+    written = upsert_references(conn, rels, scope_id, source="indexstore")
     assert written == 1
     rows = conn.execute(
         "MATCH (a:Symbol)-[:References]->(b:Symbol) RETURN a.usr, b.usr"
@@ -188,36 +220,35 @@ def test_prune_missing_symbols_removes_symbols_not_in_current_build(conn):
         SymbolRecord(usr="s:new", precise_id="s:new", name="new", kind="swift.func",
                      module="M", language="swift", file_path="/src/new.swift",
                      signature="", access_level="public"),
-    ], target_id="T1")
+    ], scope_id="T1")
 
     removed = prune_missing_symbols(conn, "T1", {"s:new"})
-    rows = conn.execute("MATCH (s:Symbol {target_id: 'T1'}) RETURN s.usr ORDER BY s.usr").get_all()
+    rows = conn.execute("MATCH (s:Symbol) RETURN s.usr ORDER BY s.usr").get_all()
 
     assert removed == 1
     assert rows == [["s:new"]]
 
 
-def test_prune_missing_symbols_keeps_other_targets(conn):
-    """With USR-only IDs, same USR under different targets is one symbol (last write wins).
-    Pruning T1 should not delete the symbol since its target_id is now T2."""
+def test_prune_missing_symbols_prunes_against_compiled_scope(conn):
+    """Pruning now compares against the compiled scope's active USRs globally."""
     upsert_symbols(conn, [
         SymbolRecord(usr="s:shared", precise_id="s:shared", name="shared", kind="swift.func",
                      module="M", language="swift", file_path="/src/shared.swift",
                      signature="", access_level="public"),
-    ], target_id="T1")
+    ], scope_id="T1")
     upsert_symbols(conn, [
         SymbolRecord(usr="s:a", precise_id="s:a", name="a", kind="swift.func",
                      module="M", language="swift", file_path="/src/a.swift",
                      signature="", access_level="public"),
-    ], target_id="T1")
+    ], scope_id="T1")
     upsert_symbols(conn, [
         SymbolRecord(usr="s:b", precise_id="s:b", name="b", kind="swift.func",
                      module="M", language="swift", file_path="/src/b.swift",
                      signature="", access_level="public"),
-    ], target_id="T2")
+    ], scope_id="T2")
 
     removed = prune_missing_symbols(conn, "T1", {"s:shared"})
     rows = conn.execute("MATCH (s:Symbol) RETURN s.id ORDER BY s.id").get_all()
 
-    assert removed == 1  # s:a is in T1 but not in the keep set
-    assert rows == [["s:b"], ["s:shared"]]
+    assert removed == 2
+    assert rows == [["s:shared"]]

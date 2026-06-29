@@ -19,7 +19,7 @@ def impact_graph(tmp_db_path):
         conn.execute(
             f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', "
             f"precise_id: '', name: '{name}', language: 'swift', "
-            f"kind: 'function', module: 'M', target_id: '{T}', file_path: '', "
+            f"kind: 'function', module: 'M', file_path: '', "
             f"signature: '', container_usr: '', access_level: 'public', "
             f"origin: 'symbolgraph', is_generated: false}})"
         )
@@ -81,7 +81,7 @@ def bridges_graph(tmp_db_path):
         conn.execute(
             f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', "
             f"precise_id: '', name: '{name}', language: '{lang}', "
-            f"kind: 'function', module: 'M', target_id: '{T}', file_path: '', "
+            f"kind: 'function', module: 'M', file_path: '', "
             f"signature: '', container_usr: '', access_level: 'public', "
             f"origin: 'symbolgraph', is_generated: false}})"
         )
@@ -108,7 +108,7 @@ def fresh_graph(tmp_db_path):
         conn.execute(
             f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', "
             f"precise_id: '', name: '{name}', language: 'swift', "
-            f"kind: 'function', module: 'M', target_id: '{T}', file_path: '', "
+            f"kind: 'function', module: 'M', file_path: '', "
             f"signature: '', container_usr: '', access_level: 'public', "
             f"origin: 'symbolgraph', is_generated: false}})"
         )

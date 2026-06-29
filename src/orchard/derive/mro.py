@@ -9,7 +9,7 @@ Inspired by GitNexus's MRO processor.
 from __future__ import annotations
 
 
-def run_mro(conn, target_id: str) -> dict[str, int]:
+def run_mro(conn, scope_id: str) -> dict[str, int]:
     """Find and write method override relationships.
 
     Returns counts of overrides found and edges written.
@@ -19,13 +19,11 @@ def run_mro(conn, target_id: str) -> dict[str, int]:
         "MATCH (child:Symbol)-[:Inherits]->(parent:Symbol) "
         "WHERE child.kind IN ['method','function'] "
         "  AND parent.kind IN ['class','struct'] "
-        "  AND child.module = $tid "
         "MATCH (childMethod:Symbol) "
         "WHERE childMethod.name = child.name "
         "  AND childMethod.kind = 'method' "
         "RETURN DISTINCT child.usr, parent.usr, childMethod.name "
         "LIMIT 1000",
-        {"tid": target_id},
     ).get_all()
 
     count = 0

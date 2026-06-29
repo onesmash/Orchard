@@ -9,7 +9,7 @@ import igraph as ig
 import leidenalg
 
 
-def run_community_detection(conn, target_id: str) -> dict[str, int]:
+def run_community_detection(conn, scope_id: str) -> dict[str, int]:
     """Detect communities via Leiden and write Community + MEMBER_OF edges."""
     adj: dict[str, set[str]] = defaultdict(set)
     for rel_type in ("Calls", "Inherits", "ConformsTo"):
@@ -67,7 +67,7 @@ def run_community_detection(conn, target_id: str) -> dict[str, int]:
         for lbl, members in groups.items():
             if len(members) < 2:
                 continue
-            w.writerow([f"community:{target_id}:{lbl}", len(members)])
+            w.writerow([f"community:{scope_id}:{lbl}", len(members)])
     try:
         conn.execute(f"COPY Community FROM '{comm_path}' (HEADER=false)")
     except Exception:
@@ -80,7 +80,7 @@ def run_community_detection(conn, target_id: str) -> dict[str, int]:
         for lbl, members in groups.items():
             if len(members) < 2:
                 continue
-            cid = f"community:{target_id}:{lbl}"
+            cid = f"community:{scope_id}:{lbl}"
             for usr in members:
                 w.writerow([usr, cid])
     try:

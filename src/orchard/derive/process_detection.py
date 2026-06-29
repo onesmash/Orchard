@@ -129,7 +129,7 @@ def _bfs_depth(adj: dict[str, list[str]], meta: dict[str, dict],
 
 def detect_processes(
     conn,
-    target_id: str = "",
+    scope_id: str = "",
     max_processes: int = 75,
     max_depth: int = 10,
     min_steps: int = 3,
@@ -170,7 +170,7 @@ def detect_processes(
             communities_used.update(usr_to_communities.get(c["usr"], set()))
         communities_used.update(usr_to_communities.get(entry["usr"], set()))
 
-        proc_id = f"proc_{target_id}_{len(processes)}"
+        proc_id = f"proc_{scope_id}_{len(processes)}"
         proc = ProcessNode(
             id=proc_id,
             label=f"{entry['name']} → {terminal['name']}",

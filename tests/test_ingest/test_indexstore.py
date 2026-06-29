@@ -24,7 +24,7 @@ def _mock_cli(lines):
 
 def test_read_index_store_parses_occurrences():
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(_SAMPLE_LINES)):
-        result, _ = read_index_store("/fake/store", target_id="MyTarget")
+        result, _ = read_index_store("/fake/store", scope_id="MyTarget")
     assert len(result.occurrences) == 1
     occ = result.occurrences[0]
     assert occ.usr == "s:MyFunc"
@@ -35,7 +35,7 @@ def test_read_index_store_parses_occurrences():
 
 def test_read_index_store_parses_relations():
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(_SAMPLE_LINES)):
-        result, _ = read_index_store("/fake/store", target_id="MyTarget")
+        result, _ = read_index_store("/fake/store", scope_id="MyTarget")
     assert len(result.relations) == 1
     rel = result.relations[0]
     assert rel.from_usr == "s:MyFunc"
@@ -48,7 +48,7 @@ def test_read_index_store_parses_relations():
 
 def test_read_index_store_empty_store():
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli([])):
-        result, _ = read_index_store("/fake/store", target_id="MyTarget")
+        result, _ = read_index_store("/fake/store", scope_id="MyTarget")
     assert result.occurrences == []
     assert result.relations == []
 
@@ -59,7 +59,7 @@ def test_read_index_store_tolerates_malformed_lines():
         'NOT VALID JSON',
     ]
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(lines)):
-        result, _ = read_index_store("/fake/store", target_id="T")
+        result, _ = read_index_store("/fake/store", scope_id="T")
     assert len(result.occurrences) == 1
     assert len(result.warnings) == 1
     assert "NOT VALID" in result.warnings[0]
@@ -71,7 +71,7 @@ def test_read_index_store_tolerates_missing_keys():
         '{"kind":"relation","from_usr":"a","to_usr":"b"}',
     ]
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(lines)):
-        result, _ = read_index_store("/fake/store", target_id="T")
+        result, _ = read_index_store("/fake/store", scope_id="T")
     assert len(result.occurrences) == 0
     assert len(result.relations) == 0
     assert len(result.warnings) == 2
@@ -91,7 +91,7 @@ def test_read_index_store_passes_targets_and_source_roots_to_cli(monkeypatch):
 
     read_index_store(
         "/fake/store",
-        target_id="Zoom",
+        scope_id="Zoom",
         source_roots=["/repo/ios-client", "/repo/client-app-common"],
         targets=["Zoom", "zPSApp"],
     )
