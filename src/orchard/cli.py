@@ -226,7 +226,6 @@ def cmd_ingest(args: list[str]):
     from orchard.ingest.state import load_state, save_state, touch_timestamp
     from pathlib import Path
     from orchard.build.xcode_settings import (
-        discover_compiled_files,
         discover_compiled_targets,
         find_xcode_project,
         get_derived_data_path,
@@ -280,7 +279,6 @@ def cmd_ingest(args: list[str]):
               file=sys.stderr)
         sys.exit(2)
 
-    allowed_files: set[str] | None = None
     derived_data_root = infer_derived_data_root(index_store)
     if derived_data_root:
         compiled_targets = discover_compiled_targets(derived_data_root)
@@ -293,9 +291,6 @@ def cmd_ingest(args: list[str]):
                 print(f"  compiled targets: {', '.join(compiled_targets)}", file=sys.stderr)
                 sys.exit(2)
             targets = compiled_targets
-            compiled_files = discover_compiled_files(derived_data_root, targets)
-            if compiled_files:
-                allowed_files = set(compiled_files)
 
     conn = _conn(ns.db)
     project_dir = str(Path(ns.project_dir).resolve())
@@ -335,7 +330,6 @@ def cmd_ingest(args: list[str]):
     r, file_status = read_index_store(
         index_store, entry_target,
         incremental_since=incremental_since,
-        allowed_files=allowed_files,
     )
 
     # Incremental cleanup: delete stale symbols for changed and deleted files

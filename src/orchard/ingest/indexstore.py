@@ -178,7 +178,6 @@ def read_index_store(
     target_id: str,
     source_root: str | None = None,
     incremental_since: float | None = None,
-    allowed_files: set[str] | None = None,
 ) -> tuple[IndexStoreResult, dict | None]:
     t0 = time.monotonic()
     result = IndexStoreResult()
@@ -193,9 +192,6 @@ def read_index_store(
             continue
         try:
             obj = json.loads(line)
-            file_path = obj.get("file", "")
-            if allowed_files is not None and file_path and file_path not in allowed_files:
-                continue
             if obj["kind"] == "occurrence":
                 result.occurrences.append(OccurrenceRecord(
                     usr=obj["usr"],
@@ -230,11 +226,6 @@ def read_index_store(
             result.warnings.append(f"invalid JSONL line ({exc}): {snippet}")
     result.elapsed_s = round(time.monotonic() - t0, 3)
     file_status = _parse_file_status(stderr) if incremental_since is not None else None
-    if file_status and allowed_files is not None:
-        for key in ("changed", "all"):
-            value = file_status.get(key)
-            if isinstance(value, list):
-                file_status[key] = [path for path in value if path in allowed_files]
     return result, file_status
 
 

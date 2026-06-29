@@ -76,37 +76,6 @@ def test_read_index_store_tolerates_missing_keys():
     assert len(result.relations) == 0
     assert len(result.warnings) == 2
 
-
-def test_read_index_store_filters_by_allowed_files():
-    lines = [
-        json.dumps({
-            "kind": "symbol",
-            "usr": "s:zoom",
-            "name": "Zoom",
-            "symbol_kind": "function",
-            "language": "objc",
-            "module": "Zoom",
-            "file": "/repo/ios-client/Zoom/AppDelegate.m",
-        }),
-        json.dumps({
-            "kind": "symbol",
-            "usr": "s:zps",
-            "name": "CPSContext",
-            "symbol_kind": "function",
-            "language": "cxx",
-            "module": "zPSApp",
-            "file": "/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp",
-        }),
-    ]
-    with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(lines)):
-        result, _ = read_index_store(
-            "/fake/store",
-            target_id="Zoom",
-            allowed_files={"/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp"},
-        )
-    assert [symbol.usr for symbol in result.symbols] == ["s:zps"]
-
-
 def test_cli_path_prefers_swiftpm_release_binary(monkeypatch):
     release_suffix = "swift/orchard-indexstore-reader/.build/release/orchard-indexstore-reader"
     bin_suffix = "bin/orchard-indexstore-reader"

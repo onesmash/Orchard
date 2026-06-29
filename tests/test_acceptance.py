@@ -332,9 +332,8 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, incremental_since=None, allowed_files=None):
+    def fake_read_index_store(index_store_path, target_id, incremental_since=None):
         captured["target_id"] = target_id
-        captured["allowed_files"] = allowed_files
         return IndexStoreResult(), None
 
     project = tmp_path / "Zoom.xcodeproj"
@@ -349,13 +348,6 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
         lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
     )
     monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
-    monkeypatch.setattr(
-        "orchard.build.xcode_settings.discover_compiled_files",
-        lambda *_args: [
-            "/repo/ios-client/Zoom/AppDelegate.m",
-            "/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp",
-        ],
-    )
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
@@ -366,10 +358,6 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
     ])
 
     assert captured["target_id"] == "Zoom"
-    assert captured["allowed_files"] == {
-        "/repo/ios-client/Zoom/AppDelegate.m",
-        "/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp",
-    }
 
 
 def test_cmd_ingest_defaults_to_incremental(tmp_path, monkeypatch):
@@ -382,7 +370,7 @@ def test_cmd_ingest_defaults_to_incremental(tmp_path, monkeypatch):
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, allowed_files=None):
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
@@ -417,7 +405,7 @@ def test_cmd_ingest_full_disables_incremental(tmp_path, monkeypatch):
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, allowed_files=None):
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
@@ -525,7 +513,7 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, allowed_files=None):
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
         captured["target_id"] = target_id
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
