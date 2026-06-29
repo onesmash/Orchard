@@ -452,6 +452,90 @@ def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monke
     assert "incremental: fast path hit" in out
 
 
+def test_cmd_ingest_merges_targets_into_existing_state(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.state.load_state",
+        lambda _project_dir: {
+            "last_ingest_ts": 123.0,
+            "targets": ["Zoom"],
+            "index_store_paths": {"Zoom": "/old/store"},
+        },
+    )
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: (IndexStoreResult(), None),
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+
+    cmd_ingest([
+        "--index-store", "/new/store",
+        "--project-dir", str(tmp_path),
+        "--target", "zPSApp",
+        "--db", str(tmp_path / "graph.db"),
+        "--full",
+    ])
+
+    state_path = tmp_path / ".orchard" / "ingest-state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert data["targets"] == ["Zoom", "zPSApp"]
+    assert data["index_store_paths"] == {
+        "Zoom": "/old/store",
+        "zPSApp": "/new/store",
+    }
+
+
+def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    captured: dict[str, object] = {}
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
+        captured["target_id"] = target_id
+        captured["incremental_since"] = incremental_since
+        return IndexStoreResult(), None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.state.load_state",
+        lambda _project_dir: {
+            "last_ingest_ts": 123.0,
+            "targets": ["Zoom"],
+            "index_store_paths": {"Zoom": "/fake/store"},
+        },
+    )
+    monkeypatch.setattr("orchard.ingest.indexstore._unit_dir_mtime", lambda _path: 120.0)
+    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "zPSApp",
+        "--db", str(tmp_path / "graph.db"),
+        "--incremental",
+    ])
+
+    assert captured["target_id"] == "zPSApp"
+    assert captured["incremental_since"] == 123.0
+
+
 def test_cmd_stats_reports_parent_database_discovery(tmp_path, capsys, monkeypatch):
     parent = tmp_path / "parent"
     child = parent / "child"

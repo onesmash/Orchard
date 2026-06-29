@@ -193,14 +193,22 @@ def _ensure_symbol_ids_exist(
     """
     if not usr_names:
         return 0
+    existing_rows = conn.execute("MATCH (s:Symbol) RETURN s.id").get_all()
+    existing_ids = {r[0] for r in existing_rows}
+    missing_usr_names = {
+        sid: name for sid, name in usr_names.items()
+        if sid not in existing_ids
+    }
+    if not missing_usr_names:
+        return 0
     import csv as _csv, tempfile as _tmp, os as _os
     p = _os.path.join(_tmp.mkdtemp(), "placeholders.csv")
     with open(p, "w", newline="") as fh:
         w = _csv.writer(fh, quoting=_csv.QUOTE_ALL)
-        for sid, name in usr_names.items():
+        for sid, name in missing_usr_names.items():
             w.writerow([
                 sid,           # id
-                "",            # usr (placeholder — use id as usr)
+                sid,           # usr (placeholder — use id as usr)
                 sid,           # precise_id
                 name,          # name
                 "",            # swift_display_name
@@ -217,7 +225,7 @@ def _ensure_symbol_ids_exist(
             ])
     conn.execute(f"COPY Symbol FROM '{p}' (HEADER=false, DELIM=',')")
     _os.unlink(p)
-    return len(usr_names)
+    return len(missing_usr_names)
 
 
 def _collect_missing_endpoints(

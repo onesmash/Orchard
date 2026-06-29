@@ -89,6 +89,18 @@ def _default_build_id(conn, target_id: str = "") -> str | None:
     return snapshot["id"] if snapshot else None
 
 
+def _merge_ingest_state(
+    old_state: dict | None,
+    targets: list[str],
+    index_store_paths: dict[str, str],
+) -> tuple[list[str], dict[str, str]]:
+    previous_targets = old_state.get("targets", []) if old_state else []
+    merged_targets = list(dict.fromkeys([*previous_targets, *targets]))
+    merged_index_store_paths = dict(old_state.get("index_store_paths", {}) if old_state else {})
+    merged_index_store_paths.update(index_store_paths)
+    return merged_targets, merged_index_store_paths
+
+
 def _parse_caller_callee_args(args: list[str]) -> tuple[str, str, str, bool, bool, int, list[str]]:
     """Parse --usr, --target, --db, --include-noise, --include-inferred, --depth, --relation-types."""
     import argparse
@@ -271,10 +283,9 @@ def cmd_ingest(args: list[str]):
 
     # Resolve incremental mode.
     incremental_since: float | None = None
-    old_state: dict | None = None
+    old_state: dict | None = load_state(project_dir)
     if ns.incremental:
         print(f"incremental: state path {state_path}")
-        old_state = load_state(project_dir)
         if old_state:
             incremental_since = old_state.get("last_ingest_ts")
             print(f"incremental: last_ingest_ts {incremental_since}")
@@ -292,7 +303,9 @@ def cmd_ingest(args: list[str]):
         print(f"incremental: index-store {index_store}")
         unit_ts = _unit_dir_mtime(index_store)
         print(f"incremental: unit_ts {unit_ts}")
-        if unit_ts <= incremental_since:
+        prev_targets = set(old_state.get("targets", []) if old_state else [])
+        requested_targets = set(targets)
+        if unit_ts <= incremental_since and requested_targets.issubset(prev_targets):
             print(f"incremental: fast path hit (unit_ts {unit_ts} <= "
                   f"last_ingest_ts {incremental_since})")
             conn.close()
@@ -325,8 +338,10 @@ def cmd_ingest(args: list[str]):
         if not r.symbols and not r.relations:
             # No changes — update state and exit.
             all_list = file_status.get("all", []) if file_status else []
-            save_state(project_dir, touch_timestamp(), targets,
-                       index_store_paths, files=all_list)
+            merged_targets, merged_index_store_paths = _merge_ingest_state(
+                old_state, targets, index_store_paths)
+            save_state(project_dir, touch_timestamp(), merged_targets,
+                       merged_index_store_paths, files=all_list)
             print("incremental: no changes detected")
             conn.close()
             return
@@ -421,11 +436,13 @@ def cmd_ingest(args: list[str]):
     # Persist state for next incremental run.
     # Full ingest: only save timestamp (no file list — we don't need it).
     # Incremental: save timestamp + file list from CLI output.
+    merged_targets, merged_index_store_paths = _merge_ingest_state(
+        old_state, targets, index_store_paths)
     if file_status and "all" in file_status:
-        save_state(project_dir, touch_timestamp(), targets, index_store_paths,
+        save_state(project_dir, touch_timestamp(), merged_targets, merged_index_store_paths,
                    files=file_status["all"])
     else:
-        save_state(project_dir, touch_timestamp(), targets, index_store_paths)
+        save_state(project_dir, touch_timestamp(), merged_targets, merged_index_store_paths)
 
 
 def cmd_search(args: list[str]):

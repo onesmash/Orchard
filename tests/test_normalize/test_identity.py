@@ -143,6 +143,31 @@ def test_upsert_calls_skips_unknown_role(conn):
     assert rows[0][0] == 0
 
 
+def test_upsert_calls_reuses_existing_global_symbol_from_other_target(conn):
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:shared", precise_id="s:shared", name="shared", kind="swift.func",
+                     module="M", language="swift", file_path="/src/shared.swift",
+                     signature="", access_level="public"),
+    ], target_id="T1")
+
+    rels = [RelationRecord(from_usr="s:shared", to_usr="s:newCaller", role="calledBy")]
+
+    written = upsert_calls(conn, rels, target_id="T2", source="indexstore", build_id="b2")
+
+    assert written == 1
+    rows = conn.execute(
+        "MATCH (a:Symbol)-[:Calls]->(b:Symbol) RETURN a.usr, b.usr ORDER BY a.usr, b.usr"
+    ).get_all()
+    assert rows == [["s:newCaller", "s:shared"]]
+    symbols = conn.execute(
+        "MATCH (s:Symbol) RETURN s.usr, s.target_id, s.origin ORDER BY s.usr"
+    ).get_all()
+    assert symbols == [
+        ["s:newCaller", "T2", "indexstore_placeholder"],
+        ["s:shared", "T1", "swift_symbolgraph"],
+    ]
+
+
 def test_upsert_references_writes_edge(conn):
     target_id = "MyLib"
     _seed_two_symbols(conn, target_id)
