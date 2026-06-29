@@ -76,6 +76,74 @@ def test_read_index_store_tolerates_missing_keys():
     assert len(result.relations) == 0
     assert len(result.warnings) == 2
 
+
+def test_read_index_store_passes_targets_and_source_roots_to_cli(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_run_cli(index_store_path, source_root=None, source_roots=None, incremental_since=None, list_files=False, targets=None):
+        captured["index_store_path"] = index_store_path
+        captured["source_root"] = source_root
+        captured["source_roots"] = source_roots
+        captured["targets"] = targets
+        return [], ""
+
+    monkeypatch.setattr("orchard.ingest.indexstore._run_cli", fake_run_cli)
+
+    read_index_store(
+        "/fake/store",
+        target_id="Zoom",
+        source_roots=["/repo/ios-client", "/repo/client-app-common"],
+        targets=["Zoom", "zPSApp"],
+    )
+
+    assert captured["index_store_path"] == "/fake/store"
+    assert captured["source_roots"] == ["/repo/ios-client", "/repo/client-app-common"]
+    assert captured["targets"] == ["Zoom", "zPSApp"]
+
+
+def test_run_cli_expands_repeated_targets_and_source_roots(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class DummyStdout:
+        def __iter__(self):
+            return iter(())
+
+        def close(self):
+            return None
+
+    class DummyStderr:
+        def read(self):
+            return ""
+
+    class DummyProc:
+        def __init__(self, cmd, **_kwargs):
+            captured["cmd"] = cmd
+            self.stdout = DummyStdout()
+            self.stderr = DummyStderr()
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr("orchard.ingest.indexstore.subprocess.Popen", DummyProc)
+    monkeypatch.setattr("orchard.ingest.indexstore._cli_path", lambda: "/bin/orchard-indexstore-reader")
+
+    from orchard.ingest.indexstore import _run_cli
+
+    _run_cli(
+        "/fake/store",
+        source_roots=["/repo/ios-client", "/repo/client-app-common"],
+        targets=["Zoom", "zPSApp"],
+    )
+
+    assert captured["cmd"] == [
+        "/bin/orchard-indexstore-reader",
+        "/fake/store",
+        "--source-root", "/repo/ios-client",
+        "--source-root", "/repo/client-app-common",
+        "--target", "Zoom",
+        "--target", "zPSApp",
+    ]
+
 def test_cli_path_prefers_swiftpm_release_binary(monkeypatch):
     release_suffix = "swift/orchard-indexstore-reader/.build/release/orchard-indexstore-reader"
     bin_suffix = "bin/orchard-indexstore-reader"

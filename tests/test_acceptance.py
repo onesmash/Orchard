@@ -332,8 +332,9 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, incremental_since=None):
+    def fake_read_index_store(index_store_path, target_id, incremental_since=None, targets=None):
         captured["target_id"] = target_id
+        captured["targets"] = targets
         return IndexStoreResult(), None
 
     project = tmp_path / "Zoom.xcodeproj"
@@ -358,6 +359,7 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
     ])
 
     assert captured["target_id"] == "Zoom"
+    assert captured["targets"] == ["Zoom", "zPSApp"]
 
 
 def test_cmd_ingest_defaults_to_incremental(tmp_path, monkeypatch):
@@ -370,7 +372,7 @@ def test_cmd_ingest_defaults_to_incremental(tmp_path, monkeypatch):
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, targets=None):
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
@@ -405,7 +407,7 @@ def test_cmd_ingest_full_disables_incremental(tmp_path, monkeypatch):
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, targets=None):
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
@@ -513,7 +515,7 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, targets=None):
         captured["target_id"] = target_id
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None

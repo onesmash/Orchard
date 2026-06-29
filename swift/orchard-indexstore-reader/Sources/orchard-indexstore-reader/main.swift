@@ -49,7 +49,8 @@ func stageSeconds(since start: Date) -> String {
 let args = CommandLine.arguments
 var storePath: String?
 var libIndexStore: String?
-var sourceRoot: String?
+var sourceRoots: [String] = []
+var targets: [String] = []
 var incrementalSince: Double?       // Unix epoch seconds
 var listFilesOnly: Bool = false
 
@@ -63,10 +64,16 @@ while i < args.count {
     libIndexStore = String(a.dropFirst("--libindexstore=".count)); i += 1; continue
   }
   if a == "--source-root", i + 1 < args.count {
-    sourceRoot = args[i + 1]; i += 2; continue
+    sourceRoots.append(args[i + 1]); i += 2; continue
   }
   if a.hasPrefix("--source-root=") {
-    sourceRoot = String(a.dropFirst("--source-root=".count)); i += 1; continue
+    sourceRoots.append(String(a.dropFirst("--source-root=".count))); i += 1; continue
+  }
+  if a == "--target", i + 1 < args.count {
+    targets.append(args[i + 1]); i += 2; continue
+  }
+  if a.hasPrefix("--target=") {
+    targets.append(String(a.dropFirst("--target=".count))); i += 1; continue
   }
   if a == "--incremental-since", i + 1 < args.count {
     incrementalSince = Double(args[i + 1]); i += 2; continue
@@ -97,8 +104,11 @@ guard let storePath, !storePath.isEmpty else {
 }
 
 logProgress("starting for storePath=\(storePath)")
-if let sourceRoot {
-  logProgress("sourceRoot=\(sourceRoot)")
+if !sourceRoots.isEmpty {
+  logProgress("sourceRoots=\(sourceRoots.joined(separator: ","))")
+}
+if !targets.isEmpty {
+  logProgress("targets=\(targets.joined(separator: ","))")
 }
 
 // MARK: - Resolve libIndexStore.dylib
@@ -223,8 +233,10 @@ func writeLine(_ s: String) {
 }
 
 func underRoot(_ p: String) -> Bool {
-  if let prefix = sourceRoot {
-    return p == prefix || p.hasPrefix(prefix + "/")
+  if !sourceRoots.isEmpty {
+    return sourceRoots.contains(where: { prefix in
+      p == prefix || p.hasPrefix(prefix + "/")
+    })
   }
   return true
 }
@@ -237,16 +249,31 @@ let sourceExtensions: Set<String> = [
 
 var filePaths: [String] = []
 
-if let root = sourceRoot {
+let effectiveSourceRoots: [String]
+if !sourceRoots.isEmpty {
+  effectiveSourceRoots = sourceRoots
+} else if !targets.isEmpty {
+  effectiveSourceRoots = (try? sourceRootsForTargets(indexStorePath: storePath, targets: targets)) ?? []
+  if !effectiveSourceRoots.isEmpty {
+    logProgress("derived \(effectiveSourceRoots.count) source roots from targets")
+  }
+} else {
+  effectiveSourceRoots = []
+}
+
+if !effectiveSourceRoots.isEmpty {
   let fm = FileManager.default
-  let baseURL = URL(fileURLWithPath: root)
-  logProgress("enumerating source files under sourceRoot")
+  logProgress("enumerating source files under source roots")
   let enumerationStart = Date()
-  if let enumerator = fm.enumerator(at: baseURL, includingPropertiesForKeys: nil) {
-    while let url = enumerator.nextObject() as? URL {
-      if sourceExtensions.contains(url.pathExtension) {
-        let p = url.path
-        if underRoot(p) { filePaths.append(p) }
+  var seen = Set<String>()
+  for root in effectiveSourceRoots {
+    let baseURL = URL(fileURLWithPath: root)
+    if let enumerator = fm.enumerator(at: baseURL, includingPropertiesForKeys: nil) {
+      while let url = enumerator.nextObject() as? URL {
+        if sourceExtensions.contains(url.pathExtension) {
+          let p = url.path
+          if underRoot(p) && seen.insert(p).inserted { filePaths.append(p) }
+        }
       }
     }
   }

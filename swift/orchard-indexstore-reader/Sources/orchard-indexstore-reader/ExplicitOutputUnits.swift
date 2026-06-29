@@ -2,6 +2,15 @@ import Foundation
 
 private typealias OutputFileMap = [String: [String: String]]
 
+private func buildDatabasePathForIndexNoIndex(indexNoIndexURL: URL) -> String {
+  indexNoIndexURL
+    .appendingPathComponent("Build", isDirectory: true)
+    .appendingPathComponent("Intermediates.noindex", isDirectory: true)
+    .appendingPathComponent("XCBuildData", isDirectory: true)
+    .appendingPathComponent("build.db")
+    .path
+}
+
 private func canonicalizeOutputPath(_ path: String, intermediatesURL: URL) -> String {
   let standardizedIntermediates = intermediatesURL.standardizedFileURL.path
   let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
@@ -61,6 +70,28 @@ private func compileCOutputUnitPaths(buildDatabasePath: String, intermediatesURL
   return paths.sorted()
 }
 
+private func compileCSourceRoots(buildDatabasePath: String, targets: [String]) -> [String] {
+  let rows = sqliteRows(
+    databasePath: buildDatabasePath,
+    sql: "select key from key_names where key GLOB 'CP1:*:CompileC *';"
+  )
+
+  let targetMarkers = targets.map { "/\($0).build/" }
+  var roots = Set<String>()
+  for line in rows {
+    guard let range = line.range(of: "CompileC ") else { continue }
+    let payload = line[range.upperBound...]
+    let parts = payload.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+    guard parts.count >= 2 else { continue }
+    let outputPath = String(parts[0])
+    guard targetMarkers.contains(where: outputPath.contains) else { continue }
+    let sourcePath = String(parts[1])
+    guard sourcePath.hasPrefix("/") else { continue }
+    roots.insert(URL(fileURLWithPath: sourcePath).deletingLastPathComponent().path)
+  }
+  return roots.sorted()
+}
+
 private func swiftOutputFileMapPaths(buildDatabasePath: String) -> [String] {
   let rows = sqliteRows(
     databasePath: buildDatabasePath,
@@ -92,6 +123,20 @@ private func outputPathsFromSwiftOutputFileMaps(
     }
   }
   return paths.sorted()
+}
+
+private func outputFileMapSourceRoots(buildDatabasePath: String, targets: [String]) throws -> [String] {
+  let targetMarkers = targets.map { "/\($0).build/" }
+  var roots = Set<String>()
+  for fileMapPath in swiftOutputFileMapPaths(buildDatabasePath: buildDatabasePath) {
+    guard targetMarkers.contains(where: fileMapPath.contains) else { continue }
+    let data = try Data(contentsOf: URL(fileURLWithPath: fileMapPath))
+    let outputFileMap = try JSONDecoder().decode(OutputFileMap.self, from: data)
+    for sourcePath in outputFileMap.keys where sourcePath.hasPrefix("/") {
+      roots.insert(URL(fileURLWithPath: sourcePath).deletingLastPathComponent().path)
+    }
+  }
+  return roots.sorted()
 }
 
 private func precompiledModuleOutputUnitPaths(
@@ -164,4 +209,15 @@ func explicitOutputUnitPaths(
   }
 
   return paths.sorted()
+}
+
+func sourceRootsForTargets(indexStorePath: String, targets: [String]) throws -> [String] {
+  let dataStoreURL = URL(fileURLWithPath: indexStorePath, isDirectory: true)
+  let indexNoIndexURL = dataStoreURL.deletingLastPathComponent()
+  let buildDatabasePath = buildDatabasePathForIndexNoIndex(indexNoIndexURL: indexNoIndexURL)
+  var roots = Set(compileCSourceRoots(buildDatabasePath: buildDatabasePath, targets: targets))
+  for path in try outputFileMapSourceRoots(buildDatabasePath: buildDatabasePath, targets: targets) {
+    roots.insert(path)
+  }
+  return roots.sorted()
 }

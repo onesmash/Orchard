@@ -330,6 +330,7 @@ def cmd_ingest(args: list[str]):
     r, file_status = read_index_store(
         index_store, entry_target,
         incremental_since=incremental_since,
+        targets=targets,
     )
 
     # Incremental cleanup: delete stale symbols for changed and deleted files

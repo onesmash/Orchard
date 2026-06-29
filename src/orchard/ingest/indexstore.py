@@ -101,13 +101,21 @@ def _packaged_cli_relpath() -> Path | None:
 def _run_cli(
     index_store_path: str,
     source_root: str | None = None,
+    source_roots: list[str] | None = None,
     incremental_since: float | None = None,
     list_files: bool = False,
+    targets: list[str] | None = None,
 ):
     """Run the CLI and return ``(stdout_lines, stderr)``."""
     cmd = [_cli_path(), index_store_path]
     if source_root:
         cmd += ["--source-root", source_root]
+    if source_roots:
+        for root in source_roots:
+            cmd += ["--source-root", root]
+    if targets:
+        for target in targets:
+            cmd += ["--target", target]
     if incremental_since is not None:
         cmd += ["--incremental-since", str(int(incremental_since))]
     if list_files:
@@ -177,14 +185,18 @@ def read_index_store(
     index_store_path: str,
     target_id: str,
     source_root: str | None = None,
+    source_roots: list[str] | None = None,
     incremental_since: float | None = None,
+    targets: list[str] | None = None,
 ) -> tuple[IndexStoreResult, dict | None]:
     t0 = time.monotonic()
     result = IndexStoreResult()
     lines, stderr = _run_cli(
         index_store_path,
         source_root=source_root,
+        source_roots=source_roots,
         incremental_since=incremental_since,
+        targets=targets,
     )
     for raw in lines:
         line = raw.strip()
