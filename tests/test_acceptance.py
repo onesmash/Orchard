@@ -322,33 +322,54 @@ def test_cmd_stats_prints_db_path_and_snapshot_metadata(tmp_db_path, capsys):
     assert "IndexStore: /tmp/dd/IndexStore" in out
 
 
-def test_cmd_ingest_resolves_relative_source_root(tmp_path, monkeypatch):
+def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatch):
     from orchard.cli import cmd_ingest
     from orchard.ingest.indexstore import IndexStoreResult
 
-    captured: dict[str, str | None] = {}
+    captured: dict[str, object] = {}
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
-        captured["source_root"] = source_root
+    class DummyConn:
+        def close(self):
+            return None
+
+    def fake_read_index_store(index_store_path, target_id, incremental_since=None, allowed_files=None):
+        captured["target_id"] = target_id
+        captured["allowed_files"] = allowed_files
         return IndexStoreResult(), None
 
-    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "Zoom.xcodeproj"
+    project.mkdir()
+    derived_data = tmp_path / "Zoom-abc"
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
     monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
-    monkeypatch.setattr("orchard.ingest.indexstore.list_source_files", lambda *a, **kw: [])
+    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(project))
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.match_derived_data",
+        lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
+    )
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.discover_compiled_files",
+        lambda *_args: [
+            "/repo/ios-client/Zoom/AppDelegate.m",
+            "/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp",
+        ],
+    )
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
 
-    db_path = tmp_path / "graph.db"
     cmd_ingest([
-        "--index-store", "/fake/store",
         "--project-dir", str(tmp_path),
-        "--source-root", ".",
-        "--target", "T",
-        "--db", str(db_path),
+        "--target", "Zoom",
     ])
 
-    assert captured["source_root"] == str(tmp_path.resolve())
+    assert captured["target_id"] == "Zoom"
+    assert captured["allowed_files"] == {
+        "/repo/ios-client/Zoom/AppDelegate.m",
+        "/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp",
+    }
 
 
 def test_cmd_ingest_defaults_to_incremental(tmp_path, monkeypatch):
@@ -361,7 +382,7 @@ def test_cmd_ingest_defaults_to_incremental(tmp_path, monkeypatch):
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, allowed_files=None):
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
@@ -396,7 +417,7 @@ def test_cmd_ingest_full_disables_incremental(tmp_path, monkeypatch):
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, allowed_files=None):
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
@@ -504,7 +525,7 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None):
+    def fake_read_index_store(index_store_path, target_id, source_root=None, incremental_since=None, allowed_files=None):
         captured["target_id"] = target_id
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None

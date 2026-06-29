@@ -180,8 +180,6 @@ def test_installed_wheel_cli_can_ingest_minimal_index(tmp_path):
             str(index_path),
             "--project-dir",
             str(project_dir),
-            "--source-root",
-            str(src_dir),
             "--target",
             "T",
             "--db",

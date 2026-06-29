@@ -12,6 +12,84 @@ import subprocess
 from pathlib import Path
 
 
+def infer_derived_data_root(index_store_path: str) -> str | None:
+    """Infer the DerivedData entry root from an IndexStore DataStore path."""
+    path = Path(index_store_path)
+    if path.name != "DataStore":
+        return None
+    if path.parent.name != "Index.noindex":
+        return None
+    return str(path.parent.parent)
+
+
+def _top_level_build_dirs(root: Path) -> list[Path]:
+    return [
+        entry
+        for entry in root.iterdir()
+        if entry.is_dir() and entry.name.endswith(".build")
+    ]
+
+
+def _split_dep_tokens(raw: str) -> list[str]:
+    tokens: list[str] = []
+    current: list[str] = []
+    escape = False
+    for ch in raw.replace("\\\n", " "):
+        if escape:
+            current.append(ch)
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch.isspace():
+            if current:
+                tokens.append("".join(current))
+                current.clear()
+            continue
+        current.append(ch)
+    if escape:
+        current.append("\\")
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
+def discover_compiled_targets(derived_data_root: str) -> list[str]:
+    """Return compiled target names from ``*.build`` directories."""
+    root = Path(derived_data_root) / "Index.noindex" / "Build" / "Intermediates.noindex"
+    if not root.is_dir():
+        return []
+    targets = {
+        entry.name[:-6]
+        for entry in _top_level_build_dirs(root)
+    }
+    return sorted(targets)
+
+
+def discover_compiled_files(derived_data_root: str, targets: list[str]) -> list[str]:
+    """Collect source paths from dependency files for selected targets."""
+    root = Path(derived_data_root) / "Index.noindex" / "Build" / "Intermediates.noindex"
+    if not root.is_dir():
+        return []
+    selected = set(targets)
+    sources: set[str] = set()
+    for target_name in selected:
+        build_dir = root / f"{target_name}.build"
+        if not build_dir.is_dir():
+            continue
+        for dep_file in build_dir.rglob("*.d"):
+            try:
+                content = dep_file.read_text()
+            except (OSError, UnicodeDecodeError):
+                continue
+            _, _, dependencies = content.partition(":")
+            for token in _split_dep_tokens(dependencies):
+                if token.endswith((".c", ".cc", ".cpp", ".m", ".mm", ".swift")):
+                    sources.add(token)
+    return sorted(sources)
+
+
 def get_derived_data_path() -> str:
     """Return the Xcode DerivedData directory path.
 

@@ -7,7 +7,7 @@ Usage::
     orchard impact --usr s:myFunc
     orchard symbol  --usr s:myFunc
     orchard hierarchy --usr s:myFunc
-    orchard ingest  --index-store <path> [--source-root <dir>]
+    orchard ingest  --index-store <path> [--target <name>]
     orchard setup   --mcp | --skill | --model   # one-shot configuration
 """
 from __future__ import annotations
@@ -202,8 +202,6 @@ def cmd_ingest(args: list[str]):
                     help="Path to IndexStore/DataStore (auto-detected if omitted)")
     ap.add_argument("--project-dir", default=os.getcwd(),
                     help="Xcode project directory for auto-detection (default: cwd)")
-    ap.add_argument("--source-root", default="",
-                    help="Only emit symbols under this directory")
     ap.add_argument("--target", default="",
                     help="Build target identifier(s), comma-separated for multiple. "
                          "Auto-detected from project name if omitted.")
@@ -227,14 +225,22 @@ def cmd_ingest(args: list[str]):
     from orchard.pipeline.runner import _map_indexstore_kind
     from orchard.ingest.state import load_state, save_state, touch_timestamp
     from pathlib import Path
-    from orchard.build.xcode_settings import find_xcode_project, match_derived_data, get_derived_data_path
+    from orchard.build.xcode_settings import (
+        discover_compiled_files,
+        discover_compiled_targets,
+        find_xcode_project,
+        get_derived_data_path,
+        infer_derived_data_root,
+        match_derived_data,
+    )
 
     index_store = ns.index_store
-    source_root = str(Path(ns.source_root).resolve()) if ns.source_root else None
     state_path = Path(ns.project_dir).resolve() / ".orchard" / "ingest-state.json"
 
     # Parse comma-separated targets.
-    targets: list[str] = [t.strip() for t in ns.target.split(",") if t.strip()] if ns.target else []
+    requested_targets: list[str] = [t.strip() for t in ns.target.split(",") if t.strip()] if ns.target else []
+    targets = list(requested_targets)
+    entry_target = requested_targets[0] if requested_targets else ""
 
     # Auto-detect IndexStore from Xcode project when --index-store is omitted.
     if not index_store:
@@ -258,24 +264,38 @@ def cmd_ingest(args: list[str]):
             ns.db = str(Path(project).parent / ".orchard" / "graph.db")
         # Use the most recently accessed candidate.
         dd_dir, index_store, _ = candidates[0]
-        if not targets:
-            targets = [Path(project).stem]  # auto-detect from project name
-        if not source_root:
-            source_root = str(Path(ns.project_dir).resolve())
+        if not entry_target:
+            entry_target = Path(project).stem
+            targets = [entry_target]
         print(f"auto-detected: --index-store {index_store}")
-        print(f"auto-detected: --target {','.join(targets)}")
-        if source_root:
-            print(f"auto-detected: --source-root {source_root}")
+        print(f"auto-detected: --target {entry_target}")
         if len(candidates) > 1:
             print(f"note: {len(candidates)} matching DerivedData dirs found, using newest:")
             for dd, _, acc in candidates[:3]:
                 print(f"  {dd}  (accessed {acc})")
     elif not ns.db:
         ns.db = str(Path(ns.project_dir) / ".orchard" / "graph.db")
-    if not targets:
+    if not entry_target:
         print("error: --target is required when no Xcode project is auto-detected",
               file=sys.stderr)
         sys.exit(2)
+
+    allowed_files: set[str] | None = None
+    derived_data_root = infer_derived_data_root(index_store)
+    if derived_data_root:
+        compiled_targets = discover_compiled_targets(derived_data_root)
+        if compiled_targets:
+            if entry_target not in compiled_targets:
+                print(
+                    f"error: target '{entry_target}' was not compiled in DerivedData '{derived_data_root}'.",
+                    file=sys.stderr,
+                )
+                print(f"  compiled targets: {', '.join(compiled_targets)}", file=sys.stderr)
+                sys.exit(2)
+            targets = compiled_targets
+            compiled_files = discover_compiled_files(derived_data_root, targets)
+            if compiled_files:
+                allowed_files = set(compiled_files)
 
     conn = _conn(ns.db)
     project_dir = str(Path(ns.project_dir).resolve())
@@ -313,8 +333,9 @@ def cmd_ingest(args: list[str]):
 
     t0 = time.monotonic()
     r, file_status = read_index_store(
-        index_store, targets[0], source_root=source_root,
+        index_store, entry_target,
         incremental_since=incremental_since,
+        allowed_files=allowed_files,
     )
 
     # Incremental cleanup: delete stale symbols for changed and deleted files
@@ -411,7 +432,7 @@ def cmd_ingest(args: list[str]):
         else:
             changed_only = None  # full scan
         ng_count = persist_notification_graph(
-            conn, source_root=source_root or os.getcwd(),
+            conn, source_root=project_dir,
             build_id="cli", changed_files=changed_only)
         if ng_count:
             print(f"  notification-graph: {ng_count:,} edges "
