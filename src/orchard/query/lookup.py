@@ -191,17 +191,23 @@ class GraphLookup:
 
     def callees_of(self, usr: str,
                    relation_types: list[str] | None = None,
-                   include_inferred: bool = False) -> list[dict]:
+                   include_inferred: bool = False,
+                   include_notification_bridges: bool = False) -> list[dict]:
         """Return callees of *usr*.
 
         By default only source-level call evidence (``reason = 'source_direct'``)
         is returned.  Set *include_inferred* to True to see compiler-inferred
         edges (``indexstore_relation_only``) as well.
+
+        When *include_notification_bridges* is True, callees with
+        ``semantic_role == "notification_observer"`` are annotated with
+        ``notification_bridges`` — the matching Observes edges showing
+        which notification, selector, and callback each observer is wired to.
         """
         if relation_types is None:
             relation_types = ["Calls"]
         cache_key = f"{usr}:{include_inferred}"
-        if cache_key in self._callees_cache:
+        if cache_key in self._callees_cache and not include_notification_bridges:
             return self._callees_cache[cache_key]
         rel_pipe = "|".join(relation_types)
         sym_id = make_symbol_id(usr)
@@ -216,6 +222,7 @@ class GraphLookup:
             include_inferred,
         )
         callees: dict[str, dict] = {}
+        has_notification_observer = False
         for r in preferred_rows:
             reason_val = r[8] or "indexstore_relation_only"
             lang = r[4] or ""
@@ -227,10 +234,38 @@ class GraphLookup:
                 "provenance": r[8] or "symbolgraph",
             }
             if lang == "objc":
-                entry["semantic_role"] = classify_objc_message(r[1])
+                role = classify_objc_message(r[1])
+                entry["semantic_role"] = role
+                if role == "notification_observer":
+                    has_notification_observer = True
             callees.setdefault(r[0], entry)
         result = list(callees.values())
-        self._callees_cache[cache_key] = result
+
+        # Enrich notification_observer callees with bridges from Observes edges.
+        if include_notification_bridges and has_notification_observer:
+            obs_rows = self._conn.execute(
+                "MATCH (n:Notification)-[ob:Observes]->(cb:Symbol) "
+                "WHERE ob.observer_usr = $usr "
+                "RETURN n.name, ob.selector, cb.usr, cb.name, cb.module",
+                {"usr": usr},
+            ).get_all()
+            if obs_rows:
+                for r in obs_rows:
+                    bridge = {
+                        "notification_name": r[0],
+                        "selector": r[1] or "",
+                        "callback": {
+                            "usr": r[2], "name": r[3], "module": r[4] or "",
+                        },
+                    }
+                    # Attach to every notification_observer callee entry.
+                    for entry in result:
+                        if entry.get("semantic_role") == "notification_observer":
+                            entry.setdefault("notification_bridges", []).append(bridge)
+
+        # Don't cache when bridges are included (bridge data varies by observer).
+        if not include_notification_bridges:
+            self._callees_cache[cache_key] = result
         return result
 
     def callees_of_depth(self, usr: str,

@@ -88,6 +88,12 @@ also carry `semantic_role`** — the selector classified into one of:
 This tells you at a glance whether a symbol registers for notifications, sets
 up delegate wiring, or is an Apple framework entry point.
 
+**Notification bridges**: set `include_notification_bridges: true` (MCP) to
+annotate `notification_observer` callees with matching Observes edges —
+showing which notification name, @selector, and callback each observer is
+wired to. This gives you the full chain: **who registered → selector → event
+key → callback**, equivalent to GitNexus's notification_bridge concept.
+
 ### find_references — Incoming + outgoing in one call
 
 ```bash
@@ -172,21 +178,33 @@ orchard notification-graph -n kNoti_LogoutForUI
 orchard notification-graph -f json
 ```
 
-MCP: `orchard_notification_graph({notification_name: "..."})` — same data,
-returns notifications grouped by name with posters/observers/selectors/callbacks.
+MCP: `orchard_notification_graph({notification_name: "...", group_by: "observer"})`
+
+Two views:
+- `group_by: "notification"` (default) — grouped by notification name, each
+  with posters and observers.  Observers now carry full identity (`usr`,
+  `name`, `file_path`), `selector`, and `callback` — the complete
+  **notification_bridge**: who registered → @selector → event key → callback.
+- `group_by: "observer"` — pivoted by observer USR, showing each observer's
+  registrations at a glance.
 
 Shows poster → [notification] → callback chains.  During ingest,
 Notification nodes and Posts/Observes edges are persisted to the graph.
 Query them directly via Cypher for instant answers:
 
 ```cypher
--- Full chain: poster → notification → callback
-MATCH (p:Symbol)-[:Posts]->(n:Notification)-[:Observes]->(cb:Symbol)
-RETURN DISTINCT p.name, n.name, cb.name
+-- Full chain: poster → notification → callback (with observer identity)
+MATCH (p:Symbol)-[:Posts]->(n:Notification)-[o:Observes]->(cb:Symbol)
+RETURN DISTINCT p.name, n.name, o.observer_name, o.selector, cb.name
 
 -- Who observes this notification?
 MATCH (n:Notification {name: 'kNoti_X'})-[o:Observes]->(cb:Symbol)
-RETURN DISTINCT cb.name, o.selector
+RETURN DISTINCT o.observer_name, o.selector, cb.name
+
+-- All registrations by a specific observer
+MATCH (n:Notification)-[o:Observes]->(cb:Symbol)
+WHERE o.observer_usr = '<USR>'
+RETURN n.name, o.selector, cb.name
 ```
 
 ### stats — Database overview
@@ -216,7 +234,7 @@ target).
 |------|---------|--------|
 | `Calls` | A calls B | IndexStore (compiler-verified) |
 | `Posts` | A posts notification N | derive/notification |
-| `Observes` | N notifies callback C | derive/notification |
+| `Observes` | N notifies callback C (carries observer_usr/name/file_path + selector) | derive/notification |
 | `Contains` | Class contains method | IndexStore |
 | `BridgesTo` | ObjC ↔ Swift | derive/bridge |
 
@@ -247,9 +265,11 @@ All orchard tools are available as MCP tools with session-scoped DB connection.
 The skill should prefer MCP tools when available; fall back to CLI pipe for
 batch queries.
 
-MCP tools: `orchard_search`, `orchard_find_callers`, `orchard_find_callees`,
-`orchard_find_references` (now includes semantic_role for ObjC callees),
-`orchard_notification_graph`, `orchard_impact`, `orchard_symbol`,
+MCP tools: `orchard_search`, `orchard_find_callers`, `orchard_find_callees`
+(with `include_notification_bridges: true` for full notification wiring),
+`orchard_find_references` (includes semantic_role for ObjC callees),
+`orchard_notification_graph` (with `group_by: "observer"` for
+by-observer view), `orchard_impact`, `orchard_symbol`,
 `orchard_hierarchy`, `orchard_rename`, `orchard_stats`, `orchard_audit`.
 
 ## Confidence labels
@@ -282,6 +302,7 @@ The `include_inferred` flag controls whether inferred edges appear.
    - How many dependents at each depth (d1 = WILL BREAK)
    - Risk level and what it means
    - ObjC semantic roles (notification wiring, delegate patterns)
+   - Notification bridges — who registered → selector → event key → callback
    - Cross-language bridges (ObjC ↔ Swift)
 
 ## Interpreting USR formats

@@ -30,6 +30,7 @@ class CalleeRequest(BaseToolRequest):
     depth: int = 1
     relation_types: list[str] = field(default_factory=lambda: ["Calls"])
     include_inferred: bool = False
+    include_notification_bridges: bool = False
 
 
 def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
@@ -51,7 +52,8 @@ def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
         callee_map: dict[str, dict] = {}
         for method in methods:
             for callee in g.callees_of(method["usr"], req.relation_types,
-                                       include_inferred=req.include_inferred):
+                                       include_inferred=req.include_inferred,
+                                       include_notification_bridges=req.include_notification_bridges):
                 key = callee["usr"]
                 if key not in callee_map:
                     callee_map[key] = {
@@ -95,7 +97,8 @@ def find_callees(conn, req: CalleeRequest) -> BaseToolResponse:
                                   include_inferred=req.include_inferred)
     else:
         data = g.callees_of(req.usr, req.relation_types,
-                            include_inferred=req.include_inferred)
+                            include_inferred=req.include_inferred,
+                            include_notification_bridges=req.include_notification_bridges)
         data = [{**d, "depth": 1} for d in data]
     _, status = g.freshness(req.build_id or "")
     return BaseToolResponse(

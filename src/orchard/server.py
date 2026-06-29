@@ -116,7 +116,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_find_callees",
-        description="Find all callees (symbols called by) a given symbol. Each entry includes confidence (compiler-verified/inferred). ObjC callees carry semantic_role (notification_observer, delegate_setter, framework_callback...) inline — no separate tool needed.",
+        description="Find all callees (symbols called by) a given symbol. Each entry includes confidence (compiler-verified/inferred). ObjC callees carry semantic_role (notification_observer, delegate_setter, framework_callback...) inline — no separate tool needed. Set include_notification_bridges=true to annotate notification_observer callees with matching notification name, selector, and callback.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -125,6 +125,7 @@ TOOLS = [
                 "relation_types": {"type": "string", "description": "Comma-separated edge types to traverse (default: Calls). Example: 'Calls,Inherits,Implements'"},
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
                 "include_inferred": {"type": "boolean", "description": "When true, include compiler-inferred edges (reason=indexstore_relation_only). Default false: only source-level call evidence."},
+                "include_notification_bridges": {"type": "boolean", "description": "When true, annotate notification_observer callees with notification_bridges: notification_name, selector, and callback symbol. Default false."},
             },
             "required": ["usr"],
         },
@@ -197,11 +198,12 @@ TOOLS = [
     ),
     Tool(
         name="orchard_notification_graph",
-        description="Query the NSNotificationCenter publisher-observer graph. Returns notifications grouped by name, each with posters (who posts) and observers (who listens, with @selector and callback symbol). Supports optional filtering by notification name.",
+        description="Query the NSNotificationCenter publisher-observer graph. Returns notifications grouped by name (default), each with posters and observers. Observers now carry identity (who registered), selector, and callback. Use group_by='observer' to pivot by observer — see each observer's registrations at a glance.",
         inputSchema={
             "type": "object",
             "properties": {
                 "notification_name": {"type": "string", "description": "Filter by notification name (substring match). Omit to return all notifications."},
+                "group_by": {"type": "string", "description": "Grouping mode: 'notification' (default) or 'observer' — pivots by observer USR showing each observer's registrations."},
             },
         },
     ),
@@ -340,6 +342,9 @@ def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, 
         relation_types=relation_types or args.get("relation_types", ["Calls"]),
         include_inferred=args.get("include_inferred", include_inferred),
     )
+    # Pass include_notification_bridges through if the request class supports it.
+    if "include_notification_bridges" in args:
+        req.include_notification_bridges = args["include_notification_bridges"]
     result = fn(conn, req)
     if not include_noise:
         from orchard.query.noise_filter import filter_noise
@@ -403,6 +408,7 @@ def _do_notification_graph(args: dict) -> str:
     build_id = args.get("build_id") or _default_build_id_safe(conn, "")
     req = cls(
         notification_name=args.get("notification_name", ""),
+        group_by=args.get("group_by", "notification"),
         build_id=build_id,
     )
     result = fn(conn, req)
@@ -413,7 +419,7 @@ HANDLERS: dict[str, callable] = {
     "orchard_search": _do_search,
     "orchard_find_references": lambda a: _do_handler("references", "find_references", "ReferencesRequest", a),
     "orchard_find_callers": lambda a: _do_handler("callers", "find_callers", "CallerRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1), relation_types=a.get("relation_types", "Calls").split(",") if isinstance(a.get("relation_types"), str) else ["Calls"]),
-    "orchard_find_callees": lambda a: _do_handler("callees", "find_callees", "CalleeRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1), relation_types=a.get("relation_types", "Calls").split(",") if isinstance(a.get("relation_types"), str) else ["Calls"]),
+    "orchard_find_callees": lambda a: _do_handler("callees", "find_callees", "CalleeRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1), relation_types=a.get("relation_types", "Calls").split(",") if isinstance(a.get("relation_types"), str) else a.get("relation_types", ["Calls"])),
     "orchard_impact": lambda a: _do_handler("impact", "impact_analysis", "ImpactRequest", a),
     "orchard_symbol": lambda a: _do_handler("symbol_context", "get_symbol_context", "SymbolContextRequest", a),
     "orchard_hierarchy": lambda a: _do_handler("type_hierarchy", "get_type_hierarchy", "TypeHierarchyRequest", a),

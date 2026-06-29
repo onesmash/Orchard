@@ -338,7 +338,11 @@ def persist_notification_graph(
                 continue
             observes_rows.append([
                 noti_name, make_symbol_id(callback["usr"]),
-                obs.get("selector") or "", "0.70",
+                obs.get("selector") or "",
+                obs.get("usr") or "",
+                obs.get("name") or "",
+                obs.get("file_path") or "",
+                "0.70",
                 "derive/notification", build_id,
             ])
 
@@ -418,23 +422,25 @@ def _query_persisted_graph(conn, notification_name: str = "") -> dict:
         f"MATCH (p:Symbol)-[ps:Posts]->(n:Notification) {noti_filter} "
         "OPTIONAL MATCH (n)-[ob:Observes]->(cb:Symbol) "
         "RETURN DISTINCT n.name, p.usr, p.name, p.module, p.file_path, "
-        "cb.usr, cb.name, cb.module, ob.selector",
+        "cb.usr, cb.name, cb.module, ob.selector, "
+        "ob.observer_usr, ob.observer_name, ob.observer_file_path",
         params,
     ).get_all()
 
     for r in rows:
         noti_name = r[0]
         posters = notifications.setdefault(noti_name, {"posters": [], "observers": []})
-        # Poster
         posters["posters"].append({
             "usr": r[1], "name": r[2], "module": r[3] or "",
             "file_path": r[4] or "", "line": 0, "notification_name": noti_name,
         })
-        # Observer callback
         if r[5]:
             posters["observers"].append({
-                "usr": "", "name": "", "module": "", "file_path": "",
-                "line": 0, "selector": r[8] or "",
+                "usr": r[9] or "",
+                "name": r[10] or "",
+                "file_path": r[11] or "",
+                "module": "", "line": 0,
+                "selector": r[8] or "",
                 "notification_name": noti_name,
                 "callback": {"usr": r[5], "name": r[6], "module": r[7] or ""},
             })
@@ -445,7 +451,8 @@ def _query_persisted_graph(conn, notification_name: str = "") -> dict:
         f"MATCH (n:Notification) {obs_filter} "
         "NOT EXISTS { MATCH (:Symbol)-[:Posts]->(n) } "
         "OPTIONAL MATCH (n)-[ob:Observes]->(cb:Symbol) "
-        "RETURN n.name, cb.usr, cb.name, cb.module, ob.selector",
+        "RETURN n.name, cb.usr, cb.name, cb.module, ob.selector, "
+        "ob.observer_usr, ob.observer_name, ob.observer_file_path",
         params,
     ).get_all()
     for r in obs_rows:
@@ -453,8 +460,11 @@ def _query_persisted_graph(conn, notification_name: str = "") -> dict:
         data = notifications.setdefault(noti_name, {"posters": [], "observers": []})
         if r[1]:
             data["observers"].append({
-                "usr": "", "name": "", "module": "", "file_path": "",
-                "line": 0, "selector": r[4] or "",
+                "usr": r[5] or "",
+                "name": r[6] or "",
+                "file_path": r[7] or "",
+                "module": "", "line": 0,
+                "selector": r[4] or "",
                 "notification_name": noti_name,
                 "callback": {"usr": r[1], "name": r[2], "module": r[3] or ""},
             })

@@ -121,6 +121,9 @@ REL_TABLES: list[str] = [
     """CREATE REL TABLE IF NOT EXISTS Observes(
         FROM Notification TO Symbol,
         selector STRING,
+        observer_usr STRING,
+        observer_name STRING,
+        observer_file_path STRING,
         confidence DOUBLE,
         provenance STRING,
         build_id STRING

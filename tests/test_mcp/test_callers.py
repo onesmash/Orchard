@@ -173,3 +173,88 @@ def test_find_callees_includes_semantic_role_for_objc(conn_with_calls):
     swift = next((item for item in resp.data if item["name"] == "B"), None)
     if swift is not None:
         assert "semantic_role" not in swift
+
+
+# ── AC-4: find_callees notification_bridges (Phase 2) ─────────────────
+def test_find_callees_includes_notification_bridges(conn_with_calls):
+    """AC-4: When semantic_role=notification_observer, notification_bridges detail the wiring."""
+    from orchard.handlers.callees import find_callees, CalleeRequest
+    from orchard.normalize.identity import make_symbol_id
+
+    # Set up: A calls addObserver (observer), callback symbol D exists,
+    # Notification + Observes edge with observer_usr pointing back to A.
+    conn_with_calls.execute(
+        "CREATE (:Symbol {id: 's:addObs', usr: 's:addObs', precise_id: '', "
+        "name: 'addObserver:selector:name:object:', language: 'objc', "
+        "kind: 'objc.method', module: 'M', target_id: 'T1', "
+        "file_path: '/src/a.mm', signature: '', container_usr: '', "
+        "access_level: 'internal', origin: 'derived', is_generated: false})"
+    )
+    conn_with_calls.execute(
+        "CREATE (:Symbol {id: 's:callback', usr: 's:callback', precise_id: '', "
+        "name: 'handleNotification:', language: 'objc', kind: 'objc.method', "
+        "module: 'M', target_id: 'T1', file_path: '/src/a.mm', signature: '', "
+        "container_usr: '', access_level: 'internal', origin: 'derived', "
+        "is_generated: false})"
+    )
+    conn_with_calls.execute(
+        "MATCH (a:Symbol {id:'s:A'}), (nc:Symbol {id:'s:addObs'}) "
+        "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+        "build_id:'b1', reason:'source_direct'}]->(nc)"
+    )
+    conn_with_calls.execute(
+        "CREATE (:Notification {name: 'kNoti_Test'})"
+    )
+    conn_with_calls.execute(
+        "MATCH (n:Notification {name:'kNoti_Test'}), (cb:Symbol {id:'s:callback'}) "
+        "CREATE (n)-[:Observes {selector:'handleNotification:', "
+        "observer_usr:'s:A', observer_name:'A', observer_file_path:'/src/a.mm', "
+        "confidence:0.7, provenance:'derive/notification', build_id:'b1'}]->(cb)"
+    )
+
+    req = CalleeRequest(usr="s:A", build_id="b1",
+                        include_inferred=True,
+                        relation_types=["Calls"],
+                        include_notification_bridges=True)
+    resp = find_callees(conn_with_calls, req)
+
+    observer = next(item for item in resp.data
+                    if item["name"] == "addObserver:selector:name:object:")
+    assert observer.get("semantic_role") == "notification_observer"
+    bridges = observer.get("notification_bridges", [])
+    assert len(bridges) >= 1, "should have at least one notification_bridge"
+    bridge = bridges[0]
+    assert bridge["notification_name"] == "kNoti_Test"
+    assert bridge["selector"] == "handleNotification:"
+    assert bridge["callback"]["name"] == "handleNotification:"
+
+
+def test_find_callees_notification_bridges_default_off(conn_with_calls):
+    """AC-5: notification_bridges only appear when requested."""
+    from orchard.handlers.callees import find_callees, CalleeRequest
+
+    conn_with_calls.execute(
+        "CREATE (:Symbol {id: 's:addObs', usr: 's:addObs', precise_id: '', "
+        "name: 'addObserver:selector:name:object:', language: 'objc', "
+        "kind: 'objc.method', module: 'M', target_id: 'T1', "
+        "file_path: '/src/a.mm', signature: '', container_usr: '', "
+        "access_level: 'internal', origin: 'derived', is_generated: false})"
+    )
+    conn_with_calls.execute(
+        "MATCH (a:Symbol {id:'s:A'}), (nc:Symbol {id:'s:addObs'}) "
+        "CREATE (a)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+        "build_id:'b1', reason:'source_direct'}]->(nc)"
+    )
+
+    # Default: include_notification_bridges=False (no cross-reference).
+    req = CalleeRequest(usr="s:A", build_id="b1",
+                        include_inferred=True,
+                        relation_types=["Calls"])
+    resp = find_callees(conn_with_calls, req)
+
+    observer = next(item for item in resp.data
+                    if item["name"] == "addObserver:selector:name:object:")
+    assert observer.get("semantic_role") == "notification_observer"
+    assert "notification_bridges" not in observer, (
+        "bridges should be absent when not requested"
+    )
