@@ -312,7 +312,7 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 
 1. `orchard_search({{name: "<symbol>"}})` — find the symbol's USR; results include `by_kind` grouping
 2. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred)
-3. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and with `include_notification_bridges: true` also shows which notification/selector/callback each observer is wired to
+3. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges (who registered → selector → event key → callback) by default
 4. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups
 
 ## When Debugging Notifications
@@ -343,7 +343,7 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 |------|-------------|---------|
 | `search` | Find symbols by name | `orchard_search({{name: "viewDidLoad"}})` |
 | `find_callers` | Who calls this symbol | `orchard_find_callers({{usr: "<USR>"}})` |
-| `find_callees` | What this symbol calls (with notification_bridges option) | `orchard_find_callees({{usr: "<USR>", include_notification_bridges: true}})` |
+| `find_callees` | What this symbol calls (returns notification_bridges by default) | `orchard_find_callees({{usr: "<USR>"}})` |
 | `find_references` | Incoming + outgoing references (with semantic_role for ObjC) | `orchard_find_references({{usr: "<USR>"}})` |
 | `impact` | Blast radius before editing | `orchard_impact({{usr: "<USR>"}})` |
 | `symbol` | Symbol metadata | `orchard_symbol({{usr: "<USR>"}})` |

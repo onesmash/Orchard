@@ -88,11 +88,10 @@ also carry `semantic_role`** — the selector classified into one of:
 This tells you at a glance whether a symbol registers for notifications, sets
 up delegate wiring, or is an Apple framework entry point.
 
-**Notification bridges**: set `include_notification_bridges: true` (MCP) to
-annotate `notification_observer` callees with matching Observes edges —
-showing which notification name, @selector, and callback each observer is
-wired to. This gives you the full chain: **who registered → selector → event
-key → callback**, equivalent to GitNexus's notification_bridge concept.
+**Notification bridges**: `find_callees` now includes `notification_bridges`
+by default for `notification_observer` callees — showing which notification
+name, @selector, and callback each observer is wired to.  This gives you
+the full chain: **who registered → selector → event key → callback**.
 
 ### find_references — Incoming + outgoing in one call
 
@@ -266,7 +265,7 @@ The skill should prefer MCP tools when available; fall back to CLI pipe for
 batch queries.
 
 MCP tools: `orchard_search`, `orchard_find_callers`, `orchard_find_callees`
-(with `include_notification_bridges: true` for full notification wiring),
+(returns notification_bridges by default for ObjC observers),
 `orchard_find_references` (includes semantic_role for ObjC callees),
 `orchard_notification_graph` (with `group_by: "observer"` for
 by-observer view), `orchard_impact`, `orchard_symbol`,
