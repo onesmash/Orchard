@@ -302,6 +302,13 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 > If the index is stale, run `orchard ingest --project-dir .` to rebuild.
 > Data source: Xcode IndexStore — every edge is compiler-verified with confidence labels.
 
+## Ingest Basics
+
+- `orchard ingest --project-dir .` rebuilds the graph into `.orchard/graph.db`
+- `--db` points to Orchard's graph database file, usually `.orchard/graph.db`
+- `--index-store` points to Xcode's IndexStore `.../Index.noindex/DataStore`
+- Do not pass a DerivedData directory to `--db`; that is usually an `--index-store` hint instead
+
 ## Always Do
 
 - **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `orchard_impact` and report the blast radius (direct callers, affected processes, risk level) to the user.
@@ -402,7 +409,25 @@ ObjC callees in `find_callees` and `find_references` (outgoing) carry a `semanti
 | d2 | LIKELY AFFECTED — callers of callers | Should test |
 | d3+ | MAY NEED TESTING — transitive dependents | Test if critical path |
 
+## Ingest Progress
+
+During a real ingest, progress appears in phases instead of staying silent:
+
+- `ingest: reading index store...`
+- streamed `orchard-indexstore-reader` progress lines from stderr
+- `communities: deriving graph partitions...`
+- `notification-graph: scanning source files...`
+- `processes: detecting execution flows...`
+
+If ingest looks "stuck", first check which phase is currently running rather than
+assuming the whole command is hung.
+
 ## Keeping the Index Fresh
+
+`orchard ingest` writes a `BuildSnapshot` for the current graph build. After a
+successful ingest, normal queries such as `symbol`, `impact`, `find_callers`,
+and `find_callees` should usually return `freshness: "fresh"` unless the graph
+is genuinely outdated or the query uses a mismatched build context.
 
 After committing code changes, re-run ingest to update:
 

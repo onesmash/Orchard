@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import re
 import subprocess
 from pathlib import Path
 
@@ -244,3 +245,188 @@ def match_derived_data(project_path: str) -> list[tuple[str, str, str]]:
     # Sort by LastAccessedDate descending, then by datastore size descending.
     candidates.sort(key=lambda x: (x[2], x[3]), reverse=True)
     return [(dd, ds, acc) for dd, ds, acc, _ in candidates]
+
+
+def _project_search_roots(project_path: str) -> list[Path]:
+    project = Path(project_path).resolve()
+    if project.suffix == ".xcodeproj":
+        return [project]
+    if project.suffix == ".xcworkspace":
+        roots = [project.parent]
+        parent = project.parent.parent
+        if parent not in roots:
+            roots.append(parent)
+        return roots
+    roots: list[Path] = [project] if project.is_dir() else []
+    parent = project.parent
+    if parent not in roots:
+        roots.append(parent)
+    grandparent = parent.parent
+    if grandparent != parent and grandparent not in roots:
+        roots.append(grandparent)
+    return roots
+
+
+def _workspace_project_root(project_path: str) -> Path | None:
+    project = Path(project_path).resolve()
+    if project.suffix == ".xcworkspace":
+        return project.parent
+    return None
+
+
+def _candidate_pbxproj_paths(project_path: str) -> list[Path]:
+    seen: set[Path] = set()
+    candidates: list[Path] = []
+    for root in _project_search_roots(project_path):
+        if root.suffix == ".xcodeproj":
+            pbxproj = root / "project.pbxproj"
+            if pbxproj.is_file() and pbxproj not in seen:
+                seen.add(pbxproj)
+                candidates.append(pbxproj)
+            continue
+        for xcodeproj in root.rglob("*.xcodeproj"):
+            pbxproj = xcodeproj / "project.pbxproj"
+            if pbxproj.is_file() and pbxproj not in seen:
+                seen.add(pbxproj)
+                candidates.append(pbxproj)
+    return candidates
+
+
+def _parse_pbxproj_objects(text: str) -> dict[str, str]:
+    pattern = re.compile(r"^\s*(?P<object_id>[A-Za-z0-9_]+)\s*/\*.*?\*/\s*=\s*\{", re.MULTILINE)
+    objects: dict[str, str] = {}
+    for match in pattern.finditer(text):
+        depth = 1
+        pos = match.end()
+        while pos < len(text) and depth > 0:
+            ch = text[pos]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+            pos += 1
+        if depth != 0:
+            continue
+        objects[match.group("object_id")] = text[match.end():pos - 1]
+    return objects
+
+
+def _object_isa(body: str) -> str:
+    match = re.search(r"^\s*isa\s*=\s*([A-Za-z0-9_]+);", body, re.MULTILINE)
+    return match.group(1) if match else ""
+
+
+def _object_scalar(body: str, key: str) -> str:
+    match = re.search(rf"(?:(?<=^)|(?<=\n)|(?<=;))\s*{re.escape(key)}\s*=\s*(.+?);", body, re.MULTILINE)
+    if not match:
+        return ""
+    return match.group(1).strip().strip('"')
+
+
+def _object_array_ids(body: str, key: str) -> list[str]:
+    match = re.search(rf"^\s*{re.escape(key)}\s*=\s*\((?P<items>.*?)^\s*\);", body, re.MULTILINE | re.DOTALL)
+    if not match:
+        return []
+    items = match.group("items")
+    return [
+        item.group(1)
+        for item in re.finditer(r"^\s*([A-Za-z0-9_]+)\b", items, re.MULTILINE)
+    ]
+
+
+def _source_root_base(pbxproj_path: Path, raw_path: str) -> Path:
+    base = pbxproj_path.parent.parent
+    # Generated iOS projects often live under auto_ios/*.xcodeproj while
+    # SOURCE_ROOT-backed entries still point at the repository's src tree.
+    if base.name == "auto_ios" and raw_path.startswith("src/"):
+        return base.parent
+    return base
+
+
+def _collapse_source_paths(file_paths: list[Path]) -> list[str]:
+    if not file_paths:
+        return []
+    directories = [path.parent if path.suffix else path for path in file_paths]
+    common = Path(os.path.commonpath([str(path) for path in directories]))
+    anchor_names = {"src", "Sources", "source", "Source", "include", "Include", "Headers", "headers", "sdk", "SDK"}
+    for candidate in (common, *common.parents):
+        if candidate.name in anchor_names:
+            return [str(candidate)]
+    return [str(common)]
+
+
+def _normalize_target_root(root: str, project_root: Path | None) -> str:
+    if project_root is None:
+        return root
+    root_path = Path(root)
+    try:
+        root_path.relative_to(project_root)
+    except ValueError:
+        return root
+    return str(project_root)
+
+
+def _target_source_root_directories(
+    objects: dict[str, str],
+    pbxproj_path: Path,
+    targets: set[str],
+    project_root: Path | None,
+) -> list[str]:
+    file_dirs: set[str] = set()
+    pbxproj_in_project_root = False
+    if project_root is not None:
+        try:
+            pbxproj_path.resolve().relative_to(project_root)
+            pbxproj_in_project_root = True
+        except ValueError:
+            pbxproj_in_project_root = False
+    for object_id, body in objects.items():
+        if _object_isa(body) != "PBXNativeTarget":
+            continue
+        target_name = _object_scalar(body, "name")
+        product_name = _object_scalar(body, "productName")
+        if target_name not in targets and product_name not in targets:
+            continue
+        target_files: list[Path] = []
+        for phase_id in _object_array_ids(body, "buildPhases"):
+            phase_body = objects.get(phase_id, "")
+            if _object_isa(phase_body) != "PBXSourcesBuildPhase":
+                continue
+            for build_file_id in _object_array_ids(phase_body, "files"):
+                build_file_body = objects.get(build_file_id, "")
+                if _object_isa(build_file_body) != "PBXBuildFile":
+                    continue
+                file_ref_id = _object_scalar(build_file_body, "fileRef").split()[0]
+                file_ref_body = objects.get(file_ref_id, "")
+                if _object_isa(file_ref_body) != "PBXFileReference":
+                    continue
+                if _object_scalar(file_ref_body, "sourceTree") != "SOURCE_ROOT":
+                    continue
+                raw = _object_scalar(file_ref_body, "path")
+                if not raw or raw.startswith("$("):
+                    continue
+                source_root = _source_root_base(pbxproj_path, raw)
+                resolved = (source_root / raw).resolve()
+                target_files.append(resolved)
+        collapsed = _collapse_source_paths(target_files)
+        if pbxproj_in_project_root and project_root is not None:
+            collapsed = [str(project_root)]
+        file_dirs.update(_normalize_target_root(root, project_root) for root in collapsed)
+    return sorted(file_dirs)
+
+
+def resolve_source_roots_for_targets(project_path: str, targets: list[str]) -> list[str]:
+    """Resolve SOURCE_ROOT-backed directories from xcodeproj config for targets."""
+    if not targets:
+        return []
+    roots: set[str] = set()
+    requested = set(targets)
+    project_root = _workspace_project_root(project_path)
+    for pbxproj_path in _candidate_pbxproj_paths(project_path):
+        try:
+            text = pbxproj_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        objects = _parse_pbxproj_objects(text)
+        roots.update(_target_source_root_directories(objects, pbxproj_path, requested, project_root))
+    return sorted(roots)

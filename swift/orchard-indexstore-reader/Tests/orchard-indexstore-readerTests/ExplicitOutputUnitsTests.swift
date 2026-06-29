@@ -2,6 +2,10 @@ import XCTest
 @testable import orchard_indexstore_reader
 
 final class ExplicitOutputUnitsTests: XCTestCase {
+  func testScanProgressMessageHidesFilePaths() {
+    XCTAssertEqual(scanProgressMessage(250, 7228), "scanning files 250/7228")
+  }
+
   func testSourceRootsForTargetsGroupsFilesAcrossMultipleRoots() throws {
     let tmp = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

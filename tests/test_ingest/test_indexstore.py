@@ -144,6 +144,47 @@ def test_run_cli_expands_repeated_targets_and_source_roots(monkeypatch):
         "--target", "zPSApp",
     ]
 
+
+def test_run_cli_streams_progress_stderr(monkeypatch, capsys):
+    class DummyStdout:
+        def __iter__(self):
+            return iter(())
+
+        def close(self):
+            return None
+
+    class DummyStderr:
+        def __iter__(self):
+            return iter((
+                "[orchard-indexstore-reader +0.1s] pass 1: scanning all files\n",
+                "{\"changed\":[],\"all\":[]}\n",
+            ))
+
+        def read(self):
+            return ""
+
+    class DummyProc:
+        def __init__(self, _cmd, **_kwargs):
+            self.stdout = DummyStdout()
+            self.stderr = DummyStderr()
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr("orchard.ingest.indexstore.subprocess.Popen", DummyProc)
+    monkeypatch.setattr("orchard.ingest.indexstore._cli_path", lambda: "/bin/orchard-indexstore-reader")
+
+    from orchard.ingest.indexstore import _run_cli
+
+    stdout_lines, stderr = _run_cli("/fake/store")
+    captured = capsys.readouterr()
+
+    assert stdout_lines == []
+    assert "[orchard-indexstore-reader +0.1s] pass 1: scanning all files" in captured.err
+    assert '{"changed":[],"all":[]}' not in captured.err
+    assert "[orchard-indexstore-reader +0.1s] pass 1: scanning all files" in stderr
+    assert '{"changed":[],"all":[]}' in stderr
+
 def test_cli_path_prefers_swiftpm_release_binary(monkeypatch):
     release_suffix = "swift/orchard-indexstore-reader/.build/release/orchard-indexstore-reader"
     bin_suffix = "bin/orchard-indexstore-reader"

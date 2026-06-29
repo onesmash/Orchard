@@ -3,6 +3,8 @@ import os
 import platform
 import subprocess
 import shutil
+import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from importlib import import_module
@@ -122,13 +124,31 @@ def _run_cli(
         cmd += ["--list-files"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    stream_stderr = hasattr(proc.stderr, "__iter__")
+
+    def _drain_stderr() -> None:
+        for line in proc.stderr:
+            stderr_lines.append(line)
+            stripped = line.lstrip()
+            if stripped.startswith("[orchard-indexstore-reader"):
+                print(line.rstrip("\n"), file=sys.stderr, flush=True)
+
+    stderr_thread = None
+    if stream_stderr:
+        stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+        stderr_thread.start()
     try:
         for line in proc.stdout:
             stdout_lines.append(line.rstrip("\n"))
     finally:
         proc.stdout.close()
         rc = proc.wait()
-        stderr_data = proc.stderr.read()
+        if stderr_thread is not None:
+            stderr_thread.join()
+            stderr_data = "".join(stderr_lines)
+        else:
+            stderr_data = proc.stderr.read()
         if rc != 0:
             raise subprocess.CalledProcessError(rc, cmd, output=None, stderr=stderr_data)
     return stdout_lines, stderr_data

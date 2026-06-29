@@ -36,6 +36,17 @@ Commands find the database automatically:
 
 **Rarely need `--db`** — just run queries from anywhere under the project.
 
+Important distinction:
+
+- `--db` points to Orchard's graph database file, usually
+  `<project>/.orchard/graph.db`
+- `--index-store` points to Xcode's IndexStore `.../Index.noindex/DataStore`
+
+Do not pass a DerivedData directory to `--db`.  If the user gives you a path
+under `~/Library/Developer/Xcode/DerivedData/...` or a custom Xcode cache
+directory, that is usually an `--index-store` / DerivedData hint, not the
+graph DB itself.
+
 ## Finding symbols (search)
 
 ```bash
@@ -247,6 +258,45 @@ Auto-detects the Xcode workspace, DerivedData, IndexStore, source root, and targ
 Writes DB to `<project>/.orchard/graph.db`.  Notification/Posts/Observes are
 automatically extracted from source during ingest.  Incremental mode re-scans
 only changed files.
+
+When the user provides paths explicitly, the common real-world form is:
+
+```bash
+orchard ingest \
+  --project-dir /path/to/project \
+  --index-store /path/to/DerivedData/.../Index.noindex/DataStore \
+  --target Zoom
+```
+
+### Ingest progress
+
+During a real ingest, progress now appears in phases instead of staying silent:
+
+- `ingest: reading index store...`
+- streamed `orchard-indexstore-reader` progress lines from stderr
+- `communities: deriving graph partitions...`
+- `notification-graph: scanning source files...`
+- `processes: detecting execution flows...`
+
+If the user says ingest is "stuck" or "没有 progress", first distinguish:
+
+1. **Fast path**: incremental ingest may exit quickly with
+   `incremental: fast path hit`
+2. **Reader progress**: IndexStore scanning should emit live
+   `[orchard-indexstore-reader +Xs] ...` lines
+3. **Long derive phase**: notification graph and community/process derivation
+   can take substantial time after symbol/relation counts are printed
+
+So the debugging question is not just "is it slow?", but **which phase is
+currently running and whether progress output is still advancing**.
+
+### Freshness after ingest
+
+`orchard ingest` now writes a `BuildSnapshot` for the current graph build.
+After a successful ingest, normal queries such as `symbol`, `impact`,
+`find_callers`, and `find_callees` should usually return `freshness: "fresh"`
+instead of perpetual `"stale"` (unless the graph is genuinely outdated or the
+query uses a mismatched build context).
 
 ## Pipe mode — batch queries
 

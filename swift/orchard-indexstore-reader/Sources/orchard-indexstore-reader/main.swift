@@ -29,6 +29,7 @@ import Foundation
 
 let runStart = Date()
 let progressOut = FileHandle.standardError
+var hasActiveInlineProgress = false
 
 func elapsedSeconds() -> String {
   let dt = Date().timeIntervalSince(runStart)
@@ -36,7 +37,24 @@ func elapsedSeconds() -> String {
 }
 
 func logProgress(_ message: String) {
+  if hasActiveInlineProgress {
+    progressOut.write("\n".data(using: .utf8)!)
+    hasActiveInlineProgress = false
+  }
   progressOut.write("[orchard-indexstore-reader +\(elapsedSeconds())] \(message)\n".data(using: .utf8)!)
+}
+
+func scanProgressMessage(_ processed: Int, _ total: Int) -> String {
+  "scanning files \(processed)/\(total)"
+}
+
+func logInlineProgress(_ message: String, finished: Bool = false) {
+  let rendered = "\r\u{001B}[2K[orchard-indexstore-reader +\(elapsedSeconds())] \(message)"
+  progressOut.write(rendered.data(using: .utf8)!)
+  hasActiveInlineProgress = !finished
+  if finished {
+    progressOut.write("\n".data(using: .utf8)!)
+  }
 }
 
 func stageSeconds(since start: Date) -> String {
@@ -368,7 +386,10 @@ logProgress("pass 1: scanning all files for canonical symbols + relations")
 for file in filePaths {
   processedFileCount += 1
   if processedFileCount == 1 || processedFileCount % 250 == 0 || processedFileCount == filePaths.count {
-    logProgress("scanning file \(processedFileCount)/\(filePaths.count): \(file)")
+    logInlineProgress(
+      scanProgressMessage(processedFileCount, filePaths.count),
+      finished: processedFileCount == filePaths.count
+    )
   }
   for occ in db.symbolOccurrences(inFilePath: file) {
     let usr = occ.symbol.usr

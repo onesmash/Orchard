@@ -332,7 +332,14 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, scope_id, incremental_since=None, targets=None):
+    def fake_read_index_store(
+        index_store_path,
+        scope_id,
+        source_root=None,
+        source_roots=None,
+        incremental_since=None,
+        targets=None,
+    ):
         captured["scope_id"] = scope_id
         captured["targets"] = targets
         return IndexStoreResult(), None
@@ -349,6 +356,11 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
         lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
     )
     monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.resolve_source_roots_for_targets",
+        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        raising=False,
+    )
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
@@ -363,6 +375,178 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
     assert captured["targets"] == ["Zoom", "zPSApp"]
 
 
+def test_cmd_ingest_passes_project_config_source_roots_for_compiled_targets(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    captured: dict[str, object] = {}
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    def fake_read_index_store(
+        index_store_path,
+        scope_id,
+        source_root=None,
+        source_roots=None,
+        incremental_since=None,
+        targets=None,
+    ):
+        captured["scope_id"] = scope_id
+        captured["targets"] = targets
+        captured["source_roots"] = source_roots
+        return IndexStoreResult(), None
+
+    project = tmp_path / "Zoom.xcodeproj"
+    project.mkdir()
+    derived_data = tmp_path / "Zoom-abc"
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
+    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(project))
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.match_derived_data",
+        lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
+    )
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.resolve_source_roots_for_targets",
+        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        raising=False,
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+
+    cmd_ingest([
+        "--project-dir", str(tmp_path),
+        "--target", "Zoom",
+    ])
+
+    assert captured["scope_id"] == "Zoom"
+    assert captured["targets"] == ["Zoom", "zPSApp"]
+    assert captured["source_roots"] == ["/repo/ios-client", "/repo/client-app-video/zPSApp"]
+
+
+def test_cmd_ingest_runs_global_community_and_process_derivation_once(tmp_path, monkeypatch, capsys):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    captured: dict[str, object] = {
+        "community_scope_ids": [],
+        "process_scope_ids": [],
+    }
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    project = tmp_path / "Zoom.xcodeproj"
+    project.mkdir()
+    derived_data = tmp_path / "Zoom-abc"
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: (IndexStoreResult(), None),
+    )
+    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(project))
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.match_derived_data",
+        lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
+    )
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.resolve_source_roots_for_targets",
+        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        raising=False,
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_files", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(
+        "orchard.derive.community_detection.run_community_detection",
+        lambda _conn, scope_id: captured["community_scope_ids"].append(scope_id) or {
+            "communities_found": 2,
+            "members_assigned": 4,
+        },
+    )
+
+    class DummyProcessNode:
+        process_type = "cross_community"
+
+    monkeypatch.setattr(
+        "orchard.derive.process_detection.detect_processes",
+        lambda _conn, scope_id: captured["process_scope_ids"].append(scope_id) or [DummyProcessNode()],
+    )
+    monkeypatch.setattr(
+        "orchard.derive.notification_graph.persist_notification_graph",
+        lambda *args, **kwargs: 0,
+    )
+
+    cmd_ingest([
+        "--project-dir", str(tmp_path),
+        "--target", "Zoom",
+    ])
+
+    out = capsys.readouterr().out
+    assert len(captured["community_scope_ids"]) == 1
+    assert len(captured["process_scope_ids"]) == 1
+    assert captured["community_scope_ids"][0].startswith("build-")
+    assert captured["process_scope_ids"] == captured["community_scope_ids"]
+    assert "communities: 2 communities, 4 members" in out
+    assert "communities (Zoom):" not in out
+    assert "communities (zPSApp):" not in out
+    assert "processes: 1 detected (1 cross-community)" in out
+    assert "processes (Zoom):" not in out
+    assert "processes (zPSApp):" not in out
+
+
+def test_cmd_ingest_fails_closed_when_project_config_roots_missing_for_compiled_targets(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    project = tmp_path / "Zoom.xcodeproj"
+    project.mkdir()
+    derived_data = tmp_path / "Zoom-abc"
+    called = {"read_index_store": False}
+
+    def fake_read_index_store(*_args, **_kwargs):
+        called["read_index_store"] = True
+        raise AssertionError("read_index_store should not be called when roots are unresolved")
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
+    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(project))
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.match_derived_data",
+        lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
+    )
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.resolve_source_roots_for_targets",
+        lambda project_path, targets: [],
+        raising=False,
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_ingest([
+            "--project-dir", str(tmp_path),
+            "--target", "Zoom",
+        ])
+
+    assert excinfo.value.code == 2
+    assert called["read_index_store"] is False
+
+
 def test_cmd_ingest_defaults_to_incremental(tmp_path, monkeypatch):
     from orchard.cli import cmd_ingest
     from orchard.ingest.indexstore import IndexStoreResult
@@ -373,7 +557,14 @@ def test_cmd_ingest_defaults_to_incremental(tmp_path, monkeypatch):
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, scope_id, source_root=None, incremental_since=None, targets=None):
+    def fake_read_index_store(
+        index_store_path,
+        scope_id,
+        source_root=None,
+        source_roots=None,
+        incremental_since=None,
+        targets=None,
+    ):
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
@@ -409,7 +600,14 @@ def test_cmd_ingest_full_disables_incremental(tmp_path, monkeypatch):
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, scope_id, source_root=None, incremental_since=None, targets=None):
+    def fake_read_index_store(
+        index_store_path,
+        scope_id,
+        source_root=None,
+        source_roots=None,
+        incremental_since=None,
+        targets=None,
+    ):
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None
 
@@ -530,6 +728,11 @@ def test_cmd_ingest_persists_compiled_scope_state(tmp_path, monkeypatch):
         lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
     )
     monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.resolve_source_roots_for_targets",
+        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        raising=False,
+    )
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
@@ -587,6 +790,11 @@ def test_cmd_ingest_logs_and_upserts_compiled_scope_once(tmp_path, monkeypatch, 
     )
     monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
     monkeypatch.setattr(
+        "orchard.build.xcode_settings.resolve_source_roots_for_targets",
+        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        raising=False,
+    )
+    monkeypatch.setattr(
         "orchard.normalize.identity.upsert_symbols",
         lambda *args, **kwargs: calls.__setitem__("symbols", calls["symbols"] + 1) or 0,
     )
@@ -607,7 +815,11 @@ def test_cmd_ingest_logs_and_upserts_compiled_scope_once(tmp_path, monkeypatch, 
     ])
 
     out = capsys.readouterr().out
+    assert "ingest: reading index store..." in out
     assert "scope: Zoom,zPSApp" in out
+    assert "communities: deriving graph partitions..." in out
+    assert "notification-graph: scanning source files..." in out
+    assert "processes: detecting execution flows..." in out
     assert "[1/2]" not in out
     assert "[2/2]" not in out
     assert calls == {"symbols": 1, "calls": 1, "struct": 1}
@@ -696,7 +908,14 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
         def close(self):
             return None
 
-    def fake_read_index_store(index_store_path, scope_id, source_root=None, incremental_since=None, targets=None):
+    def fake_read_index_store(
+        index_store_path,
+        scope_id,
+        source_root=None,
+        source_roots=None,
+        incremental_since=None,
+        targets=None,
+    ):
         captured["scope_id"] = scope_id
         captured["incremental_since"] = incremental_since
         return IndexStoreResult(), None

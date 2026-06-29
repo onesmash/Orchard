@@ -6,6 +6,7 @@ from orchard.build.xcode_settings import (
     discover_compiled_targets,
     infer_derived_data_root,
     match_derived_data,
+    resolve_source_roots_for_targets,
 )
 
 
@@ -226,3 +227,391 @@ def test_compiled_discovery_uses_top_level_build_dirs_even_with_child_targets(tm
         str(container_source),
         str(framework_source),
     ]
+
+
+def test_resolve_source_roots_for_targets_reads_matching_xcodeproj_from_neighbor_repo(tmp_path):
+    ios_client = tmp_path / "ios-client"
+    workspace = ios_client / "Zoom.xcworkspace"
+    workspace.parent.mkdir(parents=True)
+    workspace.mkdir()
+
+    zpsapp = tmp_path / "client-app-video" / "zPSApp" / "auto_ios" / "zPSApp.xcodeproj"
+    zpsapp.mkdir(parents=True)
+    (zpsapp / "project.pbxproj").write_text(
+        """
+/* Begin PBXNativeTarget section */
+    111111111111111111111111 /* zPSApp */ = {
+        isa = PBXNativeTarget;
+        name = zPSApp;
+        buildPhases = (
+            ZPS_PHASE /* Sources */,
+        );
+    };
+/* End PBXNativeTarget section */
+
+/* Begin PBXSourcesBuildPhase section */
+    ZPS_PHASE /* Sources */ = {
+        isa = PBXSourcesBuildPhase;
+        files = (
+            ZPS_CPP_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */,
+            ZPS_H_BUILD_FILE /* CPSAudioDeviceRunCtx.h in Sources */,
+        );
+    };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXBuildFile section */
+    ZPS_CPP_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */ = {
+        isa = PBXBuildFile;
+        fileRef = ZPS_CPP_FILE /* CPSAudioDeviceRunCtx.cpp */;
+    };
+    ZPS_H_BUILD_FILE /* CPSAudioDeviceRunCtx.h in Sources */ = {
+        isa = PBXBuildFile;
+        fileRef = ZPS_H_FILE /* CPSAudioDeviceRunCtx.h */;
+    };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+    ZPS_CPP_FILE /* CPSAudioDeviceRunCtx.cpp */ = {
+        isa = PBXFileReference;
+        path = src/Media/Audio/Device/CPSAudioDeviceRunCtx.cpp;
+        sourceTree = SOURCE_ROOT;
+    };
+    ZPS_H_FILE /* CPSAudioDeviceRunCtx.h */ = {
+        isa = PBXFileReference;
+        path = src/Media/Audio/Device/CPSAudioDeviceRunCtx.h;
+        sourceTree = SOURCE_ROOT;
+    };
+/* End PBXFileReference section */
+""",
+        encoding="utf-8",
+    )
+
+    unrelated = ios_client / "Other.xcodeproj"
+    unrelated.mkdir()
+    (unrelated / "project.pbxproj").write_text(
+        """
+/* Begin PBXNativeTarget section */
+    AAA /* OtherTarget */ = {
+        isa = PBXNativeTarget;
+        name = OtherTarget;
+    };
+/* End PBXNativeTarget section */
+
+/* Begin PBXFileReference section */
+    BBB /* Other.swift */ = {
+        isa = PBXFileReference;
+        path = Sources/Other.swift;
+        sourceTree = SOURCE_ROOT;
+    };
+/* End PBXFileReference section */
+""",
+        encoding="utf-8",
+    )
+
+    roots = resolve_source_roots_for_targets(str(workspace), ["zPSApp"])
+
+    assert roots == [str(zpsapp.parent.parent / "src")]
+
+
+def test_resolve_source_roots_for_targets_filters_to_requested_target_sources(tmp_path):
+    project = tmp_path / "Zoom.xcodeproj"
+    project.mkdir()
+    (project / "project.pbxproj").write_text(
+        """
+/* Begin PBXNativeTarget section */
+    AAA /* Zoom */ = {
+        isa = PBXNativeTarget;
+        name = Zoom;
+        buildPhases = (
+            ZOOM_PHASE /* Sources */,
+        );
+    };
+    BBB /* zPSApp */ = {
+        isa = PBXNativeTarget;
+        name = zPSApp;
+        buildPhases = (
+            ZPS_PHASE /* Sources */,
+        );
+    };
+/* End PBXNativeTarget section */
+
+/* Begin PBXSourcesBuildPhase section */
+    ZOOM_PHASE /* Sources */ = {
+        isa = PBXSourcesBuildPhase;
+        files = (
+            ZOOM_BUILD_FILE /* AppDelegate.swift in Sources */,
+        );
+    };
+    ZPS_PHASE /* Sources */ = {
+        isa = PBXSourcesBuildPhase;
+        files = (
+            ZPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */,
+        );
+    };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXBuildFile section */
+    ZOOM_BUILD_FILE /* AppDelegate.swift in Sources */ = {
+        isa = PBXBuildFile;
+        fileRef = ZOOM_FILE /* AppDelegate.swift */;
+    };
+    ZPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */ = {
+        isa = PBXBuildFile;
+        fileRef = ZPS_FILE /* CPSAudioDeviceRunCtx.cpp */;
+    };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+    ZOOM_FILE /* AppDelegate.swift */ = {
+        isa = PBXFileReference;
+        path = app/AppDelegate.swift;
+        sourceTree = SOURCE_ROOT;
+    };
+    ZPS_FILE /* CPSAudioDeviceRunCtx.cpp */ = {
+        isa = PBXFileReference;
+        path = src/Media/Audio/Device/CPSAudioDeviceRunCtx.cpp;
+        sourceTree = SOURCE_ROOT;
+    };
+/* End PBXFileReference section */
+""",
+        encoding="utf-8",
+    )
+
+    roots = resolve_source_roots_for_targets(str(project), ["zPSApp"])
+
+    assert roots == [str(tmp_path / "src")]
+
+
+def test_resolve_source_roots_for_targets_merges_workspace_and_sibling_target_roots(tmp_path):
+    ios_client = tmp_path / "ios-client"
+    workspace = ios_client / "Zoom.xcworkspace"
+    workspace.parent.mkdir(parents=True)
+    workspace.mkdir()
+
+    zoom_project = ios_client / "Zoom" / "Zoom.xcodeproj"
+    zoom_project.mkdir(parents=True)
+    (zoom_project / "project.pbxproj").write_text(
+        """
+/* Begin PBXNativeTarget section */
+    ZOOM_TARGET /* iZipow */ = {
+        isa = PBXNativeTarget;
+        name = iZipow;
+        productName = Zoom;
+        buildPhases = (
+            ZOOM_PHASE /* Sources */,
+        );
+    };
+/* End PBXNativeTarget section */
+
+/* Begin PBXSourcesBuildPhase section */
+    ZOOM_PHASE /* Sources */ = {
+        isa = PBXSourcesBuildPhase;
+        files = (
+            ZOOM_BUILD_FILE /* MobileRTC.m in Sources */,
+        );
+    };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXBuildFile section */
+    ZOOM_BUILD_FILE /* MobileRTC.m in Sources */ = {
+        isa = PBXBuildFile;
+        fileRef = ZOOM_FILE /* MobileRTC.m */;
+    };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+    ZOOM_FILE /* MobileRTC.m */ = {
+        isa = PBXFileReference;
+        path = sdk/MobileRTC.m;
+        sourceTree = GROUP;
+    };
+/* End PBXFileReference section */
+""",
+        encoding="utf-8",
+    )
+
+    zpsapp = tmp_path / "client-app-video" / "zPSApp" / "auto_ios" / "zPSApp.xcodeproj"
+    zpsapp.mkdir(parents=True)
+    (zpsapp / "project.pbxproj").write_text(
+        """
+/* Begin PBXNativeTarget section */
+    ZPS_TARGET /* zPSApp */ = {
+        isa = PBXNativeTarget;
+        name = zPSApp;
+        buildPhases = (
+            ZPS_PHASE /* Sources */,
+        );
+    };
+/* End PBXNativeTarget section */
+
+/* Begin PBXSourcesBuildPhase section */
+    ZPS_PHASE /* Sources */ = {
+        isa = PBXSourcesBuildPhase;
+        files = (
+            ZPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */,
+        );
+    };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXBuildFile section */
+    ZPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */ = {
+        isa = PBXBuildFile;
+        fileRef = ZPS_FILE /* CPSAudioDeviceRunCtx.cpp */;
+    };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+    ZPS_FILE /* CPSAudioDeviceRunCtx.cpp */ = {
+        isa = PBXFileReference;
+        path = src/Media/Audio/Device/CPSAudioDeviceRunCtx.cpp;
+        sourceTree = SOURCE_ROOT;
+    };
+/* End PBXFileReference section */
+""",
+        encoding="utf-8",
+    )
+
+    unrelated = tmp_path / "client-app-common" / "Common.xcodeproj"
+    unrelated.mkdir(parents=True)
+    (unrelated / "project.pbxproj").write_text(
+        """
+/* Begin PBXNativeTarget section */
+    COMMON_TARGET /* Common */ = {
+        isa = PBXNativeTarget;
+        name = Common;
+        buildPhases = (
+            COMMON_PHASE /* Sources */,
+        );
+    };
+/* End PBXNativeTarget section */
+
+/* Begin PBXSourcesBuildPhase section */
+    COMMON_PHASE /* Sources */ = {
+        isa = PBXSourcesBuildPhase;
+        files = (
+            COMMON_BUILD_FILE /* Shared.mm in Sources */,
+        );
+    };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXBuildFile section */
+    COMMON_BUILD_FILE /* Shared.mm in Sources */ = {
+        isa = PBXBuildFile;
+        fileRef = COMMON_FILE /* Shared.mm */;
+    };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+    COMMON_FILE /* Shared.mm */ = {
+        isa = PBXFileReference;
+        path = common/Shared.mm;
+        sourceTree = SOURCE_ROOT;
+    };
+/* End PBXFileReference section */
+""",
+        encoding="utf-8",
+    )
+
+    roots = resolve_source_roots_for_targets(str(workspace), ["Zoom", "zPSApp"])
+
+    assert roots == [
+        str(zpsapp.parent.parent / "src"),
+        str(ios_client),
+    ]
+
+
+def test_resolve_source_roots_for_targets_supports_inline_pbx_objects(tmp_path):
+    project = tmp_path / "zPSApp.xcodeproj"
+    project.mkdir()
+    (project / "project.pbxproj").write_text(
+        """
+/* Begin PBXNativeTarget section */
+    TARGET /* zPSApp */ = {
+        isa = PBXNativeTarget;
+        name = zPSApp;
+        buildPhases = (
+            SOURCES /* Sources */,
+        );
+    };
+/* End PBXNativeTarget section */
+
+/* Begin PBXSourcesBuildPhase section */
+    SOURCES /* Sources */ = {
+        isa = PBXSourcesBuildPhase;
+        files = (
+            BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */,
+        );
+    };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXBuildFile section */
+    BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FILE_REF /* CPSAudioDeviceRunCtx.cpp */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+    FILE_REF /* CPSAudioDeviceRunCtx.cpp */ = {isa = PBXFileReference; path = src/Media/Audio/Device/CPSAudioDeviceRunCtx.cpp; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+""",
+        encoding="utf-8",
+    )
+
+    roots = resolve_source_roots_for_targets(str(project), ["zPSApp"])
+
+    assert roots == [str(tmp_path / "src")]
+
+
+def test_resolve_source_roots_for_targets_collapses_generated_ios_project_to_repo_src(tmp_path):
+    project = tmp_path / "zPSApp" / "auto_ios" / "zPSApp.xcodeproj"
+    project.mkdir(parents=True)
+    (project / "project.pbxproj").write_text(
+        """
+/* Begin PBXNativeTarget section */
+    TARGET /* zPSApp */ = {
+        isa = PBXNativeTarget;
+        name = zPSApp;
+        buildPhases = (
+            SOURCES /* Sources */,
+        );
+    };
+/* End PBXNativeTarget section */
+
+/* Begin PBXSourcesBuildPhase section */
+    SOURCES /* Sources */ = {
+        isa = PBXSourcesBuildPhase;
+        files = (
+            BUILD_FILE /* CPSNDIRender.cpp in Sources */,
+            HEADER_BUILD_FILE /* CPSNDIRender.h in Sources */,
+        );
+    };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXBuildFile section */
+    BUILD_FILE /* CPSNDIRender.cpp in Sources */ = {
+        isa = PBXBuildFile;
+        fileRef = FILE_REF /* CPSNDIRender.cpp */;
+    };
+    HEADER_BUILD_FILE /* CPSNDIRender.h in Sources */ = {
+        isa = PBXBuildFile;
+        fileRef = HEADER_FILE_REF /* CPSNDIRender.h */;
+    };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+    FILE_REF /* CPSNDIRender.cpp */ = {
+        isa = PBXFileReference;
+        path = src/Media/Render/CPSNDIRender.cpp;
+        sourceTree = SOURCE_ROOT;
+    };
+    HEADER_FILE_REF /* CPSNDIRender.h */ = {
+        isa = PBXFileReference;
+        path = src/Media/Render/CPSNDIRender.h;
+        sourceTree = SOURCE_ROOT;
+    };
+/* End PBXFileReference section */
+""",
+        encoding="utf-8",
+    )
+
+    roots = resolve_source_roots_for_targets(str(project), ["zPSApp"])
+
+    assert roots == [str(tmp_path / "zPSApp" / "src")]

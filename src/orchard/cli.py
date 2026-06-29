@@ -213,10 +213,13 @@ def cmd_ingest(args: list[str]):
         get_derived_data_path,
         infer_derived_data_root,
         match_derived_data,
+        resolve_source_roots_for_targets,
     )
 
     index_store = ns.index_store
     state_path = Path(ns.project_dir).resolve() / ".orchard" / "ingest-state.json"
+    project: str | None = None
+    compiled_targets: list[str] = []
 
     # Parse comma-separated targets.
     requested_targets: list[str] = [t.strip() for t in ns.target.split(",") if t.strip()] if ns.target else []
@@ -273,6 +276,19 @@ def cmd_ingest(args: list[str]):
                 print(f"  compiled targets: {', '.join(compiled_targets)}", file=sys.stderr)
                 sys.exit(2)
             targets = compiled_targets
+    if project is None:
+        project = find_xcode_project(ns.project_dir)
+    source_roots = resolve_source_roots_for_targets(project or ns.project_dir, targets)
+    if compiled_targets and not source_roots:
+        print(
+            f"error: could not resolve source roots from Xcode project config for compiled targets: {', '.join(targets)}",
+            file=sys.stderr,
+        )
+        print(
+            f"  project: {project or ns.project_dir}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     conn = _conn(ns.db)
     project_dir = str(Path(ns.project_dir).resolve())
@@ -326,8 +342,10 @@ def cmd_ingest(args: list[str]):
             return
 
     t0 = time.monotonic()
+    print("ingest: reading index store...", flush=True)
     r, file_status = read_index_store(
         index_store, entry_target,
+        source_roots=source_roots,
         incremental_since=incremental_since,
         targets=targets,
     )
@@ -400,11 +418,11 @@ def cmd_ingest(args: list[str]):
     # Community detection via Leiden algorithm.
     try:
         from orchard.derive.community_detection import run_community_detection
-        for target in targets:
-            t_cd = time.monotonic()
-            result = run_community_detection(conn, target)
-            print(f"  communities ({target}): {result['communities_found']} communities, "
-                  f"{result['members_assigned']} members  ({time.monotonic()-t_cd:.1f}s)")
+        print("  communities: deriving graph partitions...", flush=True)
+        t_cd = time.monotonic()
+        result = run_community_detection(conn, ctx.build_id)
+        print(f"  communities: {result['communities_found']} communities, "
+              f"{result['members_assigned']} members  ({time.monotonic()-t_cd:.1f}s)")
     except Exception:
         pass  # skip on mock/test databases
 
@@ -412,6 +430,7 @@ def cmd_ingest(args: list[str]):
     try:
         from orchard.derive.notification_graph import persist_notification_graph
         t_ng = time.monotonic()
+        print("  notification-graph: scanning source files...", flush=True)
         # Incremental with no changes → skip grep (empty list).
         # Incremental with changes → scan only changed files.
         # Full ingest → scan everything (None).
@@ -433,12 +452,12 @@ def cmd_ingest(args: list[str]):
     # Process detection via entry-point scoring + BFS tracing.
     try:
         from orchard.derive.process_detection import detect_processes
-        for target in targets:
-            t_pd = time.monotonic()
-            procs = detect_processes(conn, target)
-            cross = sum(1 for p in procs if p.process_type == "cross_community")
-            print(f"  processes ({target}): {len(procs)} detected "
-                  f"({cross} cross-community)  ({time.monotonic()-t_pd:.1f}s)")
+        print("  processes: detecting execution flows...", flush=True)
+        t_pd = time.monotonic()
+        procs = detect_processes(conn, ctx.build_id)
+        cross = sum(1 for p in procs if p.process_type == "cross_community")
+        print(f"  processes: {len(procs)} detected "
+              f"({cross} cross-community)  ({time.monotonic()-t_pd:.1f}s)")
     except Exception:
         pass  # skip on mock/test databases
 
