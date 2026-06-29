@@ -128,6 +128,25 @@ Instead it should:
 2. validate that the requested entry `--target` is present
 3. ingest those compiled targets into the database
 
+### Replace `source-root` with compiled-file filtering
+
+Removing `--source-root` means Orchard needs a new way to restrict ingest to
+project code without promoting SDK internals to first-class targets.
+
+The filtering model should become:
+
+1. discover compiled targets from `Intermediates.noindex`
+2. derive the compiled source file set for those targets
+3. accept IndexStore symbol / occurrence / relation records only when their
+   associated source file belongs to that compiled file set
+
+This keeps ingest aligned with what Xcode actually built while avoiding broad
+directory-prefix heuristics.
+
+The key design constraint is that target discovery comes from
+`Intermediates.noindex`, while record admission comes from compiled file
+membership rather than a path prefix.
+
 ## Target Set Resolution
 
 The resolved target set for a run should be:
@@ -140,6 +159,21 @@ The resolved target set for a run should be:
 
 If `--target` is not present in the compiled target set, Orchard should fail with a clear error rather than silently ingesting an unrelated build.
 
+### Manual `--index-store` mode
+
+When users pass `--index-store` explicitly, Orchard should still try to locate
+the matching `DerivedData` root so it can inspect `Intermediates.noindex`.
+
+Resolution order:
+
+1. infer the `DerivedData` root from the supplied `--index-store` path
+2. if successful, use that root for compiled-target discovery
+3. if not successful, fail with a clear error explaining that compiled-target
+   ingest requires a sibling `Intermediates.noindex` tree
+
+This keeps behavior consistent across auto-detected and manually supplied
+IndexStore paths.
+
 ## Database Behavior
 
 ### Symbols and relationships
@@ -151,6 +185,18 @@ This preserves the current multi-target write pattern already used by Orchard:
 - symbols upserted per target
 - calls upserted per target
 - structural relations upserted per target
+
+The current `read_index_store(...)` interface is path-filter based. This design
+requires extending it so the ingest pipeline can filter by compiled file set
+instead of `source-root`.
+
+Acceptable implementations:
+
+- add a compiled-file allowlist parameter to the reader
+- add a post-read filtering phase before upsert
+
+The implementation should choose one path and make it the single filtering
+mechanism for Xcode ingest.
 
 ### State persistence
 
@@ -181,6 +227,12 @@ Fast-path eligibility should continue to depend on:
 With this design, "requested ingest scope" becomes the compiled target set discovered from `Intermediates.noindex`, not just the single `--target` argument.
 
 If a new compiled target appears in `Intermediates.noindex`, Orchard must perform a real ingest instead of skipping.
+
+Compiled-target discovery must be scoped narrowly enough to avoid stale build
+directories from unrelated configurations or historical builds under the same
+DerivedData root. The implementation should only consider build directories
+associated with the currently matched project/build context, not every
+`*.build` directory that happens to exist anywhere under `Intermediates.noindex`.
 
 ## Filtering and system libraries
 
@@ -217,6 +269,14 @@ New error:
 - show discovered compiled targets
 - explain that the current `DerivedData` does not correspond to a build containing that target
 
+### Cannot derive compiled-file scope
+
+New error:
+
+- explain that Orchard found compiled target names but could not derive the
+  compiled source file set needed for safe filtering
+- recommend rebuilding in Xcode or using a fresher DerivedData
+
 ## Testing Strategy
 
 ### Acceptance tests
@@ -225,6 +285,7 @@ Add acceptance coverage for:
 
 - compiled target discovery from `Intermediates.noindex`
 - entry target validation against compiled target set
+- compiled-file filtering without `source-root`
 - multi-target state persistence based on compiled targets
 - fast-path invalidation when a newly compiled target appears
 
@@ -235,6 +296,8 @@ Add focused tests for:
 - extracting target names from `*.build` directories
 - ignoring irrelevant directories in `Intermediates.noindex`
 - deterministic ordering of compiled targets
+- resolving a `DerivedData` root from an explicit `--index-store` path
+- ignoring stale or unrelated `*.build` directories
 
 ### Regression coverage
 
@@ -251,8 +314,9 @@ This is a behavior change for users who relied on `--source-root`.
 Migration plan:
 
 1. remove `--source-root` from CLI help and parsing
-2. update Orchard skill/docs/examples
-3. describe the new default as "ingest compiled targets from current Xcode build"
+2. update reader / ingest filtering to use compiled files rather than path prefixes
+3. update Orchard skill/docs/examples
+4. describe the new default as "ingest compiled targets from current Xcode build"
 
 ## Recommendation
 
