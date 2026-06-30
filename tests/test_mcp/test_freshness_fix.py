@@ -165,3 +165,48 @@ def test_symbol_context_without_explicit_build_id_gets_one_injected(tmp_db_path)
     finally:
         server_mod._conn.close()
         server_mod._conn = original_conn
+
+
+def test_search_name_with_build_snapshot_reports_non_unknown_freshness(tmp_db_path):
+    """Guided search should surface a concrete freshness state when a snapshot exists."""
+    import json
+    from orchard.graph.db import get_connection, init_schema
+    import orchard.server as server_mod
+
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    conn.execute(
+        "CREATE (:BuildSnapshot {id: 'b1', build_system: 'xcodebuild', workspace_root: '/app', "
+        "derived_data_path: '', index_store_path: '', toolchain_id: 'Xcode15.4', "
+        "commit_sha: '', build_config_hash: 'h1', created_at: '2026-06-30', sdk: 'iphonesimulator', configuration: 'debug'})"
+    )
+    conn.execute(
+        "CREATE (:Symbol {id: 'u1', usr: 'u1', precise_id: '', name: 'process_msg', "
+        "language: 'cxx', kind: 'cxx.method', module: 'Core', file_path: '/src/thread.cpp', "
+        "signature: '', container_usr: '', access_level: 'internal', origin: 'derived', is_generated: false})"
+    )
+
+    original_conn = server_mod._conn
+    server_mod._conn = conn
+    try:
+        result = json.loads(server_mod._do_search_name({"name": "process_msg"}))
+        assert result["status"]["freshness"] in {"fresh", "stale", "partially_stale"}
+    finally:
+        server_mod._conn = original_conn
+        conn.close()
+
+
+def test_plan_search_next_actions_emits_refresh_contract_before_shell_fallback():
+    """Stale miss-paths should suggest refresh before shell fallback."""
+    from orchard.query.search_planner import plan_search_next_actions
+    from orchard.query.search_contract import SearchStatus
+
+    actions = plan_search_next_actions(
+        SearchStatus(outcome="no_match", coverage="unknown", freshness="stale"),
+        {"symbols": [], "owners": [], "text": ["process_msg"]},
+        "process_msg",
+    )
+    assert actions == [
+        {"tool": "orchard_refresh_index", "args": {}},
+        {"tool": "shell_text_search", "args": {"pattern": "process_msg"}},
+    ]

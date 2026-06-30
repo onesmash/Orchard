@@ -4,11 +4,15 @@ description: >
   Query the Orchard Apple Semantic Graph to analyze code relationships in
   indexed Xcode projects. Use this skill whenever the user asks about
   function callers or callees, impact / blast-radius analysis, type
-  hierarchies, symbol lookups, code dependencies, "who calls X", "what
-  does Y depend on", ObjC notification/delegate wiring, safe renaming,
-  or wants to understand how iOS / macOS components relate to each other.
-  Also use it when the user mentions "orchard" directly, or asks for a
-  graph-based view of their Objective-C / Swift codebase. Every edge is
+  hierarchies, symbol lookups, guided miss-path debugging, crash-frame
+  lookup, code dependencies, "who calls X", "what does Y depend on",
+  "I only have this stack frame", ObjC notification/delegate wiring,
+  safe renaming, or wants to understand how iOS / macOS components
+  relate to each other. Also use it when the user mentions "orchard"
+  directly, or asks for a graph-based view of their Objective-C / Swift
+  codebase. Make sure to use this skill even when the user only has a
+  symbol fragment, stale search result, or crash stack line and needs
+  the next debugging step, not just a raw symbol search. Every edge is
   compiler-verified via Xcode IndexStore — "confidence" labels tell you
   whether a call edge is source-level evidence or compiler-inferred.
 ---
@@ -47,7 +51,7 @@ under `~/Library/Developer/Xcode/DerivedData/...` or a custom Xcode cache
 directory, that is usually an `--index-store` / DerivedData hint, not the
 graph DB itself.
 
-## Finding symbols (search)
+## Guided symbol lookup
 
 ```bash
 orchard search --name "<text>" [--kind <kind>] [--language <swift|objc>] [--limit 20]
@@ -59,10 +63,47 @@ The `--name` flag does substring matching. Regex works too:
 - Exact match: `--name "^viewDidLoad$"`
 - Prefix match: `--name "^MyClass.*"`
 
-Results include `by_kind` grouping (field / method / class / protocol / …)
-alongside a flat `results` list.
+`orchard_search` is now a guided lookup surface.  Its MCP response centers on:
 
-If ambiguous, ask the user which symbol they meant before running deeper queries.
+- `query` — how Orchard interpreted the input (`symbol`, `qualified_symbol`, `frame`, ...)
+- `status` — compact `outcome`, `coverage`, and `freshness`
+- `matches` — direct symbol hits
+- `diag` — short diagnostic codes such as `frame_lookup_recommended`,
+  `index_stale`, `text_fallback_recommended`
+- `candidates` — compact fallback buckets such as `symbols`, `owners`, and `text`
+- `next` — executable next actions, not prose explanations
+
+When the query misses, do not stop at "0 results". Read `status`, `diag`, and
+`next` to decide whether to:
+
+- narrow to an owner/type search
+- switch to `orchard_lookup_frame`
+- refresh the index via the `orchard_refresh_index` maintenance action
+- fall back to shell text search
+
+If ambiguous, prefer following `next` or narrowing by `module`, `kind`, or
+`language` before asking the user for clarification.
+
+## Crash-frame lookup
+
+Use `orchard_lookup_frame` when the user has a stack frame or crash fragment:
+
+```json
+{"frame": "ssb::thread_wrapper_t::process_msg(unsigned int)"}
+```
+
+Use it for:
+
+- a single crash frame
+- a frame-like symbol with namespace, owner, and parameters
+- "I only have this stack line, where do I start?"
+
+Do **not** manually translate the frame into several separate searches first.
+Let Orchard parse the frame, attempt qualified lookup, then fall back to owner
+and bare-symbol suggestions.
+
+If `orchard_search` returns `frame_lookup_recommended`, call
+`orchard_lookup_frame` next instead of improvising.
 
 ## Query commands
 
@@ -142,6 +183,27 @@ closure** (protocol conformers, subclasses) in d1.
 | `low` | <4 direct dependents |
 
 **Always warn the user** before proposing changes to HIGH or CRITICAL risk symbols.
+
+## Guided miss-path workflow
+
+When Orchard search does not directly resolve the symbol, use this sequence:
+
+1. **Check `status.freshness`**
+   If `stale` or `unknown`, treat the miss as suspect and consider the
+   `orchard_refresh_index` maintenance action before over-trusting absence.
+2. **Check `status.coverage`**
+   Distinguish `covered` from `partial` / `uncovered` / `unknown`.
+3. **Read `diag`**
+   Use short diagnostic codes to understand the likely reason for the miss.
+4. **Execute `next`**
+   Prefer Orchard-native next steps over ad-hoc grep.
+
+Important interpretation:
+
+- `freshness` answers whether the build snapshot is trustworthy
+- `coverage` answers whether the graph likely covers the searched scope
+
+Do not conflate them. A query can be fresh but uncovered, or covered but stale.
 
 ### symbol — Metadata
 
@@ -314,7 +376,7 @@ All orchard tools are available as MCP tools with session-scoped DB connection.
 The skill should prefer MCP tools when available; fall back to CLI pipe for
 batch queries.
 
-MCP tools: `orchard_search`, `orchard_find_callers`, `orchard_find_callees`
+MCP tools: `orchard_search`, `orchard_lookup_frame`, `orchard_find_callers`, `orchard_find_callees`
 (returns notification_bridges by default for ObjC observers),
 `orchard_find_references` (includes semantic_role for ObjC callees),
 `orchard_notification_graph` (with `group_by: "observer"` for
@@ -339,20 +401,23 @@ The `include_inferred` flag controls whether inferred edges appear.
    ```bash
    orchard search --name "<user's description>"
    ```
-2. **Confirm** the USR with the user (show top matches, let them pick).
-3. **Look up** symbol metadata:
+2. **If the user only has a stack frame**, use `orchard_lookup_frame` first.
+3. **Follow `status`, `diag`, and `next`** before assuming the miss is final.
+4. **Confirm** the USR with the user when multiple direct matches remain.
+5. **Look up** symbol metadata:
    ```bash
    orchard symbol --usr "<chosen USR>"
    ```
-4. **Run the requested query** (callers, callees, impact, hierarchy).
+6. **Run the requested query** (callers, callees, impact, hierarchy).
    When 3+ queries are needed, use **pipe mode**.
-5. **Synthesize** results into a human-readable summary. Highlight:
+7. **Synthesize** results into a human-readable summary. Highlight:
    - Confidence labels — which edges are compiler-verified vs inferred
    - How many dependents at each depth (d1 = WILL BREAK)
    - Risk level and what it means
    - ObjC semantic roles (notification wiring, delegate patterns)
    - Notification bridges — who registered → selector → event key → callback
    - Cross-language bridges (ObjC ↔ Swift)
+   - Freshness vs coverage when the search path was ambiguous or stale
 
 ## Interpreting USR formats
 
@@ -373,3 +438,13 @@ Swift USRs are mangled — always search by human-readable name, not USR.
 - **No target_id needed**: USR alone provides unambiguous symbol identity.
 - **Stale data warning**: if impact returns risk `critical`, re-run ingest.
 - **DB discovery**: auto-walks up from cwd; `--db` overrides.
+
+## Maintenance action
+
+`orchard_refresh_index` is a phase-1 maintenance action contract, not a normal
+MCP tool. If Orchard recommends it in `next`, execute the project's Orchard
+refresh command before drawing strong conclusions from a miss-path:
+
+```bash
+orchard ingest --project-dir <project-root>
+```

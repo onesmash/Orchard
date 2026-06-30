@@ -166,3 +166,14 @@ def freshness_for(
         return snapshot, "build_mismatch"
 
     return snapshot, "fresh"
+
+
+def map_search_freshness(snapshot_status: str) -> str:
+    """Map detailed snapshot freshness to the phase-1 guided-search values."""
+    if snapshot_status == "fresh":
+        return "fresh"
+    if snapshot_status == "stale":
+        return "stale"
+    if snapshot_status in {"toolchain_mismatch", "build_mismatch"}:
+        return "partially_stale"
+    return "unknown"

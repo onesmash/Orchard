@@ -313,14 +313,43 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 
 - **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `orchard_impact` and report the blast radius (direct callers, affected processes, risk level) to the user.
 - **MUST use orchard to find callers/callees** when exploring unfamiliar code — `orchard_find_callers` and `orchard_find_callees` with compiler-verified edges are more precise than grep. Check the `confidence` field to distinguish source-level evidence from compiler-inferred edges.
+- **MUST follow Orchard's guided miss-path signals** — when `orchard_search` does not directly resolve the symbol, read `status`, `diag`, `candidates`, and `next` instead of treating the result as a dead end.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
 
 ## When Debugging
 
-1. `orchard_search({{name: "<symbol>"}})` — find the symbol's USR; results include `by_kind` grouping
-2. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred)
-3. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges (who registered → selector → event key → callback) by default
-4. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups
+1. `orchard_search({{name: "<symbol>"}})` — guided symbol lookup with `status`, `diag`, `candidates`, and `next`
+2. If the user only has a stack frame, use `orchard_lookup_frame({{frame: "<stack line>"}})` instead of manually translating it into several searches
+3. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred)
+4. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges (who registered → selector → event key → callback) by default
+5. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups
+
+## Guided Miss-Path
+
+When `orchard_search` does not directly resolve the symbol:
+
+1. Check `status.freshness`
+   If it is `stale` or `unknown`, do not over-trust the miss.
+2. Check `status.coverage`
+   Distinguish `covered` from `partial`, `uncovered`, and `unknown`.
+3. Read `diag`
+   Short diagnostic codes explain why the lookup was weak.
+4. Execute `next`
+   Prefer Orchard-native next actions over ad-hoc grep.
+
+Important distinction:
+
+- `freshness` answers whether the build snapshot is trustworthy
+- `coverage` answers whether the graph likely covers the searched scope
+
+Do not conflate them. A query can be fresh but uncovered, or covered but stale.
+
+If `next` includes `orchard_refresh_index`, run the project's Orchard refresh
+command before drawing strong conclusions from the miss-path:
+
+```bash
+orchard ingest --project-dir .
+```
 
 ## When Debugging Notifications
 
@@ -348,7 +377,8 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 
 | Tool | When to use | Command |
 |------|-------------|---------|
-| `search` | Find symbols by name | `orchard_search({{name: "viewDidLoad"}})` |
+| `search` | Guided symbol lookup by name or qualified name | `orchard_search({{name: "viewDidLoad"}})` |
+| `lookup_frame` | Start from a crash frame / stack fragment | `orchard_lookup_frame({{frame: "ssb::thread_wrapper_t::process_msg(unsigned int)"}})` |
 | `find_callers` | Who calls this symbol | `orchard_find_callers({{usr: "<USR>"}})` |
 | `find_callees` | What this symbol calls (returns notification_bridges by default) | `orchard_find_callees({{usr: "<USR>"}})` |
 | `find_references` | Incoming + outgoing references (with semantic_role for ObjC) | `orchard_find_references({{usr: "<USR>"}})` |
@@ -426,8 +456,8 @@ assuming the whole command is hung.
 
 `orchard ingest` writes a `BuildSnapshot` for the current graph build. After a
 successful ingest, normal queries such as `symbol`, `impact`, `find_callers`,
-and `find_callees` should usually return `freshness: "fresh"` unless the graph
-is genuinely outdated or the query uses a mismatched build context.
+`find_callees`, and guided search should usually return `freshness: "fresh"`
+unless the graph is genuinely outdated or the query uses a mismatched build context.
 
 After committing code changes, re-run ingest to update:
 

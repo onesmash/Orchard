@@ -7,6 +7,12 @@ compiler-verified, not heuristic. It provides call-graph analysis, impact
 assessment, type hierarchies, and semantic search for Swift, Objective-C, C,
 and C++ codebases via a CLI and MCP server.
 
+## Guided Search
+
+- Use `orchard_search` for symbol-intent lookup by name or qualified name.
+- Use `orchard_lookup_frame` when you have a crash frame or stack-text fragment and want Orchard to route the next step.
+- If a guided search response includes `orchard_refresh_index`, run the documented Orchard ingest refresh command before over-trusting a miss.
+
 ## Features
 
 - **Compiler-verified edges** — data source is Xcode IndexStore, so call

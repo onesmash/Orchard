@@ -57,6 +57,11 @@ def _print_json(obj):
     print(json.dumps(obj, indent=2, ensure_ascii=False, default=str))
 
 
+def orchard_refresh_command() -> list[str]:
+    """Return the canonical phase-1 Orchard refresh command."""
+    return ["orchard", "ingest", "--project-dir", os.getcwd()]
+
+
 def _latest_build_snapshot(conn, scope_id: str = "") -> dict[str, str] | None:
     rows = conn.execute(
         "MATCH (b:BuildSnapshot) "

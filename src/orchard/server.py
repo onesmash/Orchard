@@ -16,12 +16,22 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 from contextlib import asynccontextmanager
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+
+from orchard.query.search_contract import SearchResponse, SearchStatus
+from orchard.query.frame_lookup import lookup_frame
+from orchard.query.search_planner import (
+    classify_search_query,
+    plan_search_next_actions,
+    rank_symbol_candidates,
+)
+from orchard.validation.freshness import freshness_for, map_search_freshness
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +84,7 @@ def _default_build_id_safe(conn, scope_id: str = "") -> str | None:
 TOOLS = [
     Tool(
         name="orchard_search",
-        description="Search for symbols by name (substring match) or find all methods of a class. Results include by_kind grouping (field/method/class/protocol...) and a flat results list. When class_name is provided, finds matching classes and lists their methods.",
+        description="Search for symbols by name or qualified name. Returns compact status, diagnostics, candidates, and next actions. If the input looks like a stack frame, use orchard_lookup_frame.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -207,6 +217,19 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="orchard_lookup_frame",
+        description="Lookup a crash frame or stack-frame-like string and return compact diagnostics, owner fallbacks, and next actions.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "frame": {"type": "string", "description": "A single stack frame or crash-frame-like string."},
+                "target": {"type": "string", "description": "Optional module/target filter."},
+                "language": {"type": "string", "description": "Optional language filter."},
+            },
+            "required": ["frame"],
+        },
+    ),
 ]
 
 
@@ -224,9 +247,22 @@ def _do_search(args: dict) -> str:
 
 def _do_search_name(args: dict) -> str:
     """Search symbols by name — inline Cypher, no handler overhead."""
-    import re as _re
     raw = args.get("name", "")
-    if _re.search(r'[.*+?^$\[\](){}\\|]', raw):
+    query_kind = classify_search_query(raw)
+    if query_kind == "frame":
+        response = SearchResponse(
+            query={"raw": raw, "kind": query_kind},
+            status=SearchStatus(
+                outcome="no_match", coverage="unknown", freshness="unknown"
+            ),
+            matches=[],
+            diag=["frame_lookup_recommended"],
+            candidates={"symbols": [], "owners": [], "text": [raw]},
+            next_actions=[{"tool": "orchard_lookup_frame", "args": {"frame": raw}}],
+        )
+        return json.dumps(response.to_dict(), ensure_ascii=False, indent=2)
+
+    if re.search(r'[.*+?^$\[\](){}\\|]', raw):
         pattern = raw
     else:
         pattern = f".*{raw}.*"
@@ -258,15 +294,47 @@ def _do_search_name(args: dict) -> str:
         "ORDER BY s.name LIMIT $limit",
         params,
     ).get_all()
-    results = [{"usr": r[0], "name": r[1], "kind": r[2], "language": r[3], "module": r[4]} for r in rows]
-    by_kind: dict[str, list] = {}
-    for r in results:
-        by_kind.setdefault(r["kind"], []).append(r)
-    return json.dumps({
-        "count": len(results),
-        "by_kind": by_kind,
-        "results": results,
-    }, ensure_ascii=False, indent=2)
+    matches = rank_symbol_candidates(
+        raw,
+        [
+            {
+                "usr": r[0],
+                "name": r[1],
+                "kind": r[2],
+                "language": r[3],
+                "module": r[4],
+            }
+            for r in rows
+        ],
+        target=target,
+        language=language,
+    )
+    outcome = "match" if len(matches) == 1 else "ambiguous" if len(matches) > 1 else "no_match"
+    coverage = "covered" if matches else "unknown"
+    build_id = args.get("build_id") or _default_build_id_safe(conn, target or "")
+    snapshot_status = "stale"
+    if build_id:
+        _, snapshot_status = freshness_for(conn, build_id, {})
+    freshness = map_search_freshness(snapshot_status)
+    status = SearchStatus(outcome=outcome, coverage=coverage, freshness=freshness)
+    response = SearchResponse(
+        query={"raw": raw, "kind": query_kind},
+        status=status,
+        matches=matches[:5],
+        diag=([] if matches else ["text_fallback_recommended"])
+        + (["index_stale"] if freshness == "stale" else []),
+        candidates={
+            "symbols": matches[:3],
+            "owners": [],
+            "text": [raw] if not matches else [],
+        },
+        next_actions=plan_search_next_actions(
+            status,
+            {"symbols": matches[:3], "owners": [], "text": [raw] if not matches else []},
+            raw,
+        ),
+    )
+    return json.dumps(response.to_dict(), ensure_ascii=False, indent=2)
 
 
 def _do_search_class(args: dict) -> str:
@@ -323,6 +391,18 @@ def _do_search_class(args: dict) -> str:
         "owners": owners,
         "total_methods": sum(len(e["methods"]) for e in owners),
     }, ensure_ascii=False, indent=2)
+
+
+def _do_lookup_frame(args: dict) -> str:
+    """Lookup a crash frame or frame-like string."""
+    conn = _get_conn()
+    result = lookup_frame(
+        conn,
+        args.get("frame", ""),
+        target=args.get("target", ""),
+        language=args.get("language", ""),
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, include_noise: bool = True, include_inferred: bool = False, depth: int = 1, relation_types: list[str] | None = None) -> str:
@@ -417,6 +497,7 @@ def _do_notification_graph(args: dict) -> str:
 
 HANDLERS: dict[str, callable] = {
     "orchard_search": _do_search,
+    "orchard_lookup_frame": _do_lookup_frame,
     "orchard_find_references": lambda a: _do_handler("references", "find_references", "ReferencesRequest", a),
     "orchard_find_callers": lambda a: _do_handler("callers", "find_callers", "CallerRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1), relation_types=a.get("relation_types", "Calls").split(",") if isinstance(a.get("relation_types"), str) else ["Calls"]),
     "orchard_find_callees": lambda a: _do_handler("callees", "find_callees", "CalleeRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1), relation_types=a.get("relation_types", "Calls").split(",") if isinstance(a.get("relation_types"), str) else a.get("relation_types", ["Calls"])),
