@@ -1,4 +1,4 @@
-"""Frame-oriented lookup helpers for crash debugging workflows."""
+"""Single-frame lookup helpers for deterministic symbol graph enrichment."""
 
 from __future__ import annotations
 
@@ -33,19 +33,17 @@ _DISPATCH_BOUNDARY_NAMES = {
     "postNotificationName",
     "objc_msgSend",
 }
-_ARM64_REGISTER_RE = re.compile(
-    r"\b(?P<name>x(?:[0-9]|[12][0-9]|3[01]))\b\s*(?::|=)\s*"
-    r"(?P<value>0x[0-9a-fA-F]+|\d+)"
-)
+
+
+def _is_multi_line_input(raw: str) -> bool:
+    return len([line for line in raw.splitlines() if line.strip()]) > 1
 
 
 def parse_frame_text(raw: str) -> dict[str, str] | None:
-    """Extract a minimal owner/symbol/signature tuple from stack-frame text."""
-    for line in raw.splitlines() or [raw]:
-        parsed = _parse_frame_line(line.strip())
-        if parsed:
-            return parsed
-    return None
+    """Extract owner/symbol/signature from one frame-like text string."""
+    if _is_multi_line_input(raw):
+        return None
+    return _parse_frame_line(raw.strip())
 
 
 def _parse_frame_line(line: str) -> dict[str, str] | None:
@@ -98,6 +96,18 @@ def lookup_frame(
     conn, raw: str, target: str = "", language: str = "", freshness: str = "unknown"
 ) -> dict[str, object]:
     """Perform a compact frame-oriented lookup with owner+method fallback."""
+    if _is_multi_line_input(raw):
+        return SearchResponse(
+            query={"raw": raw, "kind": "frame"},
+            status=SearchStatus(
+                outcome="parse_failed", coverage="unknown", freshness=freshness
+            ),
+            matches=[],
+            diag=["input_too_broad"],
+            candidates={"symbols": [], "owners": [], "text": [], "frames": []},
+            next_actions=[],
+        ).to_dict()
+
     parsed = parse_frame_text(raw)
     if parsed is None:
         return SearchResponse(
@@ -167,68 +177,6 @@ def lookup_frame(
     response["caller_summary"] = {"direct_callers": callers[:5], "count": len(callers)}
     response["notes"] = _notes_for(raw, callers, methods, owners, source_candidates)
     return response
-
-
-def lookup_crash_thread(
-    conn,
-    raw: str,
-    target: str = "",
-    language: str = "",
-    limit: int = 12,
-    freshness: str = "unknown",
-) -> dict[str, object]:
-    """Resolve parseable frames from a crashed thread and summarize the first hit."""
-    frame_lines = _extract_frame_lines(raw)[:limit]
-    frame_results = [
-        lookup_frame(conn, line, target=target, language=language, freshness=freshness)
-        for line in frame_lines
-    ]
-    indexed = [result for result in frame_results if result["status"]["outcome"] == "match"]
-    first = indexed[0] if indexed else None
-    dispatch_boundaries = [
-        _annotate_parsed_boundary(result["query"]["parsed"])
-        for result in frame_results
-        if "dispatch_boundary_in_stack" in result.get("diag", [])
-    ]
-    diag = _dedupe(
-        code for result in frame_results for code in result.get("diag", [])
-    )
-    first_callers = first.get("caller_summary", {}).get("direct_callers", []) if first else []
-    if first_callers and _has_hidden_caller_mismatch(raw, first_callers):
-        diag = _dedupe([*diag, "graph_caller_not_in_stack"])
-    summary = {
-        "top_frame": frame_results[0]["resolution"]["method"]
-        if frame_results and "resolution" in frame_results[0]
-        else None,
-        "business_first_frame": first["resolution"]["method"] if first else None,
-        "direct_callers": first_callers,
-        "thread_boundaries": dispatch_boundaries,
-        "next_actions": first.get("next", []) if first else [],
-    }
-    register_semantics = _register_semantics(raw, frame_results[0] if frame_results else None)
-    if register_semantics:
-        summary["register_semantics"] = register_semantics
-        diag = _dedupe([*diag, *register_semantics.get("diag", [])])
-    notes = _dedupe(
-        note for result in frame_results for note in result.get("notes", [])
-    )
-    if register_semantics:
-        notes += register_semantics.get("notes", [])
-    return {
-        "query": {"raw": raw, "kind": "crash_thread", "frame_count": len(frame_lines)},
-        "status": {
-            "outcome": "match" if first else "no_match",
-            "coverage": "covered" if first else "unknown",
-            "freshness": freshness,
-        },
-        "frames": frame_results,
-        "first_indexed_symbol": first["resolution"]["method"] if first else None,
-        "dispatch_boundaries": dispatch_boundaries,
-        "summary": summary,
-        "diag": diag,
-        "next": first.get("next", []) if first else [],
-        "notes": notes,
-    }
 
 
 def _query_owners(conn, owner_name: str, target: str = "", language: str = "") -> list[dict]:
@@ -466,80 +414,11 @@ def _contains_dispatch_boundary(raw: str) -> bool:
     return any(name in raw for name in _DISPATCH_BOUNDARY_NAMES)
 
 
-def _annotate_parsed_boundary(parsed: dict[str, str]) -> dict[str, object]:
-    boundary = execution_boundary_for(parsed)
-    return {**parsed, "execution_boundary": boundary} if boundary else parsed
-
-
 def _workspace_root(conn) -> str:
     rows = conn.execute(
         "MATCH (b:BuildSnapshot) RETURN b.workspace_root ORDER BY b.created_at DESC LIMIT 1"
     ).get_all()
     return rows[0][0] if rows and rows[0][0] else ""
-
-
-def _register_semantics(raw: str, top_frame: dict | None) -> dict[str, object]:
-    if not top_frame:
-        return {}
-    parsed = top_frame.get("query", {}).get("parsed") or {}
-    method = top_frame.get("resolution", {}).get("method") or {}
-    language = (method.get("language") or parsed.get("language_hint") or "").lower()
-    if language and language not in {"cxx", "cpp", "c++"}:
-        return {}
-    if "::" not in parsed.get("qualified_name", ""):
-        return {}
-    registers = _parse_arm64_registers(raw)
-    x0 = registers.get("x0")
-    if x0 is None:
-        return {}
-    result: dict[str, object] = {
-        "architecture": "arm64",
-        "calling_convention": "C++ instance method receives this in x0",
-        "x0": f"0x{x0:x}",
-        "diag": [],
-        "notes": [],
-    }
-    if x0 == 0:
-        result["this_pointer"] = "null"
-        result["likely_fault"] = "null_this_dereference"
-        result["diag"] = ["arm64_null_this"]
-        result["notes"] = [
-            "Top frame is a C++ instance-method-shaped frame and x0 is 0; "
-            "treat this as a likely null-this dereference before blaming member values."
-        ]
-    else:
-        result["this_pointer"] = "non_null"
-    return result
-
-
-def _parse_arm64_registers(raw: str) -> dict[str, int]:
-    registers: dict[str, int] = {}
-    for match in _ARM64_REGISTER_RE.finditer(raw):
-        value = match.group("value")
-        base = 16 if value.lower().startswith("0x") else 10
-        registers[match.group("name")] = int(value, base)
-    return registers
-
-
-def _extract_frame_lines(raw: str) -> list[str]:
-    lines = []
-    for line in raw.splitlines():
-        stripped = line.strip()
-        if any(frame_re.search(stripped) for frame_re in _FRAME_RES):
-            lines.append(stripped)
-    return lines
-
-
-def _dedupe(items) -> list:
-    seen = set()
-    result = []
-    for item in items:
-        marker = repr(item)
-        if marker in seen:
-            continue
-        seen.add(marker)
-        result.append(item)
-    return result
 
 
 def _notes_for(
