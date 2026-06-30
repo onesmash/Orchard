@@ -1,4 +1,5 @@
-from orchard.setup import _ORCHARD_BLOCK
+from orchard.graph.db import get_connection
+from orchard.setup import _ORCHARD_BLOCK, _collect_stats, _setup_claude_md
 
 
 def _render_block() -> str:
@@ -54,3 +55,27 @@ def test_orchard_block_keeps_graph_context_labels():
     assert "exact C++ object field offsets" in block
     assert "orchard_class_layout" not in block
     assert "## Graph Schema" not in block
+
+
+def test_collect_stats_treats_schema_less_database_as_missing(tmp_path):
+    project_dir = tmp_path / "project"
+    db_path = tmp_path / ".orchard" / "graph.db"
+    project_dir.mkdir()
+    conn = get_connection(str(db_path))
+    conn.close()
+
+    assert _collect_stats(project_dir) == {}
+
+
+def test_setup_claude_md_reports_missing_database_for_schema_less_database(tmp_path):
+    project_dir = tmp_path / "project"
+    db_path = tmp_path / ".orchard" / "graph.db"
+    project_dir.mkdir()
+    conn = get_connection(str(db_path))
+    conn.close()
+
+    ok, msg = _setup_claude_md(project_dir)
+
+    assert ok is False
+    assert "no orchard database found" in msg
+    assert "orchard ingest --project-dir ." in msg

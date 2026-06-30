@@ -406,9 +406,14 @@ def _collect_stats(project_dir: Path) -> dict[str, int]:
         return {}
     conn = get_connection(db_path)
     try:
-        sym = conn.execute("MATCH (s:Symbol) RETURN count(s)").get_all()[0][0]
-        calls = conn.execute("MATCH ()-[r:Calls]->() RETURN count(r)").get_all()[0][0]
-        contains = conn.execute("MATCH ()-[r:Contains]->() RETURN count(r)").get_all()[0][0]
+        try:
+            sym = conn.execute("MATCH (s:Symbol) RETURN count(s)").get_all()[0][0]
+            calls = conn.execute("MATCH ()-[r:Calls]->() RETURN count(r)").get_all()[0][0]
+            contains = conn.execute("MATCH ()-[r:Contains]->() RETURN count(r)").get_all()[0][0]
+        except RuntimeError as exc:
+            if "does not exist" not in str(exc):
+                raise
+            return {}
         return {"symbol_count": sym, "calls_count": calls, "contains_count": contains}
     finally:
         conn.close()
