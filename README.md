@@ -10,8 +10,8 @@ and C++ codebases via a CLI and MCP server.
 ## Guided Search
 
 - Use `orchard_search` for symbol-intent lookup by name or qualified name.
-- Use `orchard_lookup_frame` when you have a crash frame or stack-text fragment and want Orchard to resolve the owner/method, summarize direct callers, and route the next step.
-- Use `orchard_lookup_crash_thread` when you have the whole crashed-thread block and want Orchard to find the first indexed business symbol and flag dispatch boundaries.
+- Use `orchard_lookup_frame` when you have one stack frame or frame-like symbol text and want Orchard to resolve owner/method graph context.
+- Full crashlogs and crash thread blocks are handled outside Orchard. Extract a concrete frame, symbol name, qualified name, or USR before calling Orchard.
 - If a guided search response includes `orchard_refresh_index`, run the documented Orchard ingest refresh command before over-trusting a miss.
 
 ## Features
@@ -125,8 +125,7 @@ It exposes these core tools:
 | Tool | Description |
 |------|-------------|
 | `orchard_search` | Search symbols by name or list class methods |
-| `orchard_lookup_frame` | Resolve a single crash frame to owner/method candidates, direct callers, and next actions |
-| `orchard_lookup_crash_thread` | Resolve parseable frames from one crashed thread and flag dispatch boundaries |
+| `orchard_lookup_frame` | Resolve a single stack frame to owner/method graph context |
 | `orchard_find_callers` | Find all callers of a symbol (multi-hop) |
 | `orchard_find_callees` | Find all callees of a symbol (multi-hop) |
 | `orchard_find_references` | Incoming + outgoing references |

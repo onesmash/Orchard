@@ -4,8 +4,8 @@ description: >
   Query the Orchard Apple Semantic Graph to analyze code relationships in
   indexed Xcode projects. Use this skill whenever the user asks about
   function callers or callees, impact / blast-radius analysis, type
-  hierarchies, symbol lookups, guided miss-path debugging, crash-frame
-  lookup, crashed-thread triage, ARM64 register clues such as `x0 = 0`,
+  hierarchies, symbol lookups, guided miss-path debugging, single crash-frame
+  lookup,
   code dependencies, "who calls X", "what does Y depend on",
   "I only have this stack frame", ObjC notification/delegate wiring,
   lifecycle / async callback boundaries, safe renaming, or wants to understand how iOS / macOS components
@@ -85,9 +85,10 @@ When the query misses, do not stop at "0 results". Read `status`, `diag`, and
 If ambiguous, prefer following `next` or narrowing by `module`, `kind`, or
 `language` before asking the user for clarification.
 
-## Crash-frame lookup
+## Single-frame lookup
 
-Use `orchard_lookup_frame` when the user has a stack frame or crash fragment:
+Use `orchard_lookup_frame` when the user has one single stack frame or one
+frame-like symbol string:
 
 ```json
 {"frame": "ssb::thread_wrapper_t::process_msg(unsigned int)"}
@@ -99,31 +100,15 @@ Use it for:
 - a frame-like symbol with namespace, owner, and parameters
 - "I only have this stack line, where do I start?"
 
-Do **not** manually translate the frame into several separate searches first.
-Let Orchard parse the frame, attempt qualified lookup, fall back through owner
-plus method resolution, then return direct callers and next actions.
+full crashlogs are handled outside Orchard. If the user pasted a full crashlog
+or crash thread block, first extract a concrete frame, symbol name, qualified
+name, or USR outside Orchard, then call `orchard_lookup_frame`,
+`orchard_search`, or a USR-based graph tool.
 
-Use `orchard_lookup_crash_thread` when the user has pasted the crashed-thread
-block rather than one frame. It resolves parseable application frames, reports
-the first indexed business symbol, direct callers, next actions, and likely
-thread/dispatch boundaries such as `process_msg`, target-action, SDK callbacks,
-or notification callbacks.
-
-Crash-thread responses may include:
-
-- `summary.business_first_frame` — the first indexed application/business frame
-- `summary.direct_callers` — compiler-indexed direct callers of that frame
-- `summary.thread_boundaries` / `dispatch_boundaries` — frames that look like
-  SDK callbacks, worker dispatch, main-thread tasks, notification/callback sinks,
-  or lifecycle teardown paths
-- `summary.next_actions` / top-level `next` — executable Orchard follow-ups
-- `summary.register_semantics` — register-derived crash clues when present
-
-For ARM64 C++ instance-method frames, if the crash report includes `x0 = 0` or
-`x0: 0x0`, treat it as strong triage evidence that `this` is null. Orchard
-annotates this as `diag: arm64_null_this` and
-`likely_fault: null_this_dereference`. Prefer this interpretation before
-blaming a member value such as `using_scene_`.
+Do **not** ask Orchard to choose the first business frame, interpret exception
+sections, infer delegate selectors, rank likely causes, or inspect register
+values. Orchard enriches explicit symbol identity with compiler-indexed graph
+context.
 
 Do not claim Orchard has exact C++ object field offsets from IndexStore. If a
 crash mentions an address such as `0x20`, use it only as a hypothesis to check
@@ -132,7 +117,7 @@ DWARF debug info, Clang record layout output, or another ABI-aware source, not
 IndexStore alone.
 
 If `orchard_search` returns `frame_lookup_recommended`, call
-`orchard_lookup_frame` next instead of improvising.
+`orchard_lookup_frame` next only when the input is one frame-like string.
 
 ## Query commands
 
@@ -431,7 +416,7 @@ All orchard tools are available as MCP tools with session-scoped DB connection.
 The skill should prefer MCP tools when available; fall back to CLI pipe for
 batch queries.
 
-MCP tools: `orchard_search`, `orchard_lookup_frame`, `orchard_lookup_crash_thread`, `orchard_find_callers`, `orchard_find_callees`
+MCP tools: `orchard_search`, `orchard_lookup_frame`, `orchard_find_callers`, `orchard_find_callees`
 (returns notification_bridges by default for ObjC observers),
 `orchard_find_references` (includes semantic_role for ObjC callees),
 `orchard_notification_graph` (with `group_by: "observer"` for
