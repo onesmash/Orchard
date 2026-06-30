@@ -410,11 +410,13 @@ def _do_search_class(args: dict) -> str:
 def _do_lookup_frame(args: dict) -> str:
     """Lookup a crash frame or frame-like string."""
     conn = _get_conn()
+    freshness = _search_freshness_for_args(conn, args)
     result = lookup_frame(
         conn,
         args.get("frame", ""),
         target=args.get("target", ""),
         language=args.get("language", ""),
+        freshness=freshness,
     )
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -422,14 +424,25 @@ def _do_lookup_frame(args: dict) -> str:
 def _do_lookup_crash_thread(args: dict) -> str:
     """Lookup a crashed thread and summarize indexed frames."""
     conn = _get_conn()
+    freshness = _search_freshness_for_args(conn, args)
     result = lookup_crash_thread(
         conn,
         args.get("thread", ""),
         target=args.get("target", ""),
         language=args.get("language", ""),
         limit=args.get("limit", 12),
+        freshness=freshness,
     )
     return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+def _search_freshness_for_args(conn, args: dict) -> str:
+    target = args.get("target", "")
+    build_id = args.get("build_id") or _default_build_id_safe(conn, target or "")
+    snapshot_status = "unknown"
+    if build_id:
+        _, snapshot_status = freshness_for(conn, build_id, {})
+    return map_search_freshness(snapshot_status)
 
 
 def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, include_noise: bool = True, include_inferred: bool = False, depth: int = 1, relation_types: list[str] | None = None) -> str:

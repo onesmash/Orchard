@@ -196,6 +196,45 @@ def test_search_name_with_build_snapshot_reports_non_unknown_freshness(tmp_db_pa
         conn.close()
 
 
+def test_lookup_crash_thread_with_build_snapshot_reports_non_unknown_freshness(tmp_db_path):
+    """Crash-thread lookup should reuse the same freshness metadata as search."""
+    import json
+    from orchard.graph.db import get_connection, init_schema
+    import orchard.server as server_mod
+
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    conn.execute(
+        "CREATE (:BuildSnapshot {id: 'b1', build_system: 'xcodebuild', workspace_root: '/app', "
+        "derived_data_path: '', index_store_path: '', toolchain_id: 'Xcode15.4', "
+        "commit_sha: '', build_config_hash: 'h1', created_at: '2026-06-30', sdk: 'iphonesimulator', configuration: 'debug'})"
+    )
+    conn.execute(
+        "CREATE (:Symbol {id: 'owner', usr: 'c:@N@ns@S@Owner', precise_id: '', name: 'Owner', "
+        "language: 'cxx', kind: 'class', module: 'M', file_path: '/src/Owner.cpp', "
+        "signature: '', container_usr: '', access_level: 'internal', origin: 'derived', is_generated: false})"
+    )
+    conn.execute(
+        "CREATE (:Symbol {id: 'method', usr: 'c:@N@ns@S@Owner@F@crashHere#', precise_id: '', name: 'crashHere', "
+        "language: 'cxx', kind: 'method', module: 'M', file_path: '/src/Owner.cpp', "
+        "signature: '', container_usr: 'c:@N@ns@S@Owner', access_level: 'internal', origin: 'derived', is_generated: false})"
+    )
+
+    original_conn = server_mod._conn
+    server_mod._conn = conn
+    try:
+        result = json.loads(server_mod._do_lookup_crash_thread({
+            "thread": "Thread 1 Crashed:\n0 App ns::Owner::crashHere() + 0",
+            "target": "M",
+            "language": "cxx",
+        }))
+        assert result["status"]["freshness"] in {"fresh", "stale", "partially_stale"}
+        assert result["frames"][0]["status"]["freshness"] == result["status"]["freshness"]
+    finally:
+        server_mod._conn = original_conn
+        conn.close()
+
+
 def test_plan_search_next_actions_emits_refresh_contract_before_shell_fallback():
     """Stale miss-paths should suggest refresh before shell fallback."""
     from orchard.query.search_planner import plan_search_next_actions

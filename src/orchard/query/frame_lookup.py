@@ -6,11 +6,25 @@ import re
 
 from orchard.query.search_contract import SearchResponse, SearchStatus
 
-_FRAME_RE = re.compile(
+_CXX_FRAME_RE = re.compile(
     r"(?P<qualified>[A-Za-z_~][\w:~<>$]*::[A-Za-z_~][\w:~<>$]*)"
     r"\((?P<signature>[^)]*)\)"
     r"(?:\s+\((?P<source>[^:)]+)(?::(?P<line>\d+))?\))?"
 )
+_OBJC_FRAME_RE = re.compile(
+    r"(?P<qualified>(?P<dispatch>[-+])\[(?P<owner>[A-Za-z_][\w.$]*)"
+    r"(?:\([^)]+\))?\s+(?P<symbol>[A-Za-z_][\w:]*:?)\])"
+    r"(?:\s+\+\s+\d+)?"
+    r"(?:\s+\((?P<source>[^:)]+)(?::(?P<line>\d+))?\))?"
+)
+_SWIFT_FRAME_RE = re.compile(
+    r"(?P<qualified>(?P<module>[A-Za-z_][\w]*)\."
+    r"(?P<owner>[A-Za-z_][\w]*)\."
+    r"(?P<symbol>[A-Za-z_~][\w~]*(?:\([^)]*\))?))"
+    r"(?:\s+\+\s+\d+)?"
+    r"(?:\s+\((?P<source>[^:)]+)(?::(?P<line>\d+))?\))?"
+)
+_FRAME_RES = (_CXX_FRAME_RE, _OBJC_FRAME_RE, _SWIFT_FRAME_RE)
 
 _DISPATCH_BOUNDARY_NAMES = {
     "process_msg",
@@ -22,22 +36,52 @@ _DISPATCH_BOUNDARY_NAMES = {
 
 def parse_frame_text(raw: str) -> dict[str, str] | None:
     """Extract a minimal owner/symbol/signature tuple from stack-frame text."""
-    match = None
     for line in raw.splitlines() or [raw]:
-        match = _FRAME_RE.search(line.strip())
-        if match:
-            break
-    if not match:
-        return None
+        parsed = _parse_frame_line(line.strip())
+        if parsed:
+            return parsed
+    return None
 
-    qualified = match.group("qualified")
-    parts = qualified.split("::")
-    parsed = {
-        "qualified_name": qualified,
-        "owner": parts[-2],
-        "symbol": parts[-1],
-        "signature": match.group("signature") or "",
-    }
+
+def _parse_frame_line(line: str) -> dict[str, str] | None:
+    cxx_match = _CXX_FRAME_RE.search(line)
+    if cxx_match:
+        qualified = cxx_match.group("qualified")
+        parts = qualified.split("::")
+        parsed = {
+            "qualified_name": qualified,
+            "owner": parts[-2],
+            "symbol": parts[-1],
+            "signature": cxx_match.group("signature") or "",
+        }
+        return _with_source_info(parsed, cxx_match)
+
+    objc_match = _OBJC_FRAME_RE.search(line)
+    if objc_match:
+        parsed = {
+            "qualified_name": objc_match.group("qualified"),
+            "owner": objc_match.group("owner").split(".")[-1],
+            "symbol": objc_match.group("symbol"),
+            "signature": "",
+            "language_hint": "objc",
+        }
+        return _with_source_info(parsed, objc_match)
+
+    swift_match = _SWIFT_FRAME_RE.search(line)
+    if swift_match:
+        parsed = {
+            "qualified_name": swift_match.group("qualified"),
+            "owner": swift_match.group("owner"),
+            "symbol": swift_match.group("symbol"),
+            "signature": "",
+            "language_hint": "swift",
+        }
+        return _with_source_info(parsed, swift_match)
+
+    return None
+
+
+def _with_source_info(parsed: dict[str, str], match) -> dict[str, str]:
     if match.group("source"):
         parsed["source_file"] = match.group("source") or ""
     if match.group("line"):
@@ -45,14 +89,16 @@ def parse_frame_text(raw: str) -> dict[str, str] | None:
     return parsed
 
 
-def lookup_frame(conn, raw: str, target: str = "", language: str = "") -> dict[str, object]:
+def lookup_frame(
+    conn, raw: str, target: str = "", language: str = "", freshness: str = "unknown"
+) -> dict[str, object]:
     """Perform a compact frame-oriented lookup with owner+method fallback."""
     parsed = parse_frame_text(raw)
     if parsed is None:
         return SearchResponse(
             query={"raw": raw, "kind": "frame"},
             status=SearchStatus(
-                outcome="parse_failed", coverage="unknown", freshness="unknown"
+                outcome="parse_failed", coverage="unknown", freshness=freshness
             ),
             matches=[],
             diag=["frame_lookup_recommended"],
@@ -75,7 +121,7 @@ def lookup_frame(conn, raw: str, target: str = "", language: str = "") -> dict[s
             else "partial"
             if owners or source_candidates
             else "unknown",
-            freshness="unknown",
+            freshness=freshness,
         ),
         matches=methods[:5],
         diag=diag,
@@ -105,12 +151,18 @@ def lookup_frame(conn, raw: str, target: str = "", language: str = "") -> dict[s
 
 
 def lookup_crash_thread(
-    conn, raw: str, target: str = "", language: str = "", limit: int = 12
+    conn,
+    raw: str,
+    target: str = "",
+    language: str = "",
+    limit: int = 12,
+    freshness: str = "unknown",
 ) -> dict[str, object]:
     """Resolve parseable frames from a crashed thread and summarize the first hit."""
     frame_lines = _extract_frame_lines(raw)[:limit]
     frame_results = [
-        lookup_frame(conn, line, target=target, language=language) for line in frame_lines
+        lookup_frame(conn, line, target=target, language=language, freshness=freshness)
+        for line in frame_lines
     ]
     indexed = [result for result in frame_results if result["status"]["outcome"] == "match"]
     first = indexed[0] if indexed else None
@@ -136,7 +188,7 @@ def lookup_crash_thread(
         "status": {
             "outcome": "match" if first else "no_match",
             "coverage": "covered" if first else "unknown",
-            "freshness": "unknown",
+            "freshness": freshness,
         },
         "frames": frame_results,
         "first_indexed_symbol": first["resolution"]["method"] if first else None,
@@ -161,10 +213,11 @@ def _query_owners(conn, owner_name: str, target: str = "", language: str = "") -
         params["language"] = language
     rows = conn.execute(
         f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
-        "RETURN s.usr, s.name, s.kind, s.language, s.module, s.file_path LIMIT 5",
+        "RETURN s.usr, s.name, s.kind, s.language, s.module, s.file_path, "
+        "s.container_usr LIMIT 5",
         params,
     ).get_all()
-    return [_row_to_symbol(row) for row in rows]
+    return sorted((_row_to_symbol(row) for row in rows), key=_owner_rank)
 
 
 def _query_methods(
@@ -190,7 +243,8 @@ def _query_methods(
         rows.extend(
             conn.execute(
                 f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
-                "RETURN s.usr, s.name, s.kind, s.language, s.module, s.file_path LIMIT 5",
+                "RETURN s.usr, s.name, s.kind, s.language, s.module, "
+                "s.file_path, s.container_usr LIMIT 5",
                 params,
             ).get_all()
         )
@@ -205,10 +259,12 @@ def _query_methods(
             params["language"] = language
         rows = conn.execute(
             f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
-            "RETURN s.usr, s.name, s.kind, s.language, s.module, s.file_path LIMIT 5",
+            "RETURN s.usr, s.name, s.kind, s.language, s.module, "
+            "s.file_path, s.container_usr LIMIT 5",
             params,
         ).get_all()
-    return [_row_to_symbol(row) for row in rows]
+    symbols = [_row_to_symbol(row) for row in rows]
+    return sorted(symbols, key=lambda symbol: _method_rank(symbol, parsed, owners))
 
 
 def _query_direct_callers(conn, usr: str) -> list[dict]:
@@ -252,7 +308,7 @@ def _query_source_candidates(conn, source_file: str, target: str = "") -> list[d
 
 
 def _row_to_symbol(row) -> dict:
-    return {
+    symbol = {
         "usr": row[0],
         "name": row[1],
         "kind": row[2],
@@ -260,6 +316,72 @@ def _row_to_symbol(row) -> dict:
         "module": row[4],
         "file_path": row[5] or "",
     }
+    if len(row) > 6:
+        symbol["container_usr"] = row[6] or ""
+    return symbol
+
+
+def _owner_rank(symbol: dict) -> tuple[int, str]:
+    kind = (symbol.get("kind") or "").lower()
+    type_rank = 0 if any(token in kind for token in ("class", "struct", "record")) else 1
+    return (type_rank, symbol.get("usr") or "")
+
+
+def _method_rank(symbol: dict, parsed: dict[str, str], owners: list[dict]) -> tuple[int, str]:
+    usr = symbol.get("usr") or ""
+    container_usr = symbol.get("container_usr") or ""
+    owner_usrs = {owner.get("usr") for owner in owners if owner.get("usr")}
+    expected_owner_usrs = _expected_owner_usrs(parsed)
+    score = 0
+    if container_usr in owner_usrs:
+        score += 100
+    if any(
+        container_usr == expected_owner_usr
+        or usr.startswith(f"{expected_owner_usr}@")
+        or usr.startswith(f"{expected_owner_usr}(")
+        or usr.startswith(f"{expected_owner_usr}.")
+        for expected_owner_usr in expected_owner_usrs
+    ):
+        score += 90
+    if parsed["owner"] in container_usr or parsed["owner"] in usr:
+        score += 20
+    namespace = _namespace_prefix(parsed)
+    if namespace and namespace in usr:
+        score += 10
+    if symbol.get("name") == parsed["symbol"]:
+        score += 5
+    return (-score, usr)
+
+
+def _expected_owner_usrs(parsed: dict[str, str]) -> list[str]:
+    if parsed.get("language_hint") == "objc":
+        owner = parsed["owner"]
+        return [f"c:objc(cs){owner}"]
+    if parsed.get("language_hint") == "swift":
+        parts = parsed["qualified_name"].split(".")
+        if len(parts) >= 3:
+            module = parts[0]
+            owner = parts[-2]
+            return [f"s:{module}.{owner}", f"s:{owner}"]
+        return []
+    cxx_usr = _expected_cxx_owner_usr(parsed)
+    return [cxx_usr] if cxx_usr else []
+
+
+def _expected_cxx_owner_usr(parsed: dict[str, str]) -> str:
+    parts = parsed["qualified_name"].split("::")
+    if len(parts) < 3:
+        return ""
+    namespaces = parts[:-2]
+    owner = parts[-2]
+    return "c:" + "".join(f"@N@{part}" for part in namespaces) + f"@S@{owner}"
+
+
+def _namespace_prefix(parsed: dict[str, str]) -> str:
+    parts = parsed["qualified_name"].split("::")
+    if len(parts) < 3:
+        return ""
+    return "".join(f"@N@{part}" for part in parts[:-2])
 
 
 def _diagnostics(
@@ -308,7 +430,7 @@ def _extract_frame_lines(raw: str) -> list[str]:
     lines = []
     for line in raw.splitlines():
         stripped = line.strip()
-        if _FRAME_RE.search(stripped):
+        if any(frame_re.search(stripped) for frame_re in _FRAME_RES):
             lines.append(stripped)
     return lines
 
