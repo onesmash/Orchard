@@ -11,6 +11,7 @@ from orchard.normalize.identity import make_symbol_id
 from orchard.validation.freshness import freshness_for, GraphFreshness
 from orchard.handlers.base import reason_to_confidence
 from orchard.derive.objc_semantics import classify_objc_message
+from orchard.query.annotations import annotate_symbol_source_scope, execution_boundary_for
 
 # ---------------------------------------------------------------------------
 # Framework callback detection
@@ -64,6 +65,7 @@ class GraphLookup:
         self._container_names_cache: dict[str, list[str]] = {}
         self._callees_cache: dict[str, list[dict]] = {}
         self._callers_cache: dict[str, list[dict]] = {}
+        self._workspace_root_cache: str | None = None
 
     # ---- Symbol resolution ------------------------------------------------
 
@@ -173,9 +175,10 @@ class GraphLookup:
         callers: dict[str, dict] = {}
         for r in preferred_rows:
             reason_val = r[8] or "indexstore_relation_only"
-            callers.setdefault(
+            entry = callers.setdefault(
                 r[0],
-                {
+                annotate_symbol_source_scope(
+                    {
                     "usr": r[0], "name": r[1], "module": r[2],
                     "kind": r[3], "language": r[4],
                     "file_path": r[5] or "",
@@ -185,8 +188,16 @@ class GraphLookup:
                     "confidence": reason_to_confidence(reason_val),
                     "provenance": r[8] or "symbolgraph",
                     "owner": self.owner_of(r[0]),
-                },
+                    },
+                    self.workspace_root(),
+                ),
             )
+            boundary = execution_boundary_for(entry)
+            if boundary:
+                entry["execution_boundary"] = boundary
+                entry["call_style"] = "async_or_callback_boundary"
+            else:
+                entry["call_style"] = "synchronous_call"
         return list(callers.values())
 
     def callees_of(self, usr: str,
@@ -214,11 +225,11 @@ class GraphLookup:
         rows = self._conn.execute(
             f"MATCH (src:Symbol {{id: $id}})-[r:{rel_pipe}]->(callee:Symbol) "
             "RETURN DISTINCT callee.usr, callee.name, callee.module, "
-            "callee.kind, callee.language, r.reason",
+            "callee.kind, callee.language, callee.file_path, r.reason",
             {"id": sym_id},
         ).get_all()
         preferred_rows = self._filter_inferred(
-            [(r[0], r[1], r[2], r[3], r[4], "", None, None, r[5]) for r in rows],
+            [(r[0], r[1], r[2], r[3], r[4], r[5] or "", None, None, r[6]) for r in rows],
             include_inferred,
         )
         callees: dict[str, dict] = {}
@@ -226,18 +237,25 @@ class GraphLookup:
         for r in preferred_rows:
             reason_val = r[8] or "indexstore_relation_only"
             lang = r[4] or ""
-            entry = {
+            entry = annotate_symbol_source_scope({
                 "usr": r[0], "name": r[1], "module": r[2],
                 "kind": r[3], "language": lang,
+                "file_path": r[5] or "",
                 "reason": reason_val,
                 "confidence": reason_to_confidence(reason_val),
                 "provenance": r[8] or "symbolgraph",
-            }
+            }, self.workspace_root())
             if lang == "objc":
                 role = classify_objc_message(r[1])
                 entry["semantic_role"] = role
                 if role == "notification_observer":
                     has_notification_observer = True
+            boundary = execution_boundary_for(entry)
+            if boundary:
+                entry["execution_boundary"] = boundary
+                entry["call_style"] = "async_or_callback_boundary"
+            else:
+                entry["call_style"] = "synchronous_call"
             callees.setdefault(r[0], entry)
         result = list(callees.values())
 
@@ -337,6 +355,17 @@ class GraphLookup:
             {"usr": r[0], "name": r[1], "kind": r[2], "language": r[3]}
             for r in rows
         ]
+
+    def workspace_root(self) -> str:
+        """Return the latest indexed workspace root, or the process cwd."""
+        if self._workspace_root_cache is not None:
+            return self._workspace_root_cache
+        rows = self._conn.execute(
+            "MATCH (b:BuildSnapshot) "
+            "RETURN b.workspace_root ORDER BY b.created_at DESC LIMIT 1"
+        ).get_all()
+        self._workspace_root_cache = rows[0][0] if rows and rows[0][0] else ""
+        return self._workspace_root_cache
 
     # ---- Module statistics --------------------------------------------------
 

@@ -51,6 +51,90 @@ def _risk_level(d1_count: int, has_bridge: bool, freshness_ok: bool) -> str:
     return "low"
 
 
+def _symbol_brief(conn, usr: str) -> dict[str, str]:
+    rows = conn.execute(
+        "MATCH (s:Symbol {usr: $usr}) "
+        "RETURN s.name, s.module, s.language, s.kind LIMIT 1",
+        {"usr": usr},
+    ).get_all()
+    if not rows:
+        return {"name": usr, "module": "", "language": "", "kind": ""}
+    row = rows[0]
+    return {
+        "name": row[0] or usr,
+        "module": row[1] or "",
+        "language": row[2] or "",
+        "kind": row[3] or "",
+    }
+
+
+def _impact_summary(
+    conn,
+    usr: str,
+    depths: dict[str, list[dict]],
+    risk: str,
+) -> dict[str, object]:
+    target = _symbol_brief(conn, usr)
+    d1 = depths.get("d1", [])
+    d2 = depths.get("d2", [])
+    d2_clusters = _cluster_labels(d2)
+    return {
+        "risk": risk,
+        "direct_callers": len(d1),
+        "primary_surface": _primary_surface(target),
+        "d2_clusters": d2_clusters,
+        "likely_tests": _likely_tests(target, d1, d2_clusters),
+    }
+
+
+def _primary_surface(symbol: dict[str, str]) -> str:
+    pieces = [
+        symbol.get("module") or "",
+        symbol.get("name") or "",
+        symbol.get("kind") or "",
+    ]
+    return " ".join(piece for piece in pieces if piece).strip()
+
+
+def _cluster_labels(entries: list[dict]) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        label = entry.get("module") or entry.get("name") or entry.get("kind") or "unknown"
+        if label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+        if len(labels) >= 5:
+            break
+    return labels
+
+
+def _likely_tests(
+    target: dict[str, str],
+    direct_dependents: list[dict],
+    d2_clusters: list[str],
+) -> list[str]:
+    terms = " ".join(
+        [
+            target.get("name") or "",
+            target.get("module") or "",
+            " ".join(dep.get("name") or "" for dep in direct_dependents[:5]),
+            " ".join(d2_clusters),
+        ]
+    ).lower()
+    tests = ["direct caller smoke test"]
+    if any(term in terms for term in ("audio", "mic", "speaker", "device")):
+        tests.append("audio device add/remove and default-device change")
+    if any(term in terms for term in ("start", "stop", "restart")):
+        tests.append("start/stop/restart flow")
+    if any(term in terms for term in ("config", "setting", "preference")):
+        tests.append("configuration change flow")
+    if any(term in terms for term in ("bridge", "objc", "swift")):
+        tests.append("cross-language bridge caller")
+    return tests
+
+
 def _subtype_closure(conn, usr: str, max_depth: int = 20) -> set[str]:
     """Return all USRs that are subtypes or conformers of *usr*.
 
@@ -222,7 +306,11 @@ def impact_analysis(conn, req: ImpactRequest) -> BaseToolResponse:
                     open_gaps.append(f"dependent '{usr}' references missing file '{fp}'")
 
     return BaseToolResponse(
-        data={"by_depth": depths, "risk": risk},
+        data={
+            "by_depth": depths,
+            "risk": risk,
+            "summary": _impact_summary(conn, req.usr, depths, risk),
+        },
         freshness=freshness_status,
         build_id=req.build_id,
         evidence_sources=["call_graph_derivation", "cross_language_bridge_recovery"],

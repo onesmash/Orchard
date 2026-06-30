@@ -317,3 +317,58 @@ def test_lookup_crash_thread_prefers_exact_owner_when_only_constructor_owner_is_
         "args": {"usr": expected_usr},
     }
     conn.close()
+
+
+def test_lookup_crash_thread_explains_arm64_null_this_for_cxx_top_frame(tmp_db_path):
+    from orchard.graph.db import get_connection, init_schema
+
+    conn = get_connection(tmp_db_path)
+    init_schema(conn)
+    for sid, usr, name, kind, container in [
+        ("c:@N@ps@S@CPSAudioDeviceRunCtx", "c:@N@ps@S@CPSAudioDeviceRunCtx", "CPSAudioDeviceRunCtx", "cxx.class", ""),
+        (
+            "c:@N@ps@S@CPSAudioDeviceRunCtx@F@GetUsingScene#",
+            "c:@N@ps@S@CPSAudioDeviceRunCtx@F@GetUsingScene#",
+            "GetUsingScene",
+            "cxx.method",
+            "c:@N@ps@S@CPSAudioDeviceRunCtx",
+        ),
+        (
+            "c:@N@ps@S@CPSAudioDeviceController@F@GetMicUsingScene#",
+            "c:@N@ps@S@CPSAudioDeviceController@F@GetMicUsingScene#",
+            "GetMicUsingScene",
+            "cxx.method",
+            "",
+        ),
+    ]:
+        conn.execute(
+            f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', precise_id: '', name: '{name}', "
+            f"language: 'cxx', kind: '{kind}', module: 'Zoom', file_path: '/src/audio.cpp', "
+            f"signature: '', container_usr: '{container}', access_level: 'internal', "
+            f"origin: 'derived', is_generated: false}})"
+        )
+    conn.execute(
+        "MATCH (caller:Symbol {id: 'c:@N@ps@S@CPSAudioDeviceController@F@GetMicUsingScene#'}), "
+        "(target:Symbol {id: 'c:@N@ps@S@CPSAudioDeviceRunCtx@F@GetUsingScene#'}) "
+        "CREATE (caller)-[:Calls {source: 'indexstore', confidence: 1.0, reason: 'source_direct'}]->(target)"
+    )
+
+    result = lookup_crash_thread(
+        conn,
+        "Thread 41 Crashed:\n"
+        "0 Zoom ps::CPSAudioDeviceRunCtx::GetUsingScene()\n"
+        "1 Zoom ssb::thread_wrapper_t::process_msg(unsigned int)\n"
+        "Thread 41 crashed with ARM Thread State (64-bit):\n"
+        "    x0: 0x0000000000000000   x1: 0x000000016fd1c8a0",
+        target="Zoom",
+        language="cxx",
+    )
+
+    semantics = result["summary"]["register_semantics"]
+    assert semantics["this_pointer"] == "null"
+    assert semantics["likely_fault"] == "null_this_dereference"
+    assert "arm64_null_this" in result["diag"]
+    assert result["summary"]["business_first_frame"]["name"] == "GetUsingScene"
+    assert result["summary"]["thread_boundaries"][0]["symbol"] == "process_msg"
+    assert result["summary"]["direct_callers"][0]["name"] == "GetMicUsingScene"
+    conn.close()

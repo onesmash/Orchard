@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from orchard.query.annotations import annotate_symbol_source_scope, execution_boundary_for, source_scope_for
 from orchard.query.search_contract import SearchResponse, SearchStatus
 
 _CXX_FRAME_RE = re.compile(
@@ -32,6 +33,10 @@ _DISPATCH_BOUNDARY_NAMES = {
     "postNotificationName",
     "objc_msgSend",
 }
+_ARM64_REGISTER_RE = re.compile(
+    r"\b(?P<name>x(?:[0-9]|[12][0-9]|3[01]))\b\s*(?::|=)\s*"
+    r"(?P<value>0x[0-9a-fA-F]+|\d+)"
+)
 
 
 def parse_frame_text(raw: str) -> dict[str, str] | None:
@@ -108,8 +113,22 @@ def lookup_frame(
 
     owners = _query_owners(conn, parsed["owner"], target, language)
     methods = _query_methods(conn, parsed, owners, target, language)
-    callers = _query_direct_callers(conn, methods[0]["usr"]) if methods else []
+    workspace_root = _workspace_root(conn)
+    owners = [annotate_symbol_source_scope(owner, workspace_root) for owner in owners]
+    methods = [annotate_symbol_source_scope(method, workspace_root) for method in methods]
+    for entry in [*owners, *methods]:
+        boundary = execution_boundary_for(entry)
+        if boundary:
+            entry["execution_boundary"] = boundary
+    callers = _query_direct_callers(conn, methods[0]["usr"], workspace_root) if methods else []
     source_candidates = _query_source_candidates(conn, parsed.get("source_file", ""), target)
+    source_candidates = [
+        {
+            **candidate,
+            "source_scope": source_scope_for(candidate.get("file_path", ""), workspace_root),
+        }
+        for candidate in source_candidates
+    ]
 
     diag = _diagnostics(raw, owners, methods, callers, source_candidates)
     response = SearchResponse(
@@ -167,7 +186,7 @@ def lookup_crash_thread(
     indexed = [result for result in frame_results if result["status"]["outcome"] == "match"]
     first = indexed[0] if indexed else None
     dispatch_boundaries = [
-        result["query"]["parsed"]
+        _annotate_parsed_boundary(result["query"]["parsed"])
         for result in frame_results
         if "dispatch_boundary_in_stack" in result.get("diag", [])
     ]
@@ -181,8 +200,20 @@ def lookup_crash_thread(
         "top_frame": frame_results[0]["resolution"]["method"]
         if frame_results and "resolution" in frame_results[0]
         else None,
+        "business_first_frame": first["resolution"]["method"] if first else None,
         "direct_callers": first_callers,
+        "thread_boundaries": dispatch_boundaries,
+        "next_actions": first.get("next", []) if first else [],
     }
+    register_semantics = _register_semantics(raw, frame_results[0] if frame_results else None)
+    if register_semantics:
+        summary["register_semantics"] = register_semantics
+        diag = _dedupe([*diag, *register_semantics.get("diag", [])])
+    notes = _dedupe(
+        note for result in frame_results for note in result.get("notes", [])
+    )
+    if register_semantics:
+        notes += register_semantics.get("notes", [])
     return {
         "query": {"raw": raw, "kind": "crash_thread", "frame_count": len(frame_lines)},
         "status": {
@@ -196,9 +227,7 @@ def lookup_crash_thread(
         "summary": summary,
         "diag": diag,
         "next": first.get("next", []) if first else [],
-        "notes": _dedupe(
-            note for result in frame_results for note in result.get("notes", [])
-        ),
+        "notes": notes,
     }
 
 
@@ -267,15 +296,16 @@ def _query_methods(
     return sorted(symbols, key=lambda symbol: _method_rank(symbol, parsed, owners))
 
 
-def _query_direct_callers(conn, usr: str) -> list[dict]:
+def _query_direct_callers(conn, usr: str, workspace_root: str = "") -> list[dict]:
     rows = conn.execute(
         "MATCH (caller:Symbol)-[r:Calls]->(target:Symbol) WHERE target.usr = $usr "
         "RETURN DISTINCT caller.usr, caller.name, caller.kind, caller.language, "
         "caller.module, caller.file_path, r.reason LIMIT 10",
         {"usr": usr},
     ).get_all()
-    return [
-        {
+    callers = [
+        annotate_symbol_source_scope(
+            {
             "usr": row[0],
             "name": row[1],
             "kind": row[2],
@@ -283,9 +313,19 @@ def _query_direct_callers(conn, usr: str) -> list[dict]:
             "module": row[4],
             "file_path": row[5] or "",
             "reason": row[6] or "unknown",
-        }
+            },
+            workspace_root,
+        )
         for row in rows
     ]
+    for caller in callers:
+        boundary = execution_boundary_for(caller)
+        if boundary:
+            caller["execution_boundary"] = boundary
+            caller["call_style"] = "async_or_callback_boundary"
+        else:
+            caller["call_style"] = "synchronous_call"
+    return callers
 
 
 def _query_source_candidates(conn, source_file: str, target: str = "") -> list[dict]:
@@ -424,6 +464,61 @@ def _has_hidden_caller_mismatch(raw: str, callers: list[dict]) -> bool:
 
 def _contains_dispatch_boundary(raw: str) -> bool:
     return any(name in raw for name in _DISPATCH_BOUNDARY_NAMES)
+
+
+def _annotate_parsed_boundary(parsed: dict[str, str]) -> dict[str, object]:
+    boundary = execution_boundary_for(parsed)
+    return {**parsed, "execution_boundary": boundary} if boundary else parsed
+
+
+def _workspace_root(conn) -> str:
+    rows = conn.execute(
+        "MATCH (b:BuildSnapshot) RETURN b.workspace_root ORDER BY b.created_at DESC LIMIT 1"
+    ).get_all()
+    return rows[0][0] if rows and rows[0][0] else ""
+
+
+def _register_semantics(raw: str, top_frame: dict | None) -> dict[str, object]:
+    if not top_frame:
+        return {}
+    parsed = top_frame.get("query", {}).get("parsed") or {}
+    method = top_frame.get("resolution", {}).get("method") or {}
+    language = (method.get("language") or parsed.get("language_hint") or "").lower()
+    if language and language not in {"cxx", "cpp", "c++"}:
+        return {}
+    if "::" not in parsed.get("qualified_name", ""):
+        return {}
+    registers = _parse_arm64_registers(raw)
+    x0 = registers.get("x0")
+    if x0 is None:
+        return {}
+    result: dict[str, object] = {
+        "architecture": "arm64",
+        "calling_convention": "C++ instance method receives this in x0",
+        "x0": f"0x{x0:x}",
+        "diag": [],
+        "notes": [],
+    }
+    if x0 == 0:
+        result["this_pointer"] = "null"
+        result["likely_fault"] = "null_this_dereference"
+        result["diag"] = ["arm64_null_this"]
+        result["notes"] = [
+            "Top frame is a C++ instance-method-shaped frame and x0 is 0; "
+            "treat this as a likely null-this dereference before blaming member values."
+        ]
+    else:
+        result["this_pointer"] = "non_null"
+    return result
+
+
+def _parse_arm64_registers(raw: str) -> dict[str, int]:
+    registers: dict[str, int] = {}
+    for match in _ARM64_REGISTER_RE.finditer(raw):
+        value = match.group("value")
+        base = 16 if value.lower().startswith("0x") else 10
+        registers[match.group("name")] = int(value, base)
+    return registers
 
 
 def _extract_frame_lines(raw: str) -> list[str]:

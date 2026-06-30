@@ -5,9 +5,10 @@ description: >
   indexed Xcode projects. Use this skill whenever the user asks about
   function callers or callees, impact / blast-radius analysis, type
   hierarchies, symbol lookups, guided miss-path debugging, crash-frame
-  lookup, code dependencies, "who calls X", "what does Y depend on",
+  lookup, crashed-thread triage, ARM64 register clues such as `x0 = 0`,
+  code dependencies, "who calls X", "what does Y depend on",
   "I only have this stack frame", ObjC notification/delegate wiring,
-  safe renaming, or wants to understand how iOS / macOS components
+  lifecycle / async callback boundaries, safe renaming, or wants to understand how iOS / macOS components
   relate to each other. Also use it when the user mentions "orchard"
   directly, or asks for a graph-based view of their Objective-C / Swift
   codebase. Make sure to use this skill even when the user only has a
@@ -104,8 +105,31 @@ plus method resolution, then return direct callers and next actions.
 
 Use `orchard_lookup_crash_thread` when the user has pasted the crashed-thread
 block rather than one frame. It resolves parseable application frames, reports
-the first indexed business symbol, and flags likely dispatch boundaries such as
-`process_msg`, target-action, or notification callbacks.
+the first indexed business symbol, direct callers, next actions, and likely
+thread/dispatch boundaries such as `process_msg`, target-action, SDK callbacks,
+or notification callbacks.
+
+Crash-thread responses may include:
+
+- `summary.business_first_frame` — the first indexed application/business frame
+- `summary.direct_callers` — compiler-indexed direct callers of that frame
+- `summary.thread_boundaries` / `dispatch_boundaries` — frames that look like
+  SDK callbacks, worker dispatch, main-thread tasks, notification/callback sinks,
+  or lifecycle teardown paths
+- `summary.next_actions` / top-level `next` — executable Orchard follow-ups
+- `summary.register_semantics` — register-derived crash clues when present
+
+For ARM64 C++ instance-method frames, if the crash report includes `x0 = 0` or
+`x0: 0x0`, treat it as strong triage evidence that `this` is null. Orchard
+annotates this as `diag: arm64_null_this` and
+`likely_fault: null_this_dereference`. Prefer this interpretation before
+blaming a member value such as `using_scene_`.
+
+Do not claim Orchard has exact C++ object field offsets from IndexStore. If a
+crash mentions an address such as `0x20`, use it only as a hypothesis to check
+against source or compiler layout data. Exact class/member offsets require
+DWARF debug info, Clang record layout output, or another ABI-aware source, not
+IndexStore alone.
 
 If `orchard_search` returns `frame_lookup_recommended`, call
 `orchard_lookup_frame` next instead of improvising.
@@ -122,6 +146,16 @@ Each caller includes:
 - `confidence`: `compiler-verified` (source_direct) or `inferred` (indexstore_relation_only)
 - `provenance`: raw reason from the IndexStore edge
 - `file_path` from Symbol table (line/col not persisted; use grep for precise locations)
+- `call_style`: `synchronous_call` or `async_or_callback_boundary`
+- `execution_boundary`: heuristic role when the caller looks like a boundary
+  (`sdk_callback`, `worker_thread_dispatch`, `main_thread_task`,
+  `notification_callback_sink`, `lifecycle_uninit_path`)
+- `source_scope`: whether `file_path` is inside or outside the active workspace root
+
+Use `call_style` and `execution_boundary` to turn "A calls B" into a better
+crash hypothesis. A chain like `GetUsingScene <- GetMicUsingScene <- process_msg`
+is not just a caller chain; `process_msg` suggests a worker-thread dispatch
+boundary, so lifecycle/race hypotheses deserve attention.
 
 ### find_callees — What does this symbol call?
 
@@ -144,6 +178,11 @@ also carry `semantic_role`** — the selector classified into one of:
 
 This tells you at a glance whether a symbol registers for notifications, sets
 up delegate wiring, or is an Apple framework entry point.
+
+Callees also carry `call_style`, `execution_boundary`, and `source_scope` when
+Orchard can infer them. Use these fields to distinguish normal synchronous
+calls from SDK callbacks, dispatch hops, main-thread tasks, notification sinks,
+and lifecycle/uninit paths.
 
 **Notification bridges**: `find_callees` now includes `notification_bridges`
 by default for `notification_observer` callees — showing which notification
@@ -169,6 +208,17 @@ orchard impact --usr "<USR>" [--max-depth 5]
 
 Returns dependents grouped by depth and a risk level.  Includes **subtype
 closure** (protocol conformers, subclasses) in d1.
+
+Impact responses also include a compact `summary`:
+
+- `risk`
+- `direct_callers`
+- `primary_surface`
+- `d2_clusters`
+- `likely_tests`
+
+Prefer this summary for the first human-facing sentence, then cite the detailed
+`by_depth` groups for the actual blast radius.
 
 **Depth groups:**
 
@@ -423,6 +473,10 @@ The `include_inferred` flag controls whether inferred edges appear.
    - Notification bridges — who registered → selector → event key → callback
    - Cross-language bridges (ObjC ↔ Swift)
    - Freshness vs coverage when the search path was ambiguous or stale
+   - Execution boundaries (`call_style`, `execution_boundary`) when reasoning
+     about crash threads, lifecycle races, callbacks, or worker dispatch
+   - `source_scope` when a symbol's `file_path` is outside the current workspace
+     root; warn that grep under cwd may not find that source
 
 ## Interpreting USR formats
 
@@ -443,6 +497,8 @@ Swift USRs are mangled — always search by human-readable name, not USR.
 - **No target_id needed**: USR alone provides unambiguous symbol identity.
 - **Stale data warning**: if impact returns risk `critical`, re-run ingest.
 - **DB discovery**: auto-walks up from cwd; `--db` overrides.
+- **No exact layout from IndexStore**: do not use Orchard to assert C++ member
+  byte offsets unless a future ABI/DWARF layout source is explicitly present.
 
 ## Maintenance action
 

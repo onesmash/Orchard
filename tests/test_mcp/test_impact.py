@@ -67,6 +67,18 @@ def test_impact_response_has_risk(impact_graph):
     assert resp.data["risk"] in ("low", "medium", "high", "critical")
 
 
+def test_impact_response_has_compact_summary(impact_graph):
+    req = ImpactRequest(usr="s:targetFn", build_id="b1")
+    resp = impact_analysis(impact_graph, req)
+
+    summary = resp.data["summary"]
+    assert summary["risk"] == resp.data["risk"]
+    assert summary["direct_callers"] == 1
+    assert summary["primary_surface"] == "M targetFn function"
+    assert summary["d2_clusters"] == ["M"]
+    assert "direct caller smoke test" in summary["likely_tests"]
+
+
 @pytest.fixture
 def bridges_graph(tmp_db_path):
     """Seed symbols with a BridgesTo edge for cross-language traversal."""

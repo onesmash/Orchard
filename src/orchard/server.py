@@ -24,6 +24,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
+from orchard.query.annotations import annotate_symbol_source_scope
 from orchard.query.search_contract import SearchResponse, SearchStatus
 from orchard.query.frame_lookup import lookup_crash_thread, lookup_frame
 from orchard.query.search_planner import (
@@ -75,6 +76,27 @@ def _default_build_id_safe(conn, scope_id: str = "") -> str | None:
         return _default_build_id(conn, scope_id)
     except Exception:
         return None
+
+
+def _workspace_root_safe(conn, build_id: str | None = None) -> str:
+    """Return the active workspace root, or cwd if no snapshot records one."""
+    try:
+        if build_id:
+            rows = conn.execute(
+                "MATCH (b:BuildSnapshot {id: $id}) RETURN b.workspace_root LIMIT 1",
+                {"id": build_id},
+            ).get_all()
+            if rows and rows[0][0]:
+                return rows[0][0]
+        rows = conn.execute(
+            "MATCH (b:BuildSnapshot) "
+            "RETURN b.workspace_root ORDER BY b.created_at DESC LIMIT 1"
+        ).get_all()
+        if rows and rows[0][0]:
+            return rows[0][0]
+    except Exception:
+        pass
+    return os.getcwd()
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +254,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_lookup_crash_thread",
-        description="Lookup parseable frames from one crashed thread, resolve the first indexed business symbol, and flag dispatch boundaries such as process_msg.",
+        description="Lookup parseable frames from one crashed thread, resolve the first indexed business symbol, return direct callers and thread/dispatch boundaries, and explain ARM64 C++ null-this evidence when registers are present.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -302,22 +324,28 @@ def _do_search_name(args: dict) -> str:
         where.append("s.file_path =~ $file_pattern")
 
     conn = _get_conn()
+    build_id = args.get("build_id") or _default_build_id_safe(conn, target or "")
+    workspace_root = _workspace_root_safe(conn, build_id)
     rows = conn.execute(
         f"MATCH (s:Symbol) WHERE {' AND '.join(where)} "
-        "RETURN s.usr, s.name, s.kind, s.language, s.module "
+        "RETURN s.usr, s.name, s.kind, s.language, s.module, s.file_path "
         "ORDER BY s.name LIMIT $limit",
         params,
     ).get_all()
     matches = rank_symbol_candidates(
         raw,
         [
-            {
-                "usr": r[0],
-                "name": r[1],
-                "kind": r[2],
-                "language": r[3],
-                "module": r[4],
-            }
+            annotate_symbol_source_scope(
+                {
+                    "usr": r[0],
+                    "name": r[1],
+                    "kind": r[2],
+                    "language": r[3],
+                    "module": r[4],
+                    "file_path": r[5] or "",
+                },
+                workspace_root,
+            )
             for r in rows
         ],
         target=target,
@@ -325,7 +353,6 @@ def _do_search_name(args: dict) -> str:
     )
     outcome = "match" if len(matches) == 1 else "ambiguous" if len(matches) > 1 else "no_match"
     coverage = "covered" if matches else "unknown"
-    build_id = args.get("build_id") or _default_build_id_safe(conn, target or "")
     snapshot_status = "stale"
     if build_id:
         _, snapshot_status = freshness_for(conn, build_id, {})

@@ -104,3 +104,35 @@ def test_search_name_frame_like_input_routes_to_lookup_frame(conn_with_mixed_sym
         assert result["next"][0]["tool"] == "orchard_lookup_frame"
     finally:
         server_mod._conn = original_conn
+
+
+def test_search_name_marks_symbols_outside_workspace_root(conn_with_mixed_symbols):
+    import orchard.server as server_mod
+
+    conn_with_mixed_symbols.execute(
+        "CREATE (:BuildSnapshot {id: 'b1', build_system: 'xcodebuild', "
+        "workspace_root: '/workspace/ios-client', derived_data_path: '', "
+        "index_store_path: '', toolchain_id: '', commit_sha: '', "
+        "created_at: '2026-06-30T00:00:00Z', build_config_hash: '', sdk: '', "
+        "configuration: ''})"
+    )
+    conn_with_mixed_symbols.execute(
+        "CREATE (:Symbol {id: 's:ExternalRunCtx', usr: 's:ExternalRunCtx', "
+        "precise_id: '', name: 'ExternalRunCtx', language: 'cxx', "
+        "kind: 'cxx.class', module: 'Zoom', "
+        "file_path: '/workspace/client-app-video/audio.cpp', signature: '', "
+        "container_usr: '', access_level: 'internal', origin: 'derived', "
+        "is_generated: false})"
+    )
+
+    original_conn = server_mod._conn
+    server_mod._conn = conn_with_mixed_symbols
+
+    try:
+        result_json = server_mod._do_search_name({"name": "ExternalRunCtx", "build_id": "b1"})
+        result = json.loads(result_json)
+
+        assert result["matches"][0]["source_scope"]["status"] == "outside_workspace_root"
+        assert "outside current workspace root" in result["matches"][0]["source_scope"]["hint"]
+    finally:
+        server_mod._conn = original_conn

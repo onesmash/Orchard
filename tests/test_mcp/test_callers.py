@@ -50,6 +50,33 @@ def test_find_callers_returns_callers(conn_with_calls):
     assert caller_b["reason"] == "indexstore_relation_only"
 
 
+def test_find_callers_marks_worker_thread_boundary(conn_with_calls):
+    conn_with_calls.execute(
+        "CREATE (:Symbol {id: 's:processMsg', usr: 's:processMsg', precise_id: '', "
+        "name: 'process_msg', language: 'cxx', kind: 'cxx.method', module: 'M', "
+        "file_path: '/src/thread.cpp', signature: '', container_usr: '', "
+        "access_level: 'internal', origin: 'derived', is_generated: false})"
+    )
+    conn_with_calls.execute(
+        "MATCH (p:Symbol {id:'s:processMsg'}), (a:Symbol {id:'s:A'}) "
+        "CREATE (p)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+        "build_id:'b1', reason:'source_direct'}]->(a)"
+    )
+    conn_with_calls.execute(
+        "MATCH (b:Symbol {id:'s:B'}), (a:Symbol {id:'s:A'}) "
+        "CREATE (b)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+        "build_id:'b1', reason:'source_direct'}]->(a)"
+    )
+
+    resp = find_callers(conn_with_calls, CallerRequest(usr="s:A", build_id="b1"))
+    process_msg = next(item for item in resp.data if item["name"] == "process_msg")
+
+    assert process_msg["execution_boundary"]["role"] == "worker_thread_dispatch"
+    assert process_msg["call_style"] == "async_or_callback_boundary"
+    caller_b = next(item for item in resp.data if item["name"] == "B")
+    assert caller_b["call_style"] == "synchronous_call"
+
+
 def test_find_callees_returns_callees(conn_with_calls):
     req = CalleeRequest(usr="s:A", build_id="b1")
     resp = find_callees(conn_with_calls, req)

@@ -320,10 +320,19 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 
 1. `orchard_search({{name: "<symbol>"}})` — guided symbol lookup with `status`, `diag`, `candidates`, and `next`
 2. If the user has a single stack frame, use `orchard_lookup_frame({{frame: "<stack line>"}})` to resolve owner/method candidates, direct callers, and next actions
-3. If the user pasted a crashed-thread block, use `orchard_lookup_crash_thread({{thread: "<thread text>"}})` to find the first indexed business symbol and flag dispatch boundaries
-4. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred)
-5. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges (who registered → selector → event key → callback) by default
-6. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups
+3. If the user pasted a crashed-thread block, use `orchard_lookup_crash_thread({{thread: "<thread text>"}})` to find the first indexed business symbol, direct callers, next actions, and thread/dispatch boundaries
+4. If ARM64 registers are present and a C++ instance-method-shaped top frame has `x0 = 0` / `x0: 0x0`, treat it as likely null-this (`diag: arm64_null_this`, `likely_fault: null_this_dereference`) before blaming member values
+5. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred), `call_style`, optional `execution_boundary`, and `source_scope`
+6. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges (who registered → selector → event key → callback) by default
+7. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups plus compact `summary`
+
+## Crash Triage Notes
+
+- `orchard_lookup_crash_thread` returns `summary.business_first_frame`, `summary.direct_callers`, `summary.thread_boundaries`, `summary.next_actions`, and may include `summary.register_semantics`.
+- Caller/callee results may include `call_style: synchronous_call` or `async_or_callback_boundary`.
+- `execution_boundary.role` is heuristic and helps identify SDK callbacks, worker-thread dispatch, main-thread tasks, notification/callback sinks, and lifecycle/uninit paths.
+- `source_scope.status: outside_workspace_root` means the indexed symbol's source is outside the current workspace root; grep under cwd may not find it.
+- Do not claim Orchard has exact C++ object field offsets from IndexStore. Treat addresses such as `0x20` as hypotheses only; exact class/member offsets require DWARF, Clang record layout output, or another ABI-aware source.
 
 ## Guided Miss-Path
 
@@ -380,7 +389,7 @@ orchard ingest --project-dir .
 |------|-------------|---------|
 | `search` | Guided symbol lookup by name or qualified name | `orchard_search({{name: "viewDidLoad"}})` |
 | `lookup_frame` | Resolve a single crash frame to owner/method candidates and direct callers | `orchard_lookup_frame({{frame: "ssb::thread_wrapper_t::process_msg(unsigned int)"}})` |
-| `lookup_crash_thread` | Resolve parseable frames from one crashed thread and flag dispatch boundaries | `orchard_lookup_crash_thread({{thread: "Thread 41 Crashed:\\n0 Zoom ps::CPSAudioDeviceRunCtx::GetUsingScene()"}})` |
+| `lookup_crash_thread` | Resolve parseable frames from one crashed thread, summarize business frame/callers, and flag thread boundaries | `orchard_lookup_crash_thread({{thread: "Thread 41 Crashed:\\n0 Zoom ps::CPSAudioDeviceRunCtx::GetUsingScene()"}})` |
 | `find_callers` | Who calls this symbol | `orchard_find_callers({{usr: "<USR>"}})` |
 | `find_callees` | What this symbol calls (returns notification_bridges by default) | `orchard_find_callees({{usr: "<USR>"}})` |
 | `find_references` | Incoming + outgoing references (with semantic_role for ObjC) | `orchard_find_references({{usr: "<USR>"}})` |
@@ -421,6 +430,20 @@ Every caller/callee carries a `confidence` field:
 
 Set `include_inferred: true` to see both; default shows only compiler-verified.
 
+## Boundary and Source Scope Labels
+
+Caller/callee and crash lookup results can carry:
+
+| Field | Meaning |
+|-------|---------|
+| `call_style` | `synchronous_call` or `async_or_callback_boundary` |
+| `execution_boundary.role` | `sdk_callback`, `worker_thread_dispatch`, `main_thread_task`, `notification_callback_sink`, or `lifecycle_uninit_path` |
+| `source_scope.status` | `inside_workspace_root`, `outside_workspace_root`, or `unknown` |
+
+Use these labels when turning a raw caller chain into a crash hypothesis. For
+example, `GetUsingScene <- GetMicUsingScene <- process_msg` should raise a
+worker-thread/lifecycle race hypothesis, not only a direct-call hypothesis.
+
 ## Semantic Roles (ObjC callees)
 
 ObjC callees in `find_callees` and `find_references` (outgoing) carry a `semantic_role` field inline:
@@ -440,6 +463,10 @@ ObjC callees in `find_callees` and `find_references` (outgoing) carry a `semanti
 | d1 | WILL BREAK — direct callers, subtypes, protocol conformers | MUST update these |
 | d2 | LIKELY AFFECTED — callers of callers | Should test |
 | d3+ | MAY NEED TESTING — transitive dependents | Test if critical path |
+
+Impact output includes `data.summary` with `risk`, `direct_callers`,
+`primary_surface`, `d2_clusters`, and `likely_tests`. Use it for the first
+human-facing summary, then cite `by_depth` for the detailed blast radius.
 
 ## Ingest Progress
 
