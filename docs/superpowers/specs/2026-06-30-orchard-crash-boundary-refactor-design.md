@@ -189,11 +189,12 @@ Add or update tests:
 - `orchard_lookup_crash_thread` is absent from the MCP tool list.
 - `lookup_frame` rejects multi-line input instead of selecting a frame.
 - `_ORCHARD_BLOCK` does not contain `orchard_lookup_crash_thread`,
-  `crashed-thread`, `business_first_frame`, `likely_fault`, or ARM64 register
-  clue language.
+  `crashed-thread`, `business_first_frame`, `root_cause`, `likely_fault`,
+  delegate selector inference language, or ARM64 register clue language.
 - `_ORCHARD_BLOCK` contains a clear single-frame boundary statement.
 - `skills/orchard/SKILL.md` does not contain `orchard_lookup_crash_thread`,
-  `crashed-thread triage`, `likely_fault`, or ARM64 register clue language.
+  `crashed-thread triage`, `root_cause`, `likely_fault`, delegate selector
+  inference language, or ARM64 register clue language.
 - existing single-frame C++, Objective-C, and Swift parsing tests still pass.
 - existing graph enrichment tests for direct callers and source scope still pass.
 
