@@ -319,10 +319,11 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 ## When Debugging
 
 1. `orchard_search({{name: "<symbol>"}})` — guided symbol lookup with `status`, `diag`, `candidates`, and `next`
-2. If the user only has a stack frame, use `orchard_lookup_frame({{frame: "<stack line>"}})` instead of manually translating it into several searches
-3. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred)
-4. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges (who registered → selector → event key → callback) by default
-5. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups
+2. If the user has a single stack frame, use `orchard_lookup_frame({{frame: "<stack line>"}})` to resolve owner/method candidates, direct callers, and next actions
+3. If the user pasted a crashed-thread block, use `orchard_lookup_crash_thread({{thread: "<thread text>"}})` to find the first indexed business symbol and flag dispatch boundaries
+4. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred)
+5. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges (who registered → selector → event key → callback) by default
+6. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups
 
 ## Guided Miss-Path
 
@@ -378,7 +379,8 @@ orchard ingest --project-dir .
 | Tool | When to use | Command |
 |------|-------------|---------|
 | `search` | Guided symbol lookup by name or qualified name | `orchard_search({{name: "viewDidLoad"}})` |
-| `lookup_frame` | Start from a crash frame / stack fragment | `orchard_lookup_frame({{frame: "ssb::thread_wrapper_t::process_msg(unsigned int)"}})` |
+| `lookup_frame` | Resolve a single crash frame to owner/method candidates and direct callers | `orchard_lookup_frame({{frame: "ssb::thread_wrapper_t::process_msg(unsigned int)"}})` |
+| `lookup_crash_thread` | Resolve parseable frames from one crashed thread and flag dispatch boundaries | `orchard_lookup_crash_thread({{thread: "Thread 41 Crashed:\\n0 Zoom ps::CPSAudioDeviceRunCtx::GetUsingScene()"}})` |
 | `find_callers` | Who calls this symbol | `orchard_find_callers({{usr: "<USR>"}})` |
 | `find_callees` | What this symbol calls (returns notification_bridges by default) | `orchard_find_callees({{usr: "<USR>"}})` |
 | `find_references` | Incoming + outgoing references (with semantic_role for ObjC) | `orchard_find_references({{usr: "<USR>"}})` |

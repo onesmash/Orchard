@@ -10,7 +10,8 @@ and C++ codebases via a CLI and MCP server.
 ## Guided Search
 
 - Use `orchard_search` for symbol-intent lookup by name or qualified name.
-- Use `orchard_lookup_frame` when you have a crash frame or stack-text fragment and want Orchard to route the next step.
+- Use `orchard_lookup_frame` when you have a crash frame or stack-text fragment and want Orchard to resolve the owner/method, summarize direct callers, and route the next step.
+- Use `orchard_lookup_crash_thread` when you have the whole crashed-thread block and want Orchard to find the first indexed business symbol and flag dispatch boundaries.
 - If a guided search response includes `orchard_refresh_index`, run the documented Orchard ingest refresh command before over-trusting a miss.
 
 ## Features
@@ -18,8 +19,8 @@ and C++ codebases via a CLI and MCP server.
 - **Compiler-verified edges** — data source is Xcode IndexStore, so call
   relationships are ground truth, not regex approximations
 - **MCP server** — runs as a long-lived subprocess for Claude Code / Claude
-  Desktop, with 9 tools: search, callers, callees, references, impact,
-  symbol metadata, type hierarchy, stats, and audit
+  Desktop, with tools for search, crash-frame lookup, callers, callees,
+  references, impact, symbol metadata, type hierarchy, stats, and audit
 - **Auto-discovery** — detects `.xcworkspace`/`.xcodeproj`, matches
   DerivedData, and locates the IndexStore automatically
 - **Noise filtering** — excludes C++ operator overloads, logging macros, and
@@ -119,11 +120,13 @@ The MCP server is designed to be launched by Claude Code as a subprocess:
 orchard-mcp [--db /path/to/graph.db]
 ```
 
-It exposes 9 tools:
+It exposes these core tools:
 
 | Tool | Description |
 |------|-------------|
 | `orchard_search` | Search symbols by name or list class methods |
+| `orchard_lookup_frame` | Resolve a single crash frame to owner/method candidates, direct callers, and next actions |
+| `orchard_lookup_crash_thread` | Resolve parseable frames from one crashed thread and flag dispatch boundaries |
 | `orchard_find_callers` | Find all callers of a symbol (multi-hop) |
 | `orchard_find_callees` | Find all callees of a symbol (multi-hop) |
 | `orchard_find_references` | Incoming + outgoing references |

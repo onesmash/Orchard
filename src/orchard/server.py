@@ -25,7 +25,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from orchard.query.search_contract import SearchResponse, SearchStatus
-from orchard.query.frame_lookup import lookup_frame
+from orchard.query.frame_lookup import lookup_crash_thread, lookup_frame
 from orchard.query.search_planner import (
     classify_search_query,
     plan_search_next_actions,
@@ -219,7 +219,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_lookup_frame",
-        description="Lookup a crash frame or stack-frame-like string and return compact diagnostics, owner fallbacks, and next actions.",
+        description="Lookup a crash frame or stack-frame-like string and return compact diagnostics, resolved owner/method candidates, direct caller summary, and next actions.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -228,6 +228,20 @@ TOOLS = [
                 "language": {"type": "string", "description": "Optional language filter."},
             },
             "required": ["frame"],
+        },
+    ),
+    Tool(
+        name="orchard_lookup_crash_thread",
+        description="Lookup parseable frames from one crashed thread, resolve the first indexed business symbol, and flag dispatch boundaries such as process_msg.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "thread": {"type": "string", "description": "The crashed thread text from a crash report."},
+                "target": {"type": "string", "description": "Optional module/target filter."},
+                "language": {"type": "string", "description": "Optional language filter."},
+                "limit": {"type": "integer", "description": "Max parseable frames to inspect (default 12)."},
+            },
+            "required": ["thread"],
         },
     ),
 ]
@@ -405,6 +419,19 @@ def _do_lookup_frame(args: dict) -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
+def _do_lookup_crash_thread(args: dict) -> str:
+    """Lookup a crashed thread and summarize indexed frames."""
+    conn = _get_conn()
+    result = lookup_crash_thread(
+        conn,
+        args.get("thread", ""),
+        target=args.get("target", ""),
+        language=args.get("language", ""),
+        limit=args.get("limit", 12),
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
 def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, include_noise: bool = True, include_inferred: bool = False, depth: int = 1, relation_types: list[str] | None = None) -> str:
     """Generic dispatch: import → build request → call handler → noise filter → JSON."""
     import importlib
@@ -498,6 +525,7 @@ def _do_notification_graph(args: dict) -> str:
 HANDLERS: dict[str, callable] = {
     "orchard_search": _do_search,
     "orchard_lookup_frame": _do_lookup_frame,
+    "orchard_lookup_crash_thread": _do_lookup_crash_thread,
     "orchard_find_references": lambda a: _do_handler("references", "find_references", "ReferencesRequest", a),
     "orchard_find_callers": lambda a: _do_handler("callers", "find_callers", "CallerRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1), relation_types=a.get("relation_types", "Calls").split(",") if isinstance(a.get("relation_types"), str) else ["Calls"]),
     "orchard_find_callees": lambda a: _do_handler("callees", "find_callees", "CalleeRequest", a, include_noise=a.get("include_noise", False), depth=a.get("depth", 1), relation_types=a.get("relation_types", "Calls").split(",") if isinstance(a.get("relation_types"), str) else a.get("relation_types", ["Calls"])),

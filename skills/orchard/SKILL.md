@@ -99,8 +99,13 @@ Use it for:
 - "I only have this stack line, where do I start?"
 
 Do **not** manually translate the frame into several separate searches first.
-Let Orchard parse the frame, attempt qualified lookup, then fall back to owner
-and bare-symbol suggestions.
+Let Orchard parse the frame, attempt qualified lookup, fall back through owner
+plus method resolution, then return direct callers and next actions.
+
+Use `orchard_lookup_crash_thread` when the user has pasted the crashed-thread
+block rather than one frame. It resolves parseable application frames, reports
+the first indexed business symbol, and flags likely dispatch boundaries such as
+`process_msg`, target-action, or notification callbacks.
 
 If `orchard_search` returns `frame_lookup_recommended`, call
 `orchard_lookup_frame` next instead of improvising.
@@ -376,7 +381,7 @@ All orchard tools are available as MCP tools with session-scoped DB connection.
 The skill should prefer MCP tools when available; fall back to CLI pipe for
 batch queries.
 
-MCP tools: `orchard_search`, `orchard_lookup_frame`, `orchard_find_callers`, `orchard_find_callees`
+MCP tools: `orchard_search`, `orchard_lookup_frame`, `orchard_lookup_crash_thread`, `orchard_find_callers`, `orchard_find_callees`
 (returns notification_bridges by default for ObjC observers),
 `orchard_find_references` (includes semantic_role for ObjC callees),
 `orchard_notification_graph` (with `group_by: "observer"` for
