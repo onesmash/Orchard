@@ -337,7 +337,7 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 - **Before editing**: run `orchard_impact` on the target symbol to find all dependents.
 - **After changes**: run `orchard_find_callers` to verify no unexpected new dependents broke.
 - **Cross-language bridges**: use `orchard_find_references` to see ObjC ↔ Swift bridge edges.
-- **Renaming**: use `orchard_rename` — USR-precise, dry-run first, uses Symbol+Calls tables (no Occurrence data needed).
+- **Renaming**: use `orchard rename` CLI — USR-precise, dry-run first, uses Symbol+Calls tables (no Occurrence data needed).
 
 ## Never Do
 
@@ -357,7 +357,8 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 | `find_callees` | What this symbol calls; ObjC callees include semantic roles / notification bridges | `orchard_find_callees({{usr: "<USR>"}})` |
 | `find_references` | Incoming + outgoing references (with semantic_role for ObjC) | `orchard_find_references({{usr: "<USR>"}})` |
 | `impact` | Blast radius before editing; includes `data.summary` and `by_depth` | `orchard_impact({{usr: "<USR>"}})` |
-| `rename` | USR-precise rename (dry-run safe) | `orchard_rename({{usr: "<USR>", new_name: "X"}})` |
+| `symbol` | Symbol metadata: name, kind, language, module, file_path | `orchard_symbol({{usr: "<USR>"}})` |
+| `hierarchy` | Type hierarchy: superclasses, protocols, subclasses | `orchard_hierarchy({{usr: "<USR>"}})` |
 | `notification_graph` | Notification wiring: who registers → selector → event → callback | `orchard_notification_graph({{group_by: "observer"}})` |
 
 ## Key Labels

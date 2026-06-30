@@ -197,38 +197,6 @@ TOOLS = [
         },
     ),
     Tool(
-        name="orchard_rename",
-        description="USR-precise rename: preview or apply a symbol rename across all occurrence sites (definition + references). Dry-run by default — returns a diff plan without modifying files. USR alone provides unambiguous symbol identity.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "usr": {"type": "string", "description": "USR of the symbol to rename"},
-                "new_name": {"type": "string", "description": "New name for the symbol"},
-                "dry_run": {"type": "boolean", "description": "Preview rename plan without writing files (default true)"},
-            },
-            "required": ["usr", "new_name"],
-        },
-    ),
-    Tool(
-        name="orchard_stats",
-        description="Database statistics: counts of Symbol, Calls, Contains, Inherits, Implements, and Extends edges.",
-        inputSchema={
-            "type": "object",
-            "properties": {},
-        },
-    ),
-    Tool(
-        name="orchard_audit",
-        description="Module coverage report: per-module symbol counts by kind. When project_dir is given, compares graph modules against Xcode workspace targets and flags gaps (< 100 symbols for a framework target).",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "project_dir": {"type": "string", "description": "Xcode project directory for target discovery (optional)"},
-                "format": {"type": "string", "description": "Output format: table or json (default table)"},
-            },
-        },
-    ),
-    Tool(
         name="orchard_notification_graph",
         description="Query the NSNotificationCenter publisher-observer graph. Returns notifications grouped by name (default), each with posters and observers. Observers now carry identity (who registered), selector, and callback. Use group_by='observer' to pivot by observer — see each observer's registrations at a glance.",
         inputSchema={
@@ -542,9 +510,6 @@ HANDLERS: dict[str, callable] = {
     "orchard_impact": lambda a: _do_handler("impact", "impact_analysis", "ImpactRequest", a),
     "orchard_symbol": lambda a: _do_handler("symbol_context", "get_symbol_context", "SymbolContextRequest", a),
     "orchard_hierarchy": lambda a: _do_handler("type_hierarchy", "get_type_hierarchy", "TypeHierarchyRequest", a),
-    "orchard_stats": _do_stats,
-    "orchard_audit": _do_audit,
-    "orchard_rename": lambda a: _do_handler("rename", "rename_symbol", "RenameRequest", a),
     "orchard_notification_graph": _do_notification_graph,
 }
 

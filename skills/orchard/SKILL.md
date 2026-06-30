@@ -416,12 +416,13 @@ All orchard tools are available as MCP tools with session-scoped DB connection.
 The skill should prefer MCP tools when available; fall back to CLI pipe for
 batch queries.
 
-MCP tools: `orchard_search`, `orchard_lookup_frame`, `orchard_find_callers`, `orchard_find_callees`
-(returns notification_bridges by default for ObjC observers),
+MCP tools (9): `orchard_search`, `orchard_lookup_frame`, `orchard_find_callers`,
+`orchard_find_callees` (returns notification_bridges by default for ObjC observers),
 `orchard_find_references` (includes semantic_role for ObjC callees),
-`orchard_notification_graph` (with `group_by: "observer"` for
-by-observer view), `orchard_impact`, `orchard_symbol`,
-`orchard_hierarchy`, `orchard_rename`, `orchard_stats`, `orchard_audit`.
+`orchard_notification_graph` (with `group_by: "observer"` for by-observer view),
+`orchard_impact`, `orchard_symbol`, `orchard_hierarchy`.
+
+CLI-only commands: `orchard rename`, `orchard stats`, `orchard audit` — use `orchard pipe` or direct CLI.
 
 ## Confidence labels
 
