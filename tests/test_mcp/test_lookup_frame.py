@@ -1,9 +1,10 @@
-def test_lookup_frame_tool_is_registered():
+def test_lookup_frame_tool_is_registered_without_crash_thread_tool():
     import orchard.server as server_mod
 
     names = [tool.name for tool in server_mod.TOOLS]
     assert "orchard_lookup_frame" in names
-    assert "orchard_lookup_crash_thread" in names
+    assert "orchard_lookup_crash_thread" not in names
+    assert "orchard_lookup_crash_thread" not in server_mod.HANDLERS
 
 
 def test_search_tool_description_mentions_next_actions_and_frame_lookup():
@@ -14,9 +15,13 @@ def test_search_tool_description_mentions_next_actions_and_frame_lookup():
     assert "orchard_lookup_frame" in tool.description
 
 
-def test_crash_thread_tool_description_mentions_dispatch_boundaries():
+def test_lookup_frame_tool_description_is_single_frame_only():
     import orchard.server as server_mod
 
-    tool = next(t for t in server_mod.TOOLS if t.name == "orchard_lookup_crash_thread")
-    assert "crashed thread" in tool.description.lower()
-    assert "dispatch" in tool.description.lower()
+    tool = next(t for t in server_mod.TOOLS if t.name == "orchard_lookup_frame")
+    description = tool.description.lower()
+    assert "single" in description
+    assert "frame" in description
+    assert "crashed thread" not in description
+    assert "business symbol" not in description
+    assert "root cause" not in description
