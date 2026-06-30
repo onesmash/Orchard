@@ -297,26 +297,18 @@ _ORCHARD_BLOCK_END = "<!-- orchard:end -->"
 _ORCHARD_BLOCK = """<!-- orchard:start -->
 # Orchard — Apple Semantic Graph
 
-This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbols, {calls_count:,} calls, {contains_count:,} contains). Use the orchard MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbols, {calls_count:,} calls, {contains_count:,} contains). Use Orchard MCP tools for compiler-indexed code navigation, crash triage, and impact analysis.
 
-> If the index is stale, run `orchard ingest --project-dir .` to rebuild.
-> Data source: Xcode IndexStore — every edge is compiler-verified with confidence labels.
-
-## Ingest Basics
-
-- `orchard ingest --project-dir .` rebuilds the graph into `.orchard/graph.db`
-- `--db` points to Orchard's graph database file, usually `.orchard/graph.db`
-- `--index-store` points to Xcode's IndexStore `.../Index.noindex/DataStore`
-- Do not pass a DerivedData directory to `--db`; that is usually an `--index-store` hint instead
+> Data source: Xcode IndexStore. If freshness is stale/unknown, run `orchard ingest --project-dir .`.
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `orchard_impact` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST use orchard to find callers/callees** when exploring unfamiliar code — `orchard_find_callers` and `orchard_find_callees` with compiler-verified edges are more precise than grep. Check the `confidence` field to distinguish source-level evidence from compiler-inferred edges.
-- **MUST follow Orchard's guided miss-path signals** — when `orchard_search` does not directly resolve the symbol, read `status`, `diag`, `candidates`, and `next` instead of treating the result as a dead end.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- Before editing a function, class, or method, run `orchard_impact` and report direct callers, affected surfaces, and risk.
+- Use `orchard_find_callers` / `orchard_find_callees` before grep when exploring unfamiliar code; Orchard edges come from IndexStore.
+- When `orchard_search` misses, read `status`, `diag`, `candidates`, and `next`; a miss may be stale, uncovered, or only partially resolved.
+- Warn the user before proceeding if impact returns HIGH or CRITICAL risk.
 
-## When Debugging
+## Debugging Flow
 
 1. `orchard_search({{name: "<symbol>"}})` — guided symbol lookup with `status`, `diag`, `candidates`, and `next`
 2. If the user has a single stack frame, use `orchard_lookup_frame({{frame: "<stack line>"}})` to resolve owner/method candidates, direct callers, and next actions
@@ -336,37 +328,9 @@ This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbo
 
 ## Guided Miss-Path
 
-When `orchard_search` does not directly resolve the symbol:
-
-1. Check `status.freshness`
-   If it is `stale` or `unknown`, do not over-trust the miss.
-2. Check `status.coverage`
-   Distinguish `covered` from `partial`, `uncovered`, and `unknown`.
-3. Read `diag`
-   Short diagnostic codes explain why the lookup was weak.
-4. Execute `next`
-   Prefer Orchard-native next actions over ad-hoc grep.
-
-Important distinction:
-
-- `freshness` answers whether the build snapshot is trustworthy
-- `coverage` answers whether the graph likely covers the searched scope
-
-Do not conflate them. A query can be fresh but uncovered, or covered but stale.
-
-If `next` includes `orchard_refresh_index`, run the project's Orchard refresh
-command before drawing strong conclusions from the miss-path:
-
-```bash
-orchard ingest --project-dir .
-```
-
-## When Debugging Notifications
-
-1. `orchard notification-graph -n "<name>"` — CLI: find who posts and observes a notification
-2. `orchard_notification_graph({{notification_name: "<name>"}})` — MCP: same data, grouped by notification name
-3. Or query directly: `MATCH (p:Symbol)-[:Posts]->(n:Notification {{name: "kNoti_X"}})-[:Observes]->(cb:Symbol) RETURN p.name, cb.name`
-4. Observer-only notifications: `MATCH (n:Notification) WHERE NOT EXISTS {{ MATCH (:Symbol)-[:Posts]->(n) }} RETURN n.name`
+- `freshness` says whether the snapshot is trustworthy; `coverage` says whether the graph likely covers the searched scope.
+- Prefer Orchard `next` actions over ad-hoc grep. If `next` recommends refresh, run `orchard ingest --project-dir .`.
+- If `source_scope` is `outside_workspace_root`, the symbol may live in a sibling checkout even when grep under cwd fails.
 
 ## When Refactoring
 
@@ -374,14 +338,14 @@ orchard ingest --project-dir .
 - **After changes**: run `orchard_find_callers` to verify no unexpected new dependents broke.
 - **Cross-language bridges**: use `orchard_find_references` to see ObjC ↔ Swift bridge edges.
 - **Renaming**: use `orchard_rename` — USR-precise, dry-run first, uses Symbol+Calls tables (no Occurrence data needed).
-- **Notification callbacks**: use `orchard notification-graph` (CLI) or `orchard_notification_graph` (MCP) to find @selector registrations and verify callback wiring.
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `orchard_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER commit changes without verifying the impact scope.
-- NEVER trust grep over orchard for caller/callee queries — orchard edges are compiler-verified.
+- Do not edit a function, class, or method without first running `orchard_impact`.
+- Do not ignore HIGH or CRITICAL risk.
+- Do not commit code changes without verifying impact scope.
+- Do not trust grep over Orchard for caller/callee relationships.
+- Do not assert exact C++ member byte offsets from Orchard/IndexStore data.
 
 ## Tools Quick Reference
 
@@ -391,70 +355,19 @@ orchard ingest --project-dir .
 | `lookup_frame` | Resolve a single crash frame to owner/method candidates and direct callers | `orchard_lookup_frame({{frame: "ssb::thread_wrapper_t::process_msg(unsigned int)"}})` |
 | `lookup_crash_thread` | Resolve parseable frames from one crashed thread, summarize business frame/callers, and flag thread boundaries | `orchard_lookup_crash_thread({{thread: "Thread 41 Crashed:\\n0 Zoom ps::CPSAudioDeviceRunCtx::GetUsingScene()"}})` |
 | `find_callers` | Who calls this symbol | `orchard_find_callers({{usr: "<USR>"}})` |
-| `find_callees` | What this symbol calls (returns notification_bridges by default) | `orchard_find_callees({{usr: "<USR>"}})` |
+| `find_callees` | What this symbol calls; ObjC callees include semantic roles / notification bridges | `orchard_find_callees({{usr: "<USR>"}})` |
 | `find_references` | Incoming + outgoing references (with semantic_role for ObjC) | `orchard_find_references({{usr: "<USR>"}})` |
-| `impact` | Blast radius before editing | `orchard_impact({{usr: "<USR>"}})` |
-| `symbol` | Symbol metadata | `orchard_symbol({{usr: "<USR>"}})` |
-| `hierarchy` | Type hierarchy | `orchard_hierarchy({{usr: "<USR>"}})` |
+| `impact` | Blast radius before editing; includes `data.summary` and `by_depth` | `orchard_impact({{usr: "<USR>"}})` |
 | `rename` | USR-precise rename (dry-run safe) | `orchard_rename({{usr: "<USR>", new_name: "X"}})` |
-| `stats` | Database overview | `orchard_stats()` |
-| `audit` | Module coverage gaps | `orchard_audit({{project_dir: "."}})` |
-| `notification-graph` | Find @selector / notification wiring | `orchard notification-graph [-n <name>]` |
 | `notification_graph` | Notification wiring: who registers → selector → event → callback | `orchard_notification_graph({{group_by: "observer"}})` |
 
-## Graph Schema
+## Key Labels
 
-| Node | Purpose |
-|------|---------|
-| `Symbol` | Compiler-verified symbol (class, method, function...) |
-| `Notification` | Notification name extracted from source |
-| `File` | Source file path |
-
-| Edge | Meaning | Source |
-|------|---------|--------|
-| `Calls` | A calls B | IndexStore (compiler-verified) |
-| `Posts` | A posts notification N | grep @selector (derive/notification) |
-| `Observes` | N notifies callback C | grep @selector (derive/notification) |
-| `Contains` | Class contains method | IndexStore |
-| `Inherits` / `Implements` / `Extends` | Type relations | IndexStore |
-| `BridgesTo` | ObjC ↔ Swift bridge | derive/bridge |
-
-## Confidence Labels
-
-Every caller/callee carries a `confidence` field:
-
-| confidence | Meaning |
-|-----------|---------|
-| `compiler-verified` | Observed at a source-level call-site (source_direct or symbolgraph) |
-| `inferred` | Compiler type-inference edge (protocol dispatch, overrides) |
-
-Set `include_inferred: true` to see both; default shows only compiler-verified.
-
-## Boundary and Source Scope Labels
-
-Caller/callee and crash lookup results can carry:
-
-| Field | Meaning |
-|-------|---------|
-| `call_style` | `synchronous_call` or `async_or_callback_boundary` |
-| `execution_boundary.role` | `sdk_callback`, `worker_thread_dispatch`, `main_thread_task`, `notification_callback_sink`, or `lifecycle_uninit_path` |
-| `source_scope.status` | `inside_workspace_root`, `outside_workspace_root`, or `unknown` |
-
-Use these labels when turning a raw caller chain into a crash hypothesis. For
-example, `GetUsingScene <- GetMicUsingScene <- process_msg` should raise a
-worker-thread/lifecycle race hypothesis, not only a direct-call hypothesis.
-
-## Semantic Roles (ObjC callees)
-
-ObjC callees in `find_callees` and `find_references` (outgoing) carry a `semantic_role` field inline:
-
-| role | Example |
-|------|---------|
-| `notification_observer` | `addObserver:selector:name:object:` |
-| `notification_poster` | `postNotificationName:object:` |
-| `target_action` | `addTarget:action:forControlEvents:` |
-| `delegate_setter` | `setDelegate:` |
-| `framework_callback` | `viewDidLoad`, `application:didFinish...` |
+- `confidence`: `compiler-verified` or `inferred`; set `include_inferred: true` to see both.
+- `semantic_role`: ObjC selector role such as `notification_observer`, `delegate_setter`, `target_action`, or `framework_callback`.
+- `call_style`: `synchronous_call` vs `async_or_callback_boundary`.
+- `execution_boundary.role`: `sdk_callback`, `worker_thread_dispatch`, `main_thread_task`, `notification_callback_sink`, or `lifecycle_uninit_path`.
+- `source_scope.status`: `inside_workspace_root`, `outside_workspace_root`, or `unknown`.
 
 ## Impact Risk Levels
 
@@ -468,31 +381,7 @@ Impact output includes `data.summary` with `risk`, `direct_callers`,
 `primary_surface`, `d2_clusters`, and `likely_tests`. Use it for the first
 human-facing summary, then cite `by_depth` for the detailed blast radius.
 
-## Ingest Progress
-
-During a real ingest, progress appears in phases instead of staying silent:
-
-- `ingest: reading index store...`
-- streamed `orchard-indexstore-reader` progress lines from stderr
-- `communities: deriving graph partitions...`
-- `notification-graph: scanning source files...`
-- `processes: detecting execution flows...`
-
-If ingest looks "stuck", first check which phase is currently running rather than
-assuming the whole command is hung.
-
-## Keeping the Index Fresh
-
-`orchard ingest` writes a `BuildSnapshot` for the current graph build. After a
-successful ingest, normal queries such as `symbol`, `impact`, `find_callers`,
-`find_callees`, and guided search should usually return `freshness: "fresh"`
-unless the graph is genuinely outdated or the query uses a mismatched build context.
-
-After committing code changes, re-run ingest to update:
-
-```bash
-orchard ingest --project-dir .
-```
+After committing code changes, re-run `orchard ingest --project-dir .` to update the graph.
 
 <!-- orchard:end -->"""
 

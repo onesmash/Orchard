@@ -14,6 +14,7 @@ def test_orchard_block_mentions_crash_thread_lookup():
     assert "orchard_lookup_crash_thread" in block
     assert "first indexed business symbol" in block
     assert "thread/dispatch boundaries" in block
+    assert len(block.splitlines()) <= 90
 
 
 def test_orchard_block_mentions_crash_triage_annotations():
@@ -33,3 +34,4 @@ def test_orchard_block_mentions_crash_triage_annotations():
     assert "data.summary" in block
     assert "exact C++ object field offsets" in block
     assert "orchard_class_layout" not in block
+    assert "## Graph Schema" not in block
