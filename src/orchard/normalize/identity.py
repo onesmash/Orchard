@@ -450,17 +450,17 @@ def delete_symbols_for_files(
     Used during incremental ingest to clean up stale symbols before
     re-inserting fresh data for changed or deleted files.
     """
-    count = 0
-    for fp in file_paths:
-        r = conn.execute(
-            "MATCH (s:Symbol) "
-            "WHERE s.file_path = $fp "
-            "DETACH DELETE s "
-            "RETURN count(*)",
-            {"fp": fp},
-        ).get_all()
-        count += r[0][0] if r else 0
-    return count
+    if not file_paths:
+        return 0
+    # Batch delete via IN clause — one query instead of one per file.
+    r = conn.execute(
+        "MATCH (s:Symbol) "
+        "WHERE s.file_path IN $fps "
+        "DETACH DELETE s "
+        "RETURN count(*)",
+        {"fps": file_paths},
+    ).get_all()
+    return r[0][0] if r else 0
 
 
 def upsert_build_snapshot(conn, ctx: BuildContext) -> None:

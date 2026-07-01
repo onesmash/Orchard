@@ -76,7 +76,9 @@ NODE_TABLES: list[str] = [
         entry_kind STRING,
         label STRING,
         process_type STRING,
-        step_count INT64
+        step_count INT64,
+        entry_usr STRING,
+        entry_file_path STRING
     )""",
 ]
 

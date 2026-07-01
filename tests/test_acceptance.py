@@ -481,7 +481,7 @@ def test_cmd_ingest_runs_global_community_and_process_derivation_once(tmp_path, 
 
     monkeypatch.setattr(
         "orchard.derive.process_detection.detect_processes",
-        lambda _conn, scope_id: captured["process_scope_ids"].append(scope_id) or [DummyProcessNode()],
+        lambda _conn, scope_id, changed_files=None: captured["process_scope_ids"].append(scope_id) or [DummyProcessNode()],
     )
     monkeypatch.setattr(
         "orchard.derive.notification_graph.persist_notification_graph",
@@ -631,6 +631,47 @@ def test_cmd_ingest_full_disables_incremental(tmp_path, monkeypatch):
     ])
 
     assert captured["incremental_since"] is None
+
+
+def test_cmd_ingest_full_persists_file_list_in_state(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: (IndexStoreResult(), None),
+    )
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.list_source_files",
+        lambda index_store_path, source_root=None: [
+            "/repo/ios-client/Zoom/AppDelegate.swift",
+            "/repo/ios-client/Zoom/LoginViewController.m",
+        ],
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "T",
+        "--db", str(tmp_path / "graph.db"),
+        "--full",
+    ])
+
+    state_path = tmp_path / ".orchard" / "ingest-state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert data["files"] == [
+        "/repo/ios-client/Zoom/AppDelegate.swift",
+        "/repo/ios-client/Zoom/LoginViewController.m",
+    ]
 
 
 def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monkeypatch, capsys):
@@ -817,7 +858,7 @@ def test_cmd_ingest_logs_and_upserts_compiled_scope_once(tmp_path, monkeypatch, 
     out = capsys.readouterr().out
     assert "ingest: reading index store..." in out
     assert "scope: Zoom,zPSApp" in out
-    assert "communities: deriving graph partitions..." in out
+    assert "communities: import took" in out
     assert "notification-graph: scanning source files..." in out
     assert "processes: detecting execution flows..." in out
     assert "[1/2]" not in out

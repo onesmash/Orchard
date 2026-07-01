@@ -369,9 +369,14 @@ def cmd_ingest(args: list[str]):
             print(f"incremental: cleaning {len(changed)} changed + "
                   f"{len(deleted_files)} deleted files across "
                   f"{len(old_targets)} target(s)...")
-            for tgt in old_targets:
-                c = delete_symbols_for_files(conn, tgt, to_clean)
-                deleted_total += c
+            # scope_id is unused in delete_symbols_for_files — one batch
+            # delete covers all targets.
+            deleted_total = delete_symbols_for_files(conn, entry_target, to_clean)
+            # Batch-delete stale File nodes too (same per-file N+1 issue).
+            conn.execute(
+                "MATCH (f:File) WHERE f.path IN $fps DETACH DELETE f",
+                {"fps": to_clean},
+            )
             print(f"incremental: {deleted_total:,} old symbols deleted")
         if not r.symbols and not r.relations:
             # No changes — update state and exit.
@@ -383,7 +388,8 @@ def cmd_ingest(args: list[str]):
             return
 
     print(f"ingest: {r.elapsed_s}s  {len(r.symbols):,} syms  "
-          f"{len(r.relations):,} rels  {len(targets)} target(s)")
+          f"{len(r.relations):,} rels  {len(targets)} target(s)",
+          flush=True)
 
     # Treat the compiled targets as one build scope rather than duplicating
     # the same symbol/relation ingest work once per target.
@@ -394,18 +400,26 @@ def cmd_ingest(args: list[str]):
                          file_path=s.file_path or "", signature="",
                          access_level="public", container_usr=None)
             for s in r.symbols]
+    t_us = time.monotonic()
     upsert_symbols(conn, syms, scope_target)
+    print(f"  symbols: upserted ({time.monotonic()-t_us:.1f}s)", flush=True)
+    t_uc = time.monotonic()
     upsert_calls(conn, r.relations, scope_target, source="indexstore",
                  build_id=ctx.build_id)
+    print(f"  calls: upserted ({time.monotonic()-t_uc:.1f}s)", flush=True)
+    t_ui = time.monotonic()
     upsert_indexstore_rels(conn, r.relations, scope_target, source="indexstore",
                            build_id=ctx.build_id)
+    print(f"  struct: upserted ({time.monotonic()-t_ui:.1f}s)", flush=True)
     print(f"  scope: {','.join(targets)}")
 
     # File upsert (shared across targets).
     from orchard.normalize.identity import upsert_files
+    t_uf = time.monotonic()
     fc = upsert_files(conn, syms)
-    if fc:
-        print(f"  files: {fc:,}")
+    print(f"  files: {fc:,} ({time.monotonic()-t_uf:.1f}s)", flush=True)
+    print(f"  [trace] files printed, t={time.monotonic()-t0:.0f}s, sg={ns.symbolgraph!r}",
+          file=sys.stderr, flush=True)
 
     # SymbolGraph ingest: parse JSON and upsert its symbols + relationships.
     if ns.symbolgraph:
@@ -420,10 +434,15 @@ def cmd_ingest(args: list[str]):
         print(f"  symbolgraph: {len(sg.symbols):,} syms, "
               f"{len(sg.relationships):,} rels  ({time.monotonic()-t_sg:.1f}s)")
 
+    print(f"  [trace] before community import, t={time.monotonic()-t0:.0f}s",
+          file=sys.stderr, flush=True)
     # Community detection via Leiden algorithm.
     try:
+        t_import_start = time.monotonic()
         from orchard.derive.community_detection import run_community_detection
-        print("  communities: deriving graph partitions...", flush=True)
+        t_import_done = time.monotonic()
+        print(f"  communities: import took {t_import_done - t_import_start:.1f}s "
+              f"(t={time.monotonic()-t0:.0f}s)", flush=True)
         t_cd = time.monotonic()
         result = run_community_detection(conn, ctx.build_id)
         print(f"  communities: {result['communities_found']} communities, "
@@ -459,14 +478,21 @@ def cmd_ingest(args: list[str]):
         from orchard.derive.process_detection import detect_processes
         print("  processes: detecting execution flows...", flush=True)
         t_pd = time.monotonic()
-        procs = detect_processes(conn, ctx.build_id)
+        # Incremental: only re-detect processes whose entry points are in
+        # changed files.  Full ingest (file_status is falsy): detect all.
+        inc_files: list[str] | None = None
+        if file_status:
+            inc_files = file_status.get("changed")
+        procs = detect_processes(conn, ctx.build_id, changed_files=inc_files)
         cross = sum(1 for p in procs if p.process_type == "cross_community")
         print(f"  processes: {len(procs)} detected "
-              f"({cross} cross-community)  ({time.monotonic()-t_pd:.1f}s)")
-    except Exception:
-        pass  # skip on mock/test databases
+              f"({cross} cross-community)  ({time.monotonic()-t_pd:.1f}s)",
+              flush=True)
+    except Exception as e:
+        print(f"  processes: ERROR — {e}", flush=True)
 
-    print(f"done  {time.monotonic()-t0:.0f}s")
+    t_done = time.monotonic()
+    print(f"done  {t_done - t0:.0f}s  (p_done={t_done - t_pd:.0f}s ago)", flush=True)
 
     # Persist state for next incremental run.
     # Full ingest: only save timestamp (no file list — we don't need it).
@@ -476,6 +502,10 @@ def cmd_ingest(args: list[str]):
                    files=file_status["all"])
     else:
         save_state(project_dir, touch_timestamp(), targets, index_store)
+    t_saved = time.monotonic()
+    print(f"  state: saved ({t_saved - t_done:.1f}s)", flush=True)
+    conn.close()
+    print(f"  db: closed ({(time.monotonic() - t_saved):.1f}s)", flush=True)
 
 
 def cmd_search(args: list[str]):

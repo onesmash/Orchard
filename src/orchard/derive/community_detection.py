@@ -31,6 +31,9 @@ def run_community_detection(conn, scope_id: str) -> dict[str, int]:
     if not adj:
         return {"communities_found": 0, "members_assigned": 0}
 
+    # Clean old Community nodes + MEMBER_OF edges before re-creating.
+    conn.execute("MATCH (c:Community) DETACH DELETE c")
+
     # Skip degree-1 singletons (GitNexus pattern for large graphs).
     if len(adj) > 10000:
         adj = {k: v for k, v in adj.items() if len(v) >= 2}
@@ -71,7 +74,7 @@ def run_community_detection(conn, scope_id: str) -> dict[str, int]:
     try:
         conn.execute(f"COPY Community FROM '{comm_path}' (HEADER=false)")
     except Exception:
-        pass
+        pass  # Community table may not exist in test databases
     os.unlink(comm_path)
 
     rel_path = os.path.join(csv_dir, "member_of.csv")
@@ -83,10 +86,7 @@ def run_community_detection(conn, scope_id: str) -> dict[str, int]:
             cid = f"community:{scope_id}:{lbl}"
             for usr in members:
                 w.writerow([usr, cid])
-    try:
-        conn.execute(f"COPY MEMBER_OF FROM '{rel_path}' (HEADER=false)")
-    except Exception:
-        pass
+    conn.execute(f"COPY MEMBER_OF FROM '{rel_path}' (HEADER=false)")
     os.unlink(rel_path)
     os.rmdir(csv_dir)
 
