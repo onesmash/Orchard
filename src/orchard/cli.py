@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -51,6 +52,19 @@ def _conn(db_path: str = "", announce_parent: bool = False, read_only: bool = Fa
     if not read_only:
         init_schema(c)
     return c
+
+
+def _reset_graph_db(db_path: str) -> None:
+    """Delete the existing graph DB so a full ingest can rebuild from scratch."""
+    if not db_path or db_path == ":memory:":
+        return
+    path = Path(db_path)
+    if not path.exists():
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
 
 
 def _print_json(obj):
@@ -300,6 +314,8 @@ def cmd_ingest(args: list[str]):
         )
         sys.exit(2)
 
+    if not ns.incremental:
+        _reset_graph_db(ns.db)
     conn = _conn(ns.db)
     project_dir = str(Path(ns.project_dir).resolve())
     ctx = BuildContext(

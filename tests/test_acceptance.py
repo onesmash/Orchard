@@ -674,6 +674,45 @@ def test_cmd_ingest_full_disables_incremental(tmp_path, monkeypatch):
     assert captured["incremental_since"] is None
 
 
+def test_cmd_ingest_full_rebuilds_graph_db_before_open(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    db_path = tmp_path / "graph.db"
+    db_path.mkdir()
+    (db_path / "stale.txt").write_text("old graph", encoding="utf-8")
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    def fake_conn(path, *args, **kwargs):
+        assert path == str(db_path)
+        assert not db_path.exists()
+        return DummyConn()
+
+    monkeypatch.setattr("orchard.cli._conn", fake_conn)
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: (
+            IndexStoreResult(),
+            {"changed": [], "all": []},
+        ),
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "T",
+        "--db", str(db_path),
+        "--full",
+    ])
+
+
 def test_cmd_ingest_full_persists_file_list_in_state(tmp_path, monkeypatch):
     from orchard.cli import cmd_ingest
     from orchard.ingest.indexstore import IndexStoreResult
