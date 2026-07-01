@@ -161,6 +161,32 @@ def test_build_notification_graph_links_observer_to_callback(conn_with_notificat
     assert "s:observer_callback" in obs["callback"]["usr"]
 
 
+def test_build_notification_graph_scans_only_notification_caller_files(conn_with_notifications, monkeypatch):
+    conn, tmp_path = conn_with_notifications
+    captured: dict[str, object] = {}
+
+    def fake_grep_files(root: str, pattern: str, window: int = 5, file_list=None):
+        captured["file_list"] = file_list
+        return {}
+
+    monkeypatch.setattr("orchard.derive.notification_graph._grep_files", fake_grep_files)
+
+    build_notification_graph(
+        conn,
+        source_root=str(tmp_path),
+        changed_files=[
+            str(tmp_path / "Observer.m"),
+            str(tmp_path / "Poster.m"),
+            str(tmp_path / "Unrelated.swift"),
+        ],
+    )
+
+    assert set(captured["file_list"]) == {
+        str(tmp_path / "Observer.m"),
+        str(tmp_path / "Poster.m"),
+    }
+
+
 def test_build_notification_graph_empty_without_observers(tmp_path):
     """No notification edges → empty graph."""
     db_path = str(tmp_path / "empty.db")
@@ -229,3 +255,60 @@ def test_persist_is_idempotent(conn_with_notifications):
         "MATCH (n:Notification {name: 'kSomethingHappened'}) RETURN count(n)"
     ).get_all()
     assert n_rows[0][0] == 1  # still only one
+
+
+def test_build_notification_graph_batches_callback_symbol_lookup(conn_with_notifications):
+    conn, tmp_path = conn_with_notifications
+
+    second_file = tmp_path / "ObserverTwo.m"
+    second_file.write_text("""\
+@implementation MyObserverTwo
+- (void)setupMoreNotifications {
+    [[NSNotificationCenter defaultCenter] addObserver:self
+        selector:@selector(handleOtherThing:)
+        name:kSomethingHappened object:nil];
+}
+- (void)handleOtherThing:(NSNotification *)note {
+}
+@end
+""")
+
+    for sym_data in [
+        ("s:observer_setup_two", "setupMoreNotifications", "objc", "method",
+         str(second_file), "MyModule"),
+        ("s:observer_callback_two", "handleOtherThing:", "objc", "method",
+         str(second_file), "MyModule"),
+    ]:
+        conn.execute(
+            f"CREATE (:Symbol {{id: '{sym_data[0]}', usr: '{sym_data[0]}', "
+            f"precise_id: '', name: '{sym_data[1]}', language: '{sym_data[2]}', "
+            f"kind: '{sym_data[3]}', module: '{sym_data[5]}', "
+            f"file_path: '{sym_data[4]}', signature: '', container_usr: '', "
+            f"access_level: 'internal', origin: 'derived', is_generated: false}})"
+        )
+    conn.execute(
+        "MATCH (c:Symbol {id:'s:observer_setup_two'}), "
+        "(t:Symbol {id:'s:addObserver'}) "
+        "CREATE (c)-[:Calls {source:'derived', confidence:1.0, "
+        "provenance:'indexstore', build_id:'b1', "
+        "reason:'source_direct'}]->(t)"
+    )
+
+    callback_queries = {"count": 0}
+    original_execute = conn.execute
+
+    def counting_execute(query, params=None):
+        if "RETURN s.file_path, s.name, s.usr, s.kind, s.module" in query:
+            callback_queries["count"] += 1
+        return original_execute(query, params)
+
+    conn.execute = counting_execute
+    try:
+        graph = build_notification_graph(conn, source_root=str(tmp_path))
+    finally:
+        conn.execute = original_execute
+
+    observers = graph["notifications"]["kSomethingHappened"]["observers"]
+    callbacks = {obs["callback"]["name"] for obs in observers if obs["callback"]}
+    assert callbacks == {"handleSomething:", "handleOtherThing:"}
+    assert callback_queries["count"] == 1

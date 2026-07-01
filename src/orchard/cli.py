@@ -461,11 +461,13 @@ def cmd_ingest(args: list[str]):
         print("  notification-graph: scanning source files...", flush=True)
         # Incremental with no changes → skip grep (empty list).
         # Incremental with changes → scan only changed files.
-        # Full ingest → scan everything (None).
-        if incremental_since is not None and file_status:
-            changed_only = file_status.get("changed")  # list or None
-            if changed_only is None:
-                changed_only = []  # no changes → skip
+        # Full ingest → scan the known full file set from file_status.
+        if file_status:
+            changed_only = file_status.get("all", [])
+            if incremental_since is not None:
+                changed_only = file_status.get("changed")  # list or None
+                if changed_only is None:
+                    changed_only = []  # no changes → skip
         else:
             changed_only = None  # full scan
         ng_count = persist_notification_graph(

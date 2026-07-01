@@ -176,12 +176,30 @@ def build_notification_graph(
         "caller.file_path, callee.name",
     ).get_all()
 
-    # Pre-scan: if incremental, only grep changed files.
+    caller_files: list[str] = []
+    seen_files: set[str] = set()
+    for row in rows:
+        file_path = row[3] or ""
+        if not file_path:
+            continue
+        abs_path = file_path
+        if source_root and not os.path.isabs(abs_path):
+            abs_path = os.path.join(source_root, abs_path)
+        real_path = os.path.realpath(abs_path)
+        if real_path not in seen_files:
+            seen_files.add(real_path)
+            caller_files.append(real_path)
+
+    grep_files = caller_files
     if changed_files is not None:
-        raw = _grep_files(source_root, r"@selector|postNotificationName|addObserver",
-                          file_list=changed_files)
-    else:
-        raw = _grep_files(source_root, r"@selector|postNotificationName|addObserver")
+        allowed = {os.path.realpath(path) for path in changed_files}
+        grep_files = [path for path in caller_files if path in allowed]
+
+    raw = _grep_files(
+        source_root,
+        r"@selector|postNotificationName|addObserver",
+        file_list=grep_files if grep_files else [],
+    )
     # Split results by pattern match.
     sel_files: dict[str, tuple[int, str]] = {}
     ns_files: dict[str, tuple[int, str]] = {}
@@ -202,6 +220,11 @@ def build_notification_graph(
     observers: list[dict] = []
     target_actions: list[dict] = []
     notifications: dict[str, dict] = {}
+    callback_requests: list[tuple[str, str]] = []
+    callback_cache: dict[tuple[str, str], dict] = {}
+
+    pending_observers: list[dict] = []
+    pending_target_actions: list[dict] = []
 
     for row in rows:
         usr, name, module, file_path, callee_name = (
@@ -258,35 +281,52 @@ def build_notification_graph(
                         noti_name = _clean_name(name_match.group(1))
                     break
 
-            # Link @selector to the callback symbol.
-            callback = None
-            if selector:
-                cb_rows = conn.execute(
-                    "MATCH (s:Symbol) WHERE s.name = $sel "
-                    "AND s.file_path = $fp "
-                    "RETURN s.usr, s.name, s.kind, s.module LIMIT 1",
-                    {"sel": selector, "fp": file_path},
-                ).get_all()
-                if cb_rows:
-                    callback = {
-                        "usr": cb_rows[0][0],
-                        "name": cb_rows[0][1],
-                        "kind": cb_rows[0][2],
-                        "module": cb_rows[0][3] or "",
-                    }
-
             entry = {
                 "usr": usr, "name": name, "module": module,
                 "file_path": file_path, "line": line_num,
                 "selector": selector, "notification_name": noti_name,
-                "callback": callback,
+                "callback": None,
             }
             if role == "target_action":
-                target_actions.append(entry)
+                pending_target_actions.append(entry)
             else:
-                observers.append(entry)
+                pending_observers.append(entry)
                 notifications.setdefault(noti_name, {"posters": [], "observers": []})
                 notifications[noti_name]["observers"].append(entry)
+            if selector:
+                callback_requests.append((file_path, selector))
+
+    if callback_requests:
+        file_paths = sorted({fp for fp, _ in callback_requests if fp})
+        selectors = sorted({sel for _, sel in callback_requests if sel})
+        if file_paths and selectors:
+            cb_rows = conn.execute(
+                "UNWIND $fps AS fp "
+                "UNWIND $sels AS sel "
+                "MATCH (s:Symbol) "
+                "WHERE s.file_path = fp AND s.name = sel "
+                "RETURN s.file_path, s.name, s.usr, s.kind, s.module",
+                {"fps": file_paths, "sels": selectors},
+            ).get_all()
+            for row in cb_rows:
+                callback_cache[(row[0], row[1])] = {
+                    "usr": row[2],
+                    "name": row[1],
+                    "kind": row[3],
+                    "module": row[4] or "",
+                }
+
+    for entry in pending_observers:
+        selector = entry.get("selector")
+        if selector:
+            entry["callback"] = callback_cache.get((entry["file_path"], selector))
+        observers.append(entry)
+
+    for entry in pending_target_actions:
+        selector = entry.get("selector")
+        if selector:
+            entry["callback"] = callback_cache.get((entry["file_path"], selector))
+        target_actions.append(entry)
 
     return {
         "publishers": publishers,

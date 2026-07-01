@@ -506,6 +506,47 @@ def test_cmd_ingest_runs_global_community_and_process_derivation_once(tmp_path, 
     assert "processes (zPSApp):" not in out
 
 
+def test_cmd_ingest_full_notification_graph_reuses_full_file_list(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    captured: dict[str, object] = {}
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: (
+            IndexStoreResult(),
+            {"changed": [], "all": ["/repo/ios-client/Observer.m", "/repo/ios-client/Poster.m"]},
+        ),
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_files", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.derive.community_detection.run_community_detection", lambda *args, **kwargs: {"communities_found": 0, "members_assigned": 0})
+    monkeypatch.setattr("orchard.derive.process_detection.detect_processes", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "orchard.derive.notification_graph.persist_notification_graph",
+        lambda _conn, source_root="", build_id="", changed_files=None: captured.setdefault("changed_files", changed_files) or 0,
+    )
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "T",
+        "--db", str(tmp_path / "graph.db"),
+        "--full",
+    ])
+
+    assert captured["changed_files"] == ["/repo/ios-client/Observer.m", "/repo/ios-client/Poster.m"]
+
+
 def test_cmd_ingest_fails_closed_when_project_config_roots_missing_for_compiled_targets(tmp_path, monkeypatch):
     from orchard.cli import cmd_ingest
 
