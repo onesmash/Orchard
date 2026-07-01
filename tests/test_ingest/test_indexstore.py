@@ -24,7 +24,7 @@ def _mock_cli(lines):
 
 def test_read_index_store_parses_occurrences():
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(_SAMPLE_LINES)):
-        result, _ = read_index_store("/fake/store", scope_id="MyTarget")
+        result, _ = read_index_store("/fake/store", scope_id="MyTarget", emit_occurrences=True)
     assert len(result.occurrences) == 1
     occ = result.occurrences[0]
     assert occ.usr == "s:MyFunc"
@@ -53,13 +53,20 @@ def test_read_index_store_empty_store():
     assert result.relations == []
 
 
+def test_read_index_store_skips_occurrences_by_default():
+    with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(_SAMPLE_LINES)):
+        result, _ = read_index_store("/fake/store", scope_id="MyTarget")
+    assert result.occurrences == []
+    assert len(result.relations) == 1
+
+
 def test_read_index_store_tolerates_malformed_lines():
     lines = [
         '{"kind":"occurrence","usr":"s:A","file":"f.swift","line":1,"column":1,"role":"definition"}',
         'NOT VALID JSON',
     ]
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(lines)):
-        result, _ = read_index_store("/fake/store", scope_id="T")
+        result, _ = read_index_store("/fake/store", scope_id="T", emit_occurrences=True)
     assert len(result.occurrences) == 1
     assert len(result.warnings) == 1
     assert "NOT VALID" in result.warnings[0]
@@ -71,7 +78,7 @@ def test_read_index_store_tolerates_missing_keys():
         '{"kind":"relation","from_usr":"a","to_usr":"b"}',
     ]
     with patch("orchard.ingest.indexstore._run_cli", side_effect=lambda *a, **kw: _mock_cli(lines)):
-        result, _ = read_index_store("/fake/store", scope_id="T")
+        result, _ = read_index_store("/fake/store", scope_id="T", emit_occurrences=True)
     assert len(result.occurrences) == 0
     assert len(result.relations) == 0
     assert len(result.warnings) == 2
@@ -80,11 +87,12 @@ def test_read_index_store_tolerates_missing_keys():
 def test_read_index_store_passes_targets_and_source_roots_to_cli(monkeypatch):
     captured: dict[str, object] = {}
 
-    def fake_run_cli(index_store_path, source_root=None, source_roots=None, incremental_since=None, list_files=False, targets=None):
+    def fake_run_cli(index_store_path, source_root=None, source_roots=None, incremental_since=None, list_files=False, targets=None, emit_occurrences=False):
         captured["index_store_path"] = index_store_path
         captured["source_root"] = source_root
         captured["source_roots"] = source_roots
         captured["targets"] = targets
+        captured["emit_occurrences"] = emit_occurrences
         return [], ""
 
     monkeypatch.setattr("orchard.ingest.indexstore._run_cli", fake_run_cli)
@@ -99,6 +107,42 @@ def test_read_index_store_passes_targets_and_source_roots_to_cli(monkeypatch):
     assert captured["index_store_path"] == "/fake/store"
     assert captured["source_roots"] == ["/repo/ios-client", "/repo/client-app-common"]
     assert captured["targets"] == ["Zoom", "zPSApp"]
+    assert captured["emit_occurrences"] is False
+
+
+def test_read_index_store_passes_emit_occurrences_to_cli(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_run_cli(index_store_path, source_root=None, source_roots=None, incremental_since=None, list_files=False, targets=None, emit_occurrences=False):
+        captured["emit_occurrences"] = emit_occurrences
+        return [], ""
+
+    monkeypatch.setattr("orchard.ingest.indexstore._run_cli", fake_run_cli)
+
+    read_index_store("/fake/store", scope_id="Zoom", emit_occurrences=True)
+
+    assert captured["emit_occurrences"] is True
+
+
+def test_read_index_store_parses_file_status_without_incremental():
+    lines = [
+        json.dumps({"kind": "symbol", "usr": "s:MyFunc", "name": "MyFunc",
+                    "symbol_kind": "source.lang.swift.decl.function.free",
+                    "language": "swift", "module": "MyTarget",
+                    "file": "/src/f.swift"}),
+    ]
+    stderr = "\n".join([
+        "[orchard-indexstore-reader +0.1s] discovered 2 source files to inspect",
+        json.dumps({"changed": [], "all": ["/src/a.swift", "/src/b.swift"]}),
+    ])
+
+    with patch(
+        "orchard.ingest.indexstore._run_cli",
+        side_effect=lambda *a, **kw: (list(lines), stderr),
+    ):
+        _result, file_status = read_index_store("/fake/store", scope_id="MyTarget")
+
+    assert file_status == {"changed": [], "all": ["/src/a.swift", "/src/b.swift"]}
 
 
 def test_run_cli_expands_repeated_targets_and_source_roots(monkeypatch):
@@ -142,6 +186,43 @@ def test_run_cli_expands_repeated_targets_and_source_roots(monkeypatch):
         "--source-root", "/repo/client-app-common",
         "--target", "Zoom",
         "--target", "zPSApp",
+    ]
+
+
+def test_run_cli_adds_emit_occurrences_flag(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class DummyStdout:
+        def __iter__(self):
+            return iter(())
+
+        def close(self):
+            return None
+
+    class DummyStderr:
+        def read(self):
+            return ""
+
+    class DummyProc:
+        def __init__(self, cmd, **_kwargs):
+            captured["cmd"] = cmd
+            self.stdout = DummyStdout()
+            self.stderr = DummyStderr()
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr("orchard.ingest.indexstore.subprocess.Popen", DummyProc)
+    monkeypatch.setattr("orchard.ingest.indexstore._cli_path", lambda: "/bin/orchard-indexstore-reader")
+
+    from orchard.ingest.indexstore import _run_cli
+
+    _run_cli("/fake/store", emit_occurrences=True)
+
+    assert captured["cmd"] == [
+        "/bin/orchard-indexstore-reader",
+        "/fake/store",
+        "--emit-occurrences",
     ]
 
 

@@ -644,14 +644,22 @@ def test_cmd_ingest_full_persists_file_list_in_state(tmp_path, monkeypatch):
     monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
     monkeypatch.setattr(
         "orchard.ingest.indexstore.read_index_store",
-        lambda *args, **kwargs: (IndexStoreResult(), None),
+        lambda *args, **kwargs: (
+            IndexStoreResult(),
+            {
+                "changed": [],
+                "all": [
+                    "/repo/ios-client/Zoom/AppDelegate.swift",
+                    "/repo/ios-client/Zoom/LoginViewController.m",
+                ],
+            },
+        ),
     )
     monkeypatch.setattr(
         "orchard.ingest.indexstore.list_source_files",
-        lambda index_store_path, source_root=None: [
-            "/repo/ios-client/Zoom/AppDelegate.swift",
-            "/repo/ios-client/Zoom/LoginViewController.m",
-        ],
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("full ingest should reuse file list from read_index_store")
+        ),
     )
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)

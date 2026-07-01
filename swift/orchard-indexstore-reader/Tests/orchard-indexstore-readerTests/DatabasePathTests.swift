@@ -30,4 +30,49 @@ final class DatabasePathTests: XCTestCase {
 
     XCTAssertNotEqual(first, second)
   }
+
+  func testBufferedLineWriterFlushesLinesInOrder() {
+    var writes: [String] = []
+    var writer = BufferedLineWriter(
+      flushThresholdBytes: 8,
+      sink: { data in
+        writes.append(String(decoding: data, as: UTF8.self))
+      }
+    )
+
+    writer.writeLine("abc")
+    XCTAssertEqual(writes, [])
+
+    writer.writeLine("defg")
+    XCTAssertEqual(writes, ["abc\ndefg\n"])
+
+    writer.writeLine("tail")
+    writer.flush()
+
+    XCTAssertEqual(writes, ["abc\ndefg\n", "tail\n"])
+  }
+
+  func testRelationDedupKeyHashesEquivalentRelationsOnce() {
+    let first = RelationDedupKey(
+      fromUSR: "s:callee",
+      toUSR: "s:caller",
+      role: "calledBy",
+      occurrenceRole: "call"
+    )
+    let second = RelationDedupKey(
+      fromUSR: "s:callee",
+      toUSR: "s:caller",
+      role: "calledBy",
+      occurrenceRole: "call"
+    )
+    let third = RelationDedupKey(
+      fromUSR: "s:callee",
+      toUSR: "s:caller",
+      role: "calledBy",
+      occurrenceRole: "reference"
+    )
+
+    XCTAssertEqual(Set([first, second]).count, 1)
+    XCTAssertEqual(Set([first, third]).count, 2)
+  }
 }

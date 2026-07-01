@@ -87,7 +87,7 @@ def test_real_cli_read_index_store_produces_calledby(tmp_path):
     lib_path = _build_index(src_dir, index_path)
 
     # Real CLI run + real parse (no mock).
-    result, _ = read_index_store(str(index_path), scope_id="T")
+    result, _ = read_index_store(str(index_path), scope_id="T", emit_occurrences=True)
 
     # Our source defines caller() and callee(); find their USRs.
     our_usrs = {occ.usr for occ in result.occurrences if occ.file_path == lib_path}
@@ -131,6 +131,18 @@ def test_real_cli_read_index_store_produces_calledby(tmp_path):
     callees = find_callees(conn, CalleeRequest(usr=caller_usr, build_id="b-real"))
     assert any(d["usr"] == callee_usr for d in callees.data)
     conn.close()
+
+
+def test_real_cli_read_index_store_reports_all_files_for_full_ingest(tmp_path):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    index_path = tmp_path / "idx"
+    lib_path = _build_index(src_dir, index_path)
+
+    _result, file_status = read_index_store(str(index_path), scope_id="T")
+
+    assert file_status is not None
+    assert lib_path in file_status["all"]
 
 
 def test_installed_wheel_cli_can_ingest_minimal_index(tmp_path):

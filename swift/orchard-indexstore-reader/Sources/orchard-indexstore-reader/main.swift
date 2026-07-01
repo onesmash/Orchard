@@ -71,6 +71,7 @@ var sourceRoots: [String] = []
 var targets: [String] = []
 var incrementalSince: Double?       // Unix epoch seconds
 var listFilesOnly: Bool = false
+var emitOccurrences = false
 
 var i = 1
 while i < args.count {
@@ -102,8 +103,11 @@ while i < args.count {
   if a == "--list-files" {
     listFilesOnly = true; i += 1; continue
   }
+  if a == "--emit-occurrences" {
+    emitOccurrences = true; i += 1; continue
+  }
   if a == "--help" || a == "-h" {
-    print("usage: orchard-indexstore-reader <index-store-path> [--libindexstore <dylib>] [--source-root <dir>] [--incremental-since <ts>] [--list-files]")
+    print("usage: orchard-indexstore-reader <index-store-path> [--libindexstore <dylib>] [--source-root <dir>] [--incremental-since <ts>] [--list-files] [--emit-occurrences]")
     exit(0)
   }
   if storePath == nil { storePath = a }
@@ -246,8 +250,11 @@ func js(_ s: String) -> String {
 //     (slow on large stores; emits SDK symbols too).
 
 let out = FileHandle.standardOutput
+var lineWriter = BufferedLineWriter { data in
+  out.write(data)
+}
 func writeLine(_ s: String) {
-  out.write((s + "\n").data(using: .utf8)!)
+  lineWriter.writeLine(s)
 }
 
 func underRoot(_ p: String) -> Bool {
@@ -378,7 +385,9 @@ func _langString(_ lang: Language) -> String {
 
 var bestSlot: [String: CanonicalSlot] = [:]   // usr → canonical descriptor
 var dupCount = 0
-var emittedRels = Set<String>()
+bestSlot.reserveCapacity(filePaths.count * 8)
+var emittedRels = Set<RelationDedupKey>()
+emittedRels.reserveCapacity(filePaths.count * 16)
 var processedFileCount = 0
 
 logProgress("pass 1: scanning all files for canonical symbols + relations")
@@ -394,6 +403,7 @@ for file in filePaths {
   for occ in db.symbolOccurrences(inFilePath: file) {
     let usr = occ.symbol.usr
     let roles = occ.roles
+    let occurrenceRole = occurrenceRoleName(roles)
     let path = occ.location.path
     let line = occ.location.line
     let col = occ.location.utf8Column
@@ -418,19 +428,23 @@ for file in filePaths {
     }
 
     // ---- Occurrences ----
-    if roles.contains(.definition) || roles.contains(.declaration) || roles.contains(.call) {
+    if emitOccurrences && (roles.contains(.definition) || roles.contains(.declaration) || roles.contains(.call)) {
       writeLine(
         "{\"kind\":\"occurrence\",\"usr\":\(js(usr)),"
         + "\"file\":\(js(path)),\"line\":\(line),\"column\":\(col),"
-        + "\"role\":\(js(occurrenceRoleName(roles)))}"
+        + "\"role\":\(js(occurrenceRole))}"
       )
     }
 
     // ---- Relations ----
     for rel in occ.relations {
       for roleName in relationRoleNames(rel.roles) {
-        let occRoleName = occurrenceRoleName(roles)
-        let key = "\(usr)\u{1}\(rel.symbol.usr)\u{1}\(roleName)\u{1}\(occRoleName)"
+        let key = RelationDedupKey(
+          fromUSR: usr,
+          toUSR: rel.symbol.usr,
+          role: roleName,
+          occurrenceRole: occurrenceRole
+        )
         if emittedRels.insert(key).inserted {
           writeLine(
             "{\"kind\":\"relation\",\"from_usr\":\(js(usr)),"
@@ -438,7 +452,7 @@ for file in filePaths {
             + "\"to_usr\":\(js(rel.symbol.usr)),"
             + "\"to_usr_name\":\(js(rel.symbol.name)),"
             + "\"role\":\(js(roleName)),"
-            + "\"occurrence_role\":\(js(occRoleName)),"
+            + "\"occurrence_role\":\(js(occurrenceRole)),"
             + "\"file\":\(js(path)),\"line\":\(line),\"column\":\(col)}"
           )
         }
@@ -460,11 +474,11 @@ for (_, slot) in bestSlot {
 }
 
 // ---- File status (stderr, for Python to consume) ----
-if incrementalSince != nil {
-  let status: [String: Any] = ["changed": changedFiles, "all": allFiles]
-  let json = try! JSONSerialization.data(withJSONObject: status, options: [])
-  FileHandle.standardError.write(json)
-  FileHandle.standardError.write("\n".data(using: .utf8)!)
-}
+let statusChangedFiles = incrementalSince != nil ? changedFiles : []
+let status: [String: Any] = ["changed": statusChangedFiles, "all": allFiles]
+let statusJSON = try! JSONSerialization.data(withJSONObject: status, options: [])
+lineWriter.flush()
+FileHandle.standardError.write(statusJSON)
+FileHandle.standardError.write("\n".data(using: .utf8)!)
 
 logProgress("completed emit: symbols=\(bestSlot.count) relations=\(emittedRels.count)")

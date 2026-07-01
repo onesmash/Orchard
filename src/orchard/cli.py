@@ -201,7 +201,11 @@ def cmd_ingest(args: list[str]):
     ap.add_argument("--symbolgraph", default="",
                     help="Path to a SymbolGraph JSON file to ingest alongside IndexStore data")
     ns = ap.parse_args(args)
-    from orchard.ingest.indexstore import read_index_store, _unit_dir_mtime
+    from orchard.ingest.indexstore import (
+        _unit_dir_mtime,
+        list_source_files,
+        read_index_store,
+    )
     from orchard.build.context import BuildContext, make_build_id
     from orchard.normalize.identity import (
         upsert_symbols, upsert_calls, upsert_indexstore_rels,
@@ -358,7 +362,7 @@ def cmd_ingest(args: list[str]):
     # Incremental cleanup: delete stale symbols for changed and deleted files
     # across ALL previously ingested targets.
     deleted_total = 0
-    if file_status:
+    if incremental_since is not None and file_status:
         changed = file_status.get("changed", [])
         all_files = file_status.get("all", [])
         old_files = set(old_state.get("files", []) if old_state else [])
@@ -458,7 +462,7 @@ def cmd_ingest(args: list[str]):
         # Incremental with no changes → skip grep (empty list).
         # Incremental with changes → scan only changed files.
         # Full ingest → scan everything (None).
-        if file_status:
+        if incremental_since is not None and file_status:
             changed_only = file_status.get("changed")  # list or None
             if changed_only is None:
                 changed_only = []  # no changes → skip
@@ -481,7 +485,7 @@ def cmd_ingest(args: list[str]):
         # Incremental: only re-detect processes whose entry points are in
         # changed files.  Full ingest (file_status is falsy): detect all.
         inc_files: list[str] | None = None
-        if file_status:
+        if incremental_since is not None and file_status:
             inc_files = file_status.get("changed")
         procs = detect_processes(conn, ctx.build_id, changed_files=inc_files)
         cross = sum(1 for p in procs if p.process_type == "cross_community")
@@ -495,13 +499,20 @@ def cmd_ingest(args: list[str]):
     print(f"done  {t_done - t0:.0f}s  (p_done={t_done - t_pd:.0f}s ago)", flush=True)
 
     # Persist state for next incremental run.
-    # Full ingest: only save timestamp (no file list — we don't need it).
-    # Incremental: save timestamp + file list from CLI output.
+    # Reuse the main ingest pass's file-status payload when available.
+    # Incremental uses it for cleanup; full ingest uses the same file list
+    # for state persistence without a second CLI scan.
     if file_status and "all" in file_status:
         save_state(project_dir, touch_timestamp(), targets, index_store,
                    files=file_status["all"])
     else:
-        save_state(project_dir, touch_timestamp(), targets, index_store)
+        source_root = source_roots[0] if len(source_roots) == 1 else None
+        try:
+            files = list_source_files(index_store, source_root=source_root)
+        except Exception:
+            files = None
+        save_state(project_dir, touch_timestamp(), targets, index_store,
+                   files=files or None)
     t_saved = time.monotonic()
     print(f"  state: saved ({t_saved - t_done:.1f}s)", flush=True)
     conn.close()

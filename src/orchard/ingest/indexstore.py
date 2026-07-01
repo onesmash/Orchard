@@ -107,6 +107,7 @@ def _run_cli(
     incremental_since: float | None = None,
     list_files: bool = False,
     targets: list[str] | None = None,
+    emit_occurrences: bool = False,
 ):
     """Run the CLI and return ``(stdout_lines, stderr)``."""
     cmd = [_cli_path(), index_store_path]
@@ -122,6 +123,8 @@ def _run_cli(
         cmd += ["--incremental-since", str(int(incremental_since))]
     if list_files:
         cmd += ["--list-files"]
+    if emit_occurrences:
+        cmd += ["--emit-occurrences"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
@@ -208,6 +211,7 @@ def read_index_store(
     source_roots: list[str] | None = None,
     incremental_since: float | None = None,
     targets: list[str] | None = None,
+    emit_occurrences: bool = False,
 ) -> tuple[IndexStoreResult, dict | None]:
     t0 = time.monotonic()
     result = IndexStoreResult()
@@ -217,6 +221,7 @@ def read_index_store(
         source_roots=source_roots,
         incremental_since=incremental_since,
         targets=targets,
+        emit_occurrences=emit_occurrences,
     )
     for raw in lines:
         line = raw.strip()
@@ -225,13 +230,14 @@ def read_index_store(
         try:
             obj = json.loads(line)
             if obj["kind"] == "occurrence":
-                result.occurrences.append(OccurrenceRecord(
-                    usr=obj["usr"],
-                    file_path=obj["file"],
-                    line=obj["line"],
-                    col=obj["column"],
-                    role=obj["role"],
-                ))
+                if emit_occurrences:
+                    result.occurrences.append(OccurrenceRecord(
+                        usr=obj["usr"],
+                        file_path=obj["file"],
+                        line=obj["line"],
+                        col=obj["column"],
+                        role=obj["role"],
+                    ))
             elif obj["kind"] == "relation":
                 result.relations.append(RelationRecord(
                     from_usr=obj["from_usr"],
@@ -257,7 +263,7 @@ def read_index_store(
             snippet = line[:80] + ("..." if len(line) > 80 else "")
             result.warnings.append(f"invalid JSONL line ({exc}): {snippet}")
     result.elapsed_s = round(time.monotonic() - t0, 3)
-    file_status = _parse_file_status(stderr) if incremental_since is not None else None
+    file_status = _parse_file_status(stderr)
     return result, file_status
 
 
