@@ -1,6 +1,6 @@
 ---
 name: orchard-cli
-description: "Use when the user needs to run Orchard CLI commands directly in a terminal: install Orchard, run `orchard setup`, build or refresh a project graph with `orchard ingest`, inspect DB coverage with `orchard stats` or `orchard audit`, batch graph queries with `orchard pipe`, or do CLI-first symbol lookup / rename workflows. Make sure to use this skill whenever the user asks for the exact Orchard command to run, says the MCP server or graph is stale/missing, wants to configure Orchard on a machine, or needs a terminal-only workflow instead of MCP tools."
+description: "Use when the user needs to run Orchard CLI commands directly in a terminal: install Orchard, run `orchard setup`, build or refresh a project graph with `orchard ingest`, inspect DB coverage with `orchard stats` or `orchard audit`, batch graph queries with `orchard pipe`, inspect notification or UIKit target-action wiring, or do CLI-first symbol lookup / rename workflows. Make sure to use this skill whenever the user asks for the exact Orchard command to run, says the MCP server or graph is stale/missing, wants to configure Orchard on a machine, or needs a terminal-only workflow instead of MCP tools."
 ---
 
 # Orchard CLI Commands
@@ -163,6 +163,19 @@ orchard notification-graph -f json
 Use this when the user is tracing NSNotificationCenter behavior or wants a
 notification-centric view instead of a plain caller/callee list.
 
+### UIKit target-action wiring
+
+```bash
+orchard target-action-graph
+orchard target-action-graph -a onToggle:
+orchard target-action-graph -c MyViewController
+orchard target-action-graph -f json
+```
+
+Use this when the user is tracing `addTarget:action:forControlEvents:` style
+UIKit wiring or wants a binding-centric view instead of relying on static
+callers alone.
+
 ## Pipe Mode
 
 When the user needs several related queries in one shell command, prefer
@@ -259,6 +272,18 @@ orchard symbol --usr "<USR>"
 orchard find_callers --usr "<USR>"
 ```
 
+### "Why does this action method have no caller?"
+
+```bash
+orchard search --name "onToggle:"
+orchard find_callers --usr "<USR>"
+orchard target-action-graph -a onToggle:
+```
+
+Use this flow when a UIKit callback is triggered by runtime binding rather than
+an ordinary static call edge. `find_callers` may show no direct caller while
+`target-action-graph` reveals the concrete binding records.
+
 ## Troubleshooting
 
 - **`orchard: command not found`**: install Orchard with `uv tool install ...`
@@ -269,6 +294,8 @@ orchard find_callers --usr "<USR>"
 - **Auto-detection picks the wrong target / DerivedData**: pass `--target` and
   `--index-store` explicitly.
 - **Graph still looks stale after ingest**: rerun with `--full`.
+- **Action callback has no static caller**: inspect
+  `orchard target-action-graph` before concluding it is unused.
 - **Need several CLI queries in one go**: use `orchard pipe` instead of many
   separate shell invocations.
 

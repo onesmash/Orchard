@@ -1,6 +1,6 @@
 ---
 name: orchard-exploring
-description: "Use when the user asks how code works, wants to understand architecture, trace caller/callee relationships, inspect Objective-C / Swift graph structure, follow notification or delegate wiring, resolve a single stack frame into code context, or explore unfamiliar Xcode-indexed code with Orchard before grepping. Examples: \"How does X work?\", \"Who calls this method?\", \"Show me the login flow\", \"I only have this stack frame\", \"Where is this notification observed?\""
+description: "Use when the user asks how code works, wants to understand architecture, trace caller/callee relationships, inspect Objective-C / Swift graph structure, follow notification, delegate, or UIKit target-action wiring, resolve a single stack frame into code context, or explore unfamiliar Xcode-indexed code with Orchard before grepping. Examples: \"How does X work?\", \"Who calls this method?\", \"Show me the login flow\", \"I only have this stack frame\", \"Where is this notification observed?\""
 ---
 
 # Exploring Codebases with Orchard
@@ -105,6 +105,8 @@ Pay attention to:
 - `execution_boundary`: notification callback, worker dispatch, lifecycle path
 - `semantic_role`: ObjC meaning such as `notification_observer` or `delegate_setter`
 - `notification_bridges`: who registered -> selector -> event key -> callback
+- `target_action_bridges`: who bound target -> action -> control/event -> callback
+- `dynamic_binding_hints`: runtime binding evidence when no static caller exists
 - `source_scope`: whether the source file is outside the current workspace root
 
 These fields often explain behavior better than the raw caller/callee list.
@@ -136,6 +138,14 @@ Use `semantic_role` and `notification_bridges` to show the full wiring:
 
 `registrar -> selector -> notification/event -> callback`
 
+### "Why does this UIKit action look uncalled?"
+
+Prefer `orchard_find_callers` first, but do not stop at an empty static caller
+set. For UIKit callbacks, inspect `dynamic_binding_hints` and use
+`orchard_target_action_graph` to show the full wiring:
+
+`binder -> target/action registration -> control/event -> callback`
+
 ### "I only have this stack frame"
 
 1. use `orchard_lookup_frame`
@@ -155,6 +165,7 @@ orchard find_callers --usr "<USR>"
 orchard find_callees --usr "<USR>"
 orchard find_references --usr "<USR>"
 orchard hierarchy --usr "<USR>"
+orchard target-action-graph -a "onToggle:"
 ```
 
 If you need 3 or more related queries, prefer pipe mode:
@@ -173,8 +184,9 @@ When answering the user:
 2. Show the important entry points or callers.
 3. Show the important dependencies or callees.
 4. Mention relevant boundaries: notifications, delegates, async hops, lifecycle.
-5. Cite concrete files for implementation details.
-6. Call out uncertainty when Orchard freshness/coverage is limited.
+5. When static callers are absent, say whether Orchard found dynamic binding hints.
+6. Cite concrete files for implementation details.
+7. Call out uncertainty when Orchard freshness/coverage is limited.
 
 Do not flood the user with every edge. Curate the graph into a readable mental
 model.
@@ -190,6 +202,19 @@ model.
    → callback file path and owner
 4. orchard_find_callers("<observer callback usr>")
    → see how the callback joins the rest of the flow
+5. Read the surfaced source files
+```
+
+## Example: "Why can't find_callers see onToggle:?"
+
+```text
+1. orchard_search("onToggle:")
+   → resolve the action selector symbol
+2. orchard_find_callers("<action usr>")
+   → static callers may be empty
+3. inspect dynamic_binding_hints on the caller/reference-side results
+4. orchard_target_action_graph(action_name="onToggle:")
+   → binder, target, control/event, callback
 5. Read the surfaced source files
 ```
 

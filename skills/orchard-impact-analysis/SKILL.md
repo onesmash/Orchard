@@ -128,6 +128,11 @@ Use `orchard_find_callers` after impact when:
 - you need to inspect the local calling shape
 - you want to understand callback or lifecycle boundaries around a dependent
 
+For UIKit target-action callbacks, remember that static callers may be empty
+even when the method is live. In that case, inspect `dynamic_binding_hints`
+and use `orchard_target_action_graph` before concluding the blast radius is
+small.
+
 ### orchard_find_references
 
 Use `orchard_find_references` when the target may participate in ObjC ↔ Swift
@@ -135,6 +140,18 @@ bridges or when you want one compact incoming/outgoing view around a dependent.
 
 This is especially useful for verifying whether a risky symbol sits on a
 cross-language or framework boundary.
+
+### orchard_target_action_graph
+
+Use `orchard_target_action_graph` when the target symbol is a UIKit action
+selector or when impact/caller output suggests runtime binding instead of a
+normal static call edge.
+
+This is especially useful for recovering real binding records:
+
+- which object installed the binding
+- which control/event pair triggers the callback
+- which target/action selector is invoked at runtime
 
 ## Orchard-Specific Risk Signals
 
@@ -162,6 +179,19 @@ Why this matters:
 When bridge pressure is present, use `orchard_find_references` to inspect the
 bridge-adjacent edges more closely.
 
+### Dynamic bindings matter too
+
+Some Apple-framework entry points are not modeled as ordinary static callers.
+UIKit target-action is the common case: the callback may have low apparent
+fan-out in `find_callers` while still being user-reachable through runtime
+binding.
+
+When this signal appears:
+
+- do not treat "0 static callers" as proof of safety
+- inspect `dynamic_binding_hints`
+- use `orchard_target_action_graph` to recover the binding-side surface
+
 ### Primary surface and d2 clusters
 
 `primary_surface` and `d2_clusters` help translate raw graph reachability into
@@ -181,7 +211,8 @@ exist.
 2. run `orchard_impact`
 3. review `summary`
 4. enumerate d1 dependents
-5. call out d2 clusters and likely tests
+5. if it is a callback-style API, check for dynamic binding evidence
+6. call out d2 clusters and likely tests
 
 ### "Can I rename this safely?"
 
@@ -202,7 +233,8 @@ exist.
 1. run impact on the changed symbol
 2. read `likely_tests`
 3. inspect `primary_surface` and `d2_clusters`
-4. turn those into an ordered test recommendation
+4. for callback selectors, add binding-side entry points from target-action data
+5. turn those into an ordered test recommendation
 
 ## How to Report Results
 
@@ -211,9 +243,10 @@ When answering the user:
 1. start with the summary:
    `Risk is medium; 4 direct callers; primary surface is X; likely tests are Y`
 2. list the d1 dependents that must be updated or reviewed
-3. mention d2/d3 as testing scope, not guaranteed breakage
-4. call out stale freshness or bridge-related caveats
-5. end with a concrete recommendation:
+3. mention dynamic binding caveats when static callers undercount runtime reachability
+4. mention d2/d3 as testing scope, not guaranteed breakage
+5. call out stale freshness or bridge-related caveats
+6. end with a concrete recommendation:
    safe to proceed, proceed carefully, or refresh/index first
 
 Do not dump raw graph JSON without translating it into edit risk.
