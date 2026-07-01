@@ -324,8 +324,8 @@ This project is indexed by orchard as **{project_name}**. Use Orchard MCP tools 
 1. `orchard_search({{name: "<symbol>"}})` — guided symbol lookup with `status`, `diag`, `candidates`, and `next`
 2. If the user has a single stack frame, use `orchard_lookup_frame({{frame: "<stack line>"}})` to resolve owner/method candidates and graph context
 3. If the user pasted a full crashlog or crash thread block, extract a concrete frame, symbol name, qualified name, or USR outside Orchard first. full crashlogs are handled outside Orchard.
-4. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred), `call_style`, optional `execution_boundary`, and `source_scope`
-5. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges (who registered → selector → event key → callback) by default
+4. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred), `call_style`, optional `execution_boundary`, and `source_scope`; if `data` is empty, inspect `dynamic_binding_hints` before concluding the callback is unreachable
+5. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges / target_action_bridges when Orchard can recover the wiring
 6. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups plus compact `summary`
 
 ## Frame Lookup Boundary
@@ -341,7 +341,7 @@ This project is indexed by orchard as **{project_name}**. Use Orchard MCP tools 
 
 - `freshness` says whether the snapshot is trustworthy; `coverage` says whether the graph likely covers the searched scope.
 - Prefer Orchard `next` actions over ad-hoc grep. If `next` recommends refresh, run `orchard ingest --project-dir .`.
-- If `source_scope` is `outside_workspace_root`, the symbol may live in a sibling checkout even when grep under cwd fails.
+- If `source_scope` is `outside_workspace_root`, the symbol may live in a sibling checkout even when grep under cwd fails. For callback-style methods with no static callers, use `orchard_notification_graph` for notification wiring and `orchard_target_action_graph` for UIKit action wiring.
 
 ## When Refactoring
 
@@ -371,6 +371,7 @@ This project is indexed by orchard as **{project_name}**. Use Orchard MCP tools 
 | `symbol` | Symbol metadata: name, kind, language, module, file_path | `orchard_symbol({{usr: "<USR>"}})` |
 | `hierarchy` | Type hierarchy: superclasses, protocols, subclasses | `orchard_hierarchy({{usr: "<USR>"}})` |
 | `notification_graph` | Notification wiring: who registers → selector → event → callback | `orchard_notification_graph({{group_by: "observer"}})` |
+| `target_action_graph` | UIKit target-action wiring: who registers → selector → control event → callback | `orchard_target_action_graph({{group_by: "callback"}})` |
 
 ## Key Labels
 
@@ -388,9 +389,7 @@ This project is indexed by orchard as **{project_name}**. Use Orchard MCP tools 
 | d2 | LIKELY AFFECTED — callers of callers | Should test |
 | d3+ | MAY NEED TESTING — transitive dependents | Test if critical path |
 
-Impact output includes `data.summary` with `risk`, `direct_callers`,
-`primary_surface`, `d2_clusters`, and `likely_tests`. Use it for the first
-human-facing summary, then cite `by_depth` for the detailed blast radius.
+Impact output includes `data.summary` with `risk`, `direct_callers`, `primary_surface`, `d2_clusters`, and `likely_tests`. Use it for the first human-facing summary, then cite `by_depth` for the detailed blast radius.
 
 After committing code changes, re-run `orchard ingest --project-dir .` to update the graph.
 

@@ -49,6 +49,20 @@ class TestParsePostNotificationLine:
         assert result == "kSomeNotification"
 
 
+class TestParseTargetActionLine:
+    def test_extracts_selector_and_control_event(self):
+        from orchard.derive.notification_graph import parse_target_action_line
+        line = '[self.toggle addTarget:self action:@selector(onToggle:) forControlEvents:UIControlEventValueChanged];'
+        result = parse_target_action_line(line)
+        assert result == ("onToggle:", "UIControlEventValueChanged")
+
+    def test_returns_none_for_missing_event(self):
+        from orchard.derive.notification_graph import parse_target_action_line
+        line = '[self.toggle addTarget:self action:@selector(onToggle:)];'
+        result = parse_target_action_line(line)
+        assert result == ("onToggle:", None)
+
+
 # ── RED: build_notification_graph with source files ──────────────────
 
 @pytest.fixture
@@ -206,6 +220,51 @@ def test_build_notification_graph_empty_without_observers(tmp_path):
     assert graph["target_actions"] == []
 
 
+def test_build_notification_graph_extracts_target_action_control_event(tmp_path):
+    db_path = str(tmp_path / "target_action.db")
+    conn = get_connection(db_path)
+    init_schema(conn)
+
+    source_file = tmp_path / "ToggleCell.mm"
+    source_file.write_text("""\
+@implementation ToggleCell
+- (void)setupToggle {
+    [self.toggle addTarget:self action:@selector(onToggle:) forControlEvents:UIControlEventValueChanged];
+}
+- (void)onToggle:(id)sender {
+}
+@end
+""")
+
+    for sym_data in [
+        ("s:setupToggle", "setupToggle", "objc", "method", str(source_file), "MyModule"),
+        ("s:onToggle", "onToggle:", "objc", "method", str(source_file), "MyModule"),
+        ("s:addTarget", "addTarget:action:forControlEvents:", "objc", "method",
+         "/System/Library/Frameworks/UIKit.framework/Headers/UIControl.h", "UIKit"),
+    ]:
+        conn.execute(
+            f"CREATE (:Symbol {{id: '{sym_data[0]}', usr: '{sym_data[0]}', "
+            f"precise_id: '', name: '{sym_data[1]}', language: '{sym_data[2]}', "
+            f"kind: '{sym_data[3]}', module: '{sym_data[5]}', "
+            f"file_path: '{sym_data[4]}', signature: '', container_usr: '', "
+            f"access_level: 'internal', origin: 'derived', is_generated: false}})"
+        )
+
+    conn.execute(
+        "MATCH (c:Symbol {id:'s:setupToggle'}), (t:Symbol {id:'s:addTarget'}) "
+        "CREATE (c)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+        "build_id:'b1', reason:'source_direct'}]->(t)"
+    )
+
+    graph = build_notification_graph(conn, source_root=str(tmp_path))
+    assert len(graph["target_actions"]) == 1
+    entry = graph["target_actions"][0]
+    assert entry["selector"] == "onToggle:"
+    assert entry["control_event"] == "UIControlEventValueChanged"
+    assert entry["callback"]["name"] == "onToggle:"
+    conn.close()
+
+
 # ── RED: persist_notification_graph ───────────────────────────────────
 
 def test_persist_creates_notification_nodes_and_edges(conn_with_notifications):
@@ -255,6 +314,48 @@ def test_persist_is_idempotent(conn_with_notifications):
         "MATCH (n:Notification {name: 'kSomethingHappened'}) RETURN count(n)"
     ).get_all()
     assert n_rows[0][0] == 1  # still only one
+
+
+def test_persist_notification_graph_replaces_edges_for_changed_files(conn_with_notifications):
+    conn, tmp_path = conn_with_notifications
+    persist_notification_graph(conn, source_root=str(tmp_path), build_id="seed")
+
+    conn.execute(
+        "CREATE (:Symbol {id: 's:stalePoster', usr: 's:stalePoster', precise_id: '', "
+        "name: 'stalePoster', language: 'objc', kind: 'method', module: 'MyModule', "
+        f"file_path: '{str(tmp_path / 'Poster.m')}', signature: '', container_usr: '', "
+        "access_level: 'internal', origin: 'derived', is_generated: false})"
+    )
+    conn.execute(
+        "MATCH (p:Symbol {id:'s:stalePoster'}), (n:Notification {name:'kSomethingHappened'}) "
+        "CREATE (p)-[:Posts {confidence:0.7, provenance:'derive/notification', build_id:'old-build'}]->(n)"
+    )
+    conn.execute(
+        "MATCH (n:Notification {name:'kSomethingHappened'}), (cb:Symbol {id:'s:observer_callback'}) "
+        "CREATE (n)-[:Observes {selector:'handleSomething:', "
+        "observer_usr:'s:staleObserver', observer_name:'staleObserver', "
+        f"observer_file_path:'{str(tmp_path / 'Observer.m')}', "
+        "confidence:0.7, provenance:'derive/notification', build_id:'old-build'}]->(cb)"
+    )
+
+    persist_notification_graph(
+        conn,
+        source_root=str(tmp_path),
+        build_id="b1",
+        changed_files=[str(tmp_path / "Observer.m"), str(tmp_path / "Poster.m")],
+    )
+
+    p_rows = conn.execute(
+        "MATCH (s:Symbol)-[r:Posts]->(n:Notification {name:'kSomethingHappened'}) "
+        "RETURN s.name, r.build_id ORDER BY s.name"
+    ).get_all()
+    assert p_rows == [["trigger", "b1"]]
+
+    o_rows = conn.execute(
+        "MATCH (n:Notification {name:'kSomethingHappened'})-[r:Observes]->(cb:Symbol {name:'handleSomething:'}) "
+        "RETURN r.observer_name, r.build_id ORDER BY r.observer_name"
+    ).get_all()
+    assert o_rows == [["setupNotifications", "b1"]]
 
 
 def test_build_notification_graph_batches_callback_symbol_lookup(conn_with_notifications):
@@ -312,3 +413,179 @@ def test_build_notification_graph_batches_callback_symbol_lookup(conn_with_notif
     callbacks = {obs["callback"]["name"] for obs in observers if obs["callback"]}
     assert callbacks == {"handleSomething:", "handleOtherThing:"}
     assert callback_queries["count"] == 1
+
+
+def test_build_notification_graph_scopes_notification_posts_to_matching_method(tmp_path):
+    db_path = str(tmp_path / "same_file_posts.db")
+    conn = get_connection(db_path)
+    init_schema(conn)
+
+    source_file = tmp_path / "PosterCluster.mm"
+    source_file.write_text("""\
+@implementation PosterCluster
+- (void)refreshEnabledCache {
+    [self doSomethingElse];
+}
+- (void)cleanup3P {
+    [self doSomethingElse];
+}
+- (void)OnMyNotesPageRefreshed {
+    [[NSNotificationCenter defaultCenter] postNotificationName:kNoti_MyNotes_PageRefreshed object:nil];
+}
+@end
+""")
+
+    for sym_data in [
+        ("s:refreshEnabledCache", "refreshEnabledCache", "objc", "method", str(source_file), "MyModule"),
+        ("s:cleanup3P", "cleanup3P", "objc", "method", str(source_file), "MyModule"),
+        ("s:OnMyNotesPageRefreshed", "OnMyNotesPageRefreshed", "objc", "method", str(source_file), "MyModule"),
+        ("s:postNotification", "postNotificationName:object:", "objc", "method",
+         "/System/Library/Frameworks/Foundation.framework/Headers/NSNotificationCenter.h", "Foundation"),
+    ]:
+        conn.execute(
+            f"CREATE (:Symbol {{id: '{sym_data[0]}', usr: '{sym_data[0]}', "
+            f"precise_id: '', name: '{sym_data[1]}', language: '{sym_data[2]}', "
+            f"kind: '{sym_data[3]}', module: '{sym_data[5]}', "
+            f"file_path: '{sym_data[4]}', signature: '', container_usr: '', "
+            f"access_level: 'internal', origin: 'derived', is_generated: false}})"
+        )
+
+    for caller_id in [
+        "s:refreshEnabledCache",
+        "s:cleanup3P",
+        "s:OnMyNotesPageRefreshed",
+    ]:
+        conn.execute(
+            f"MATCH (c:Symbol {{id:'{caller_id}'}}), (t:Symbol {{id:'s:postNotification'}}) "
+            "CREATE (c)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+            "build_id:'b1', reason:'source_direct'}]->(t)"
+        )
+
+    graph = build_notification_graph(conn, source_root=str(tmp_path))
+
+    posters = graph["notifications"]["kNoti_MyNotes_PageRefreshed"]["posters"]
+    poster_names = [entry["name"] for entry in posters]
+    assert poster_names == ["OnMyNotesPageRefreshed"]
+    conn.close()
+
+
+def test_build_notification_graph_excludes_remove_observer_bindings(tmp_path):
+    db_path = str(tmp_path / "remove_observer.db")
+    conn = get_connection(db_path)
+    init_schema(conn)
+
+    source_file = tmp_path / "ObserverLifecycle.mm"
+    source_file.write_text("""\
+@implementation ObserverLifecycle
+- (void)viewDidLoad {
+    [[NSNotificationCenter defaultCenter] addObserver:self
+        selector:@selector(onRefresh:)
+        name:kRefresh object:nil];
+}
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+        name:kRefresh object:nil];
+}
+- (void)onRefresh:(NSNotification *)note {
+}
+@end
+""")
+
+    for sym_data in [
+        ("s:viewDidLoad", "viewDidLoad", "objc", "method", str(source_file), "MyModule"),
+        ("s:dealloc", "dealloc", "objc", "method", str(source_file), "MyModule"),
+        ("s:onRefresh", "onRefresh:", "objc", "method", str(source_file), "MyModule"),
+        ("s:addObserver", "addObserver:selector:name:object:", "objc", "method",
+         "/System/Library/Frameworks/Foundation.framework/Headers/NSNotificationCenter.h", "Foundation"),
+        ("s:removeObserver", "removeObserver:name:object:", "objc", "method",
+         "/System/Library/Frameworks/Foundation.framework/Headers/NSNotificationCenter.h", "Foundation"),
+    ]:
+        conn.execute(
+            f"CREATE (:Symbol {{id: '{sym_data[0]}', usr: '{sym_data[0]}', "
+            f"precise_id: '', name: '{sym_data[1]}', language: '{sym_data[2]}', "
+            f"kind: '{sym_data[3]}', module: '{sym_data[5]}', "
+            f"file_path: '{sym_data[4]}', signature: '', container_usr: '', "
+            f"access_level: 'internal', origin: 'derived', is_generated: false}})"
+        )
+
+    conn.execute(
+        "MATCH (c:Symbol {id:'s:viewDidLoad'}), (t:Symbol {id:'s:addObserver'}) "
+        "CREATE (c)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+        "build_id:'b1', reason:'source_direct'}]->(t)"
+    )
+    conn.execute(
+        "MATCH (c:Symbol {id:'s:dealloc'}), (t:Symbol {id:'s:removeObserver'}) "
+        "CREATE (c)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+        "build_id:'b1', reason:'source_direct'}]->(t)"
+    )
+
+    graph = build_notification_graph(conn, source_root=str(tmp_path))
+
+    observers = graph["notifications"]["kRefresh"]["observers"]
+    observer_names = [entry["name"] for entry in observers]
+    assert observer_names == ["viewDidLoad"]
+    conn.close()
+
+
+def test_build_notification_graph_scopes_posts_with_objc_declarations_and_cpp_methods(tmp_path):
+    db_path = str(tmp_path / "objc_cpp_mixed.db")
+    conn = get_connection(db_path)
+    init_schema(conn)
+
+    source_file = tmp_path / "MixedHelper.mm"
+    source_file.write_text("""\
+@interface MixedHelper : NSObject
+- (void)foo;
++ (void)load;
+@end
+
+class MixedSink {
+public:
+    void OnOfflineModeSettingChanged(bool enabled) override {
+        (void)enabled;
+    }
+
+    void OnMyNotesPageRefreshed() override {
+        [[NSNotificationCenter defaultCenter] postNotificationName:kNoti_PageRefreshed object:nil];
+    }
+};
+
+@implementation MixedHelper
++ (void)load {
+    [[NSNotificationCenter defaultCenter] postNotificationName:kNoti_Load object:nil];
+}
+@end
+""")
+
+    for sym_data in [
+        ("s:load", "load", "objc", "method", str(source_file), "MyModule"),
+        ("s:offline", "OnOfflineModeSettingChanged", "c++", "method", str(source_file), "MyModule"),
+        ("s:refresh", "OnMyNotesPageRefreshed", "c++", "method", str(source_file), "MyModule"),
+        ("s:postNotification", "postNotificationName:object:", "objc", "method",
+         "/System/Library/Frameworks/Foundation.framework/Headers/NSNotificationCenter.h", "Foundation"),
+    ]:
+        conn.execute(
+            f"CREATE (:Symbol {{id: '{sym_data[0]}', usr: '{sym_data[0]}', "
+            f"precise_id: '', name: '{sym_data[1]}', language: '{sym_data[2]}', "
+            f"kind: '{sym_data[3]}', module: '{sym_data[5]}', "
+            f"file_path: '{sym_data[4]}', signature: '', container_usr: '', "
+            f"access_level: 'internal', origin: 'derived', is_generated: false}})"
+        )
+
+    for caller_id in ["s:load", "s:offline", "s:refresh"]:
+        conn.execute(
+            f"MATCH (c:Symbol {{id:'{caller_id}'}}), (t:Symbol {{id:'s:postNotification'}}) "
+            "CREATE (c)-[:Calls {source:'derived', confidence:1.0, provenance:'indexstore', "
+            "build_id:'b1', reason:'source_direct'}]->(t)"
+        )
+
+    graph = build_notification_graph(conn, source_root=str(tmp_path))
+
+    assert [entry["name"] for entry in graph["notifications"]["kNoti_PageRefreshed"]["posters"]] == [
+        "OnMyNotesPageRefreshed"
+    ]
+    assert [entry["name"] for entry in graph["notifications"]["kNoti_Load"]["posters"]] == [
+        "load"
+    ]
+    assert "unknown" not in graph["notifications"]
+    conn.close()

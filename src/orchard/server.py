@@ -208,6 +208,19 @@ TOOLS = [
         },
     ),
     Tool(
+        name="orchard_target_action_graph",
+        description="Query the UIKit target-action graph. Returns bindings grouped by callback (default) or registrar, including selector, source file, line, and raw control event token.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "selector": {"type": "string", "description": "Filter by selector name such as onToggle:."},
+                "callback_usr": {"type": "string", "description": "Filter by callback USR."},
+                "file": {"type": "string", "description": "Filter by registrar file path substring."},
+                "group_by": {"type": "string", "description": "Grouping mode: 'callback' (default) or 'registrar'."},
+            },
+        },
+    ),
+    Tool(
         name="orchard_lookup_frame",
         description="Resolve a single frame-like symbol text into indexed graph context. Does not parse full crashlogs or crashed-thread blocks.",
         inputSchema={
@@ -501,6 +514,25 @@ def _do_notification_graph(args: dict) -> str:
     return json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=str)
 
 
+def _do_target_action_graph(args: dict) -> str:
+    """Query UIKit target-action graph."""
+    import importlib
+    mod = importlib.import_module("orchard.handlers.target_action_graph")
+    cls = getattr(mod, "TargetActionGraphRequest")
+    fn = getattr(mod, "get_target_action_graph")
+    conn = _get_conn()
+    build_id = args.get("build_id") or _default_build_id_safe(conn, "")
+    req = cls(
+        selector=args.get("selector", ""),
+        callback_usr=args.get("callback_usr", ""),
+        file=args.get("file", ""),
+        group_by=args.get("group_by", "callback"),
+        build_id=build_id,
+    )
+    result = fn(conn, req)
+    return json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=str)
+
+
 HANDLERS: dict[str, callable] = {
     "orchard_search": _do_search,
     "orchard_lookup_frame": _do_lookup_frame,
@@ -511,6 +543,7 @@ HANDLERS: dict[str, callable] = {
     "orchard_symbol": lambda a: _do_handler("symbol_context", "get_symbol_context", "SymbolContextRequest", a),
     "orchard_hierarchy": lambda a: _do_handler("type_hierarchy", "get_type_hierarchy", "TypeHierarchyRequest", a),
     "orchard_notification_graph": _do_notification_graph,
+    "orchard_target_action_graph": _do_target_action_graph,
 }
 
 

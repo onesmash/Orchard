@@ -1319,6 +1319,72 @@ def cmd_notification_graph(args: list[str]):
             print(f"  {ta['file_path']}{loc}  {ta['name']}{sel}{cb}")
 
 
+def cmd_target_action_graph(args: list[str]):
+    """orchard target-action-graph [--selector <sel>] [--format table|json]"""
+    import argparse, json as _json
+    from orchard.handlers.target_action_graph import (
+        TargetActionGraphRequest,
+        get_target_action_graph,
+    )
+
+    p = argparse.ArgumentParser(
+        prog="orchard target-action-graph",
+        description="Query UIKit target-action bindings",
+    )
+    p.add_argument("--db", default="", help="Path to graph.db (auto-discovered)")
+    p.add_argument("--selector", default="", help="Filter by selector name")
+    p.add_argument("--callback-usr", default="", help="Filter by callback USR")
+    p.add_argument("--file", default="", help="Filter by registrar file path substring")
+    p.add_argument("--group-by", choices=["callback", "registrar"], default="callback",
+                   help="Output grouping (default: callback)")
+    p.add_argument("--format", "-f", choices=["table", "json"], default="table",
+                   help="Output format (default: table)")
+    opts = p.parse_args(args)
+
+    conn = _conn(opts.db, read_only=True)
+    bid = _default_build_id(conn, "")
+    req = TargetActionGraphRequest(
+        selector=opts.selector,
+        callback_usr=opts.callback_usr,
+        file=opts.file,
+        group_by=opts.group_by,
+        build_id=bid,
+    )
+    resp = get_target_action_graph(conn, req)
+    conn.close()
+
+    if opts.format == "json":
+        print(_json.dumps(resp.__dict__, indent=2))
+        return
+
+    if opts.group_by == "registrar":
+        registrars = resp.data.get("registrars", {})
+        if not registrars:
+            print("(no target-action bindings found)")
+            return
+        for data in registrars.values():
+            reg = data["registrar"]
+            print(f"Registrar: {reg['name']}")
+            for binding in data["bindings"]:
+                event = binding.get("control_event") or "unknown"
+                loc = f":{binding['line']}" if binding.get("line") else ""
+                print(f"  {binding['file_path']}{loc}  {binding['selector']}  {event}")
+        return
+
+    callbacks = resp.data.get("callbacks", {})
+    if not callbacks:
+        print("(no target-action bindings found)")
+        return
+    for data in callbacks.values():
+        callback = data["callback"]
+        print(f"Callback: {callback['name']}")
+        for binding in data["bindings"]:
+            event = binding.get("control_event") or "unknown"
+            loc = f":{binding['line']}" if binding.get("line") else ""
+            print(f"  {binding['name']}")
+            print(f"    {binding['file_path']}{loc}  {event}")
+
+
 COMMANDS: dict[str, tuple] = {
     "search":        (cmd_search,        "Find symbols by name (substring or regex)"),
     "find_callers":  (cmd_find_callers,  "List all callers of a symbol"),
@@ -1335,6 +1401,7 @@ COMMANDS: dict[str, tuple] = {
     "setup":         (cmd_setup,         "Install MCP config + skill + download model"),
     "rename":             (cmd_rename,             "USR-precise symbol rename with dry-run preview"),
     "notification-graph": (cmd_notification_graph, "NSNotificationCenter publisher-observer graph"),
+    "target-action-graph": (cmd_target_action_graph, "UIKit target-action binding graph"),
 }
 
 

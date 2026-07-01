@@ -138,6 +138,9 @@ Use `semantic_role` and `notification_bridges` to show the full wiring:
 
 `registrar -> selector -> notification/event -> callback`
 
+If `orchard_find_callers` on the callback is empty, inspect
+`dynamic_binding_hints` before concluding the callback is unreachable.
+
 ### "Why does this UIKit action look uncalled?"
 
 Prefer `orchard_find_callers` first, but do not stop at an empty static caller
@@ -145,6 +148,14 @@ set. For UIKit callbacks, inspect `dynamic_binding_hints` and use
 `orchard_target_action_graph` to show the full wiring:
 
 `binder -> target/action registration -> control/event -> callback`
+
+### "Why does this notification callback look uncalled?"
+
+Prefer `orchard_find_callers` first, but do not stop at an empty static caller
+set. For notification callbacks, inspect `dynamic_binding_hints` and use
+`orchard_notification_graph` to show the full wiring:
+
+`poster -> notification -> observer registration -> callback`
 
 ### "I only have this stack frame"
 
@@ -165,6 +176,7 @@ orchard find_callers --usr "<USR>"
 orchard find_callees --usr "<USR>"
 orchard find_references --usr "<USR>"
 orchard hierarchy --usr "<USR>"
+orchard notification-graph -n "kNoti_LogoutForUI"
 orchard target-action-graph -a "onToggle:"
 ```
 
@@ -215,6 +227,19 @@ model.
 3. inspect dynamic_binding_hints on the caller/reference-side results
 4. orchard_target_action_graph(action_name="onToggle:")
    → binder, target, control/event, callback
+5. Read the surfaced source files
+```
+
+## Example: "Why can't find_callers see onMyNotesPageRefreshed:?"
+
+```text
+1. orchard_search("onMyNotesPageRefreshed:")
+   → resolve the notification callback symbol
+2. orchard_find_callers("<callback usr>")
+   → static callers may be empty
+3. inspect dynamic_binding_hints on the caller results
+4. orchard_notification_graph(notification_name="kNoti_MyNotes_PageRefreshed")
+   → posters, observer registration, callback
 5. Read the surfaced source files
 ```
 

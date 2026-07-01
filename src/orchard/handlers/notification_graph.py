@@ -31,7 +31,7 @@ def get_notification_graph(conn, req: NotificationGraphRequest) -> BaseToolRespo
     Optionally filter by *notification_name* (substring match).
     With *group_by = "observer"*, returns the graph pivoted by observer.
     """
-    graph = _query_persisted_graph(conn, req.notification_name)
+    graph = _query_persisted_graph(conn, req.notification_name, req.build_id or "")
 
     _, freshness_status = freshness_for(conn, req.build_id or "", {})
 

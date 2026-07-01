@@ -63,7 +63,7 @@ root-cause hypotheses.
 | One crash frame | `orchard_lookup_frame` → references/callers on chosen method |
 | Missing callback | `orchard_find_callers` + `execution_boundary` |
 | Wrong notification behavior | `orchard_find_callees` / `orchard_notification_graph` |
-| Delegate or target-action confusion | `semantic_role` in callees/references |
+| Delegate or target-action confusion | `semantic_role`, `target_action_bridges`, `orchard_target_action_graph` |
 | Search miss or stale results | inspect `freshness`, `coverage`, `diag`, `next` before grep |
 | Suspected regression before editing | `orchard_impact` to see who depends on the suspect |
 
@@ -149,6 +149,12 @@ This helps answer questions like:
 - is it setting a delegate or data source?
 - is this actually an Apple framework callback?
 - what callback is the notification observer wired to?
+- if this is a UIKit action method, where was it bound and with which control event?
+
+When `find_callers` returns no static callers for a callback-style method,
+check `dynamic_binding_hints` first. For notification callbacks, follow up with
+`orchard_notification_graph`; for UIKit action methods, use
+`orchard_target_action_graph` for full binding details.
 
 ### references — "Show me both sides"
 
@@ -203,17 +209,19 @@ framework callback path, or lifecycle edge before making hypotheses.
 ### "Why didn't the notification trigger the expected code?"
 
 1. search for the notification name or known observer callback
-2. `orchard_find_callees` on the registrar if known
-3. inspect `notification_bridges`
-4. use `orchard_notification_graph` when a notification-centric view is clearer
-5. read the observer and callback implementations
+2. if `find_callers` on the callback is empty, inspect `dynamic_binding_hints`
+3. `orchard_find_callees` on the registrar if known
+4. inspect `notification_bridges`
+5. use `orchard_notification_graph` when a notification-centric view is clearer
+6. read the observer and callback implementations
 
 ### "This async callback seems to happen from nowhere"
 
 1. search the callback symbol
 2. inspect callers
-3. inspect `call_style` and `execution_boundary`
-4. check whether the path enters from SDK callback / main-thread / worker-thread
+3. if callers are empty, inspect `dynamic_binding_hints`
+4. inspect `call_style` and `execution_boundary`
+5. check whether the path enters from SDK callback / main-thread / worker-thread
    boundaries
 
 ### "Search says nothing, but I know this exists"

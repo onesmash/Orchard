@@ -128,10 +128,11 @@ Use `orchard_find_callers` after impact when:
 - you need to inspect the local calling shape
 - you want to understand callback or lifecycle boundaries around a dependent
 
-For UIKit target-action callbacks, remember that static callers may be empty
-even when the method is live. In that case, inspect `dynamic_binding_hints`
-and use `orchard_target_action_graph` before concluding the blast radius is
-small.
+For callback-style APIs, remember that static callers may be empty even when
+the method is live. For notification callbacks, inspect
+`dynamic_binding_hints` and `orchard_notification_graph`; for UIKit
+target-action callbacks, inspect `dynamic_binding_hints` and use
+`orchard_target_action_graph` before concluding the blast radius is small.
 
 ### orchard_find_references
 
@@ -182,14 +183,15 @@ bridge-adjacent edges more closely.
 ### Dynamic bindings matter too
 
 Some Apple-framework entry points are not modeled as ordinary static callers.
-UIKit target-action is the common case: the callback may have low apparent
-fan-out in `find_callers` while still being user-reachable through runtime
-binding.
+UIKit target-action and notification callbacks are the common cases: the
+callback may have low apparent fan-out in `find_callers` while still being
+user-reachable through runtime binding.
 
 When this signal appears:
 
 - do not treat "0 static callers" as proof of safety
 - inspect `dynamic_binding_hints`
+- use `orchard_notification_graph` for notification-bound callbacks
 - use `orchard_target_action_graph` to recover the binding-side surface
 
 ### Primary surface and d2 clusters
@@ -233,7 +235,7 @@ exist.
 1. run impact on the changed symbol
 2. read `likely_tests`
 3. inspect `primary_surface` and `d2_clusters`
-4. for callback selectors, add binding-side entry points from target-action data
+4. for callback selectors, add binding-side entry points from notification or target-action data
 5. turn those into an ordered test recommendation
 
 ## How to Report Results

@@ -19,6 +19,8 @@ _SELECTOR_RE = re.compile(r"@selector\(\s*([\w:]+)\s*\)")
 _NOTIFICATION_NAME_RE = re.compile(r"name:\s*(\S+)")
 _POST_NAME_RE = re.compile(r"postNotificationName:\s*(\S+)")
 _FOR_NAME_RE = re.compile(r"addObserverForName:\s*(\S+)")
+_CONTROL_EVENT_RE = re.compile(r"forControlEvents:\s*([A-Za-z0-9_]+)")
+_OBJC_METHOD_RE = re.compile(r"^\s*[+-]\s*\([^)]*\)\s*(.+?)\s*(?:\{|$)")
 
 
 def parse_addobserver_line(line: str) -> tuple[str | None, str | None] | None:
@@ -64,6 +66,18 @@ def parse_post_notification_line(line: str) -> str | None:
     return None
 
 
+def parse_target_action_line(line: str) -> tuple[str | None, str | None]:
+    """Extract (@selector, control_event) from an addTarget:action: line."""
+    if "addTarget" not in line:
+        return (None, None)
+
+    sel_match = _SELECTOR_RE.search(line)
+    event_match = _CONTROL_EVENT_RE.search(line)
+    selector = sel_match.group(1) if sel_match else None
+    control_event = event_match.group(1) if event_match else None
+    return selector, control_event
+
+
 def _clean_name(raw: str) -> str:
     """Strip trailing punctuation from a notification name token."""
     return raw.strip().rstrip("];")
@@ -89,6 +103,144 @@ def _find_block_in_file(
             block = "".join(lines[i : i + window])
             return (i + 1, block)
     return None
+
+
+def _selector_from_objc_signature(signature: str) -> str | None:
+    """Extract an ObjC selector name from a method signature fragment."""
+    match = _OBJC_METHOD_RE.match(signature)
+    if not match:
+        return None
+
+    body = match.group(1).strip()
+    labels = re.findall(r"([A-Za-z_]\w*)\s*:", body)
+    if labels:
+        return "".join(f"{label}:" for label in labels)
+
+    name_match = re.match(r"([A-Za-z_]\w*)", body)
+    if name_match:
+        return name_match.group(1)
+    return None
+
+
+def _extract_objc_method_blocks(
+    file_path: str,
+    source_cache: dict[str, list[str]],
+    method_cache: dict[str, dict[str, tuple[int, str]]],
+) -> dict[str, tuple[int, str]]:
+    """Return {selector_or_name: (line_number, block_text)} for one source file."""
+    if file_path in method_cache:
+        return method_cache[file_path]
+
+    if not file_path or not os.path.isfile(file_path):
+        method_cache[file_path] = {}
+        return method_cache[file_path]
+
+    lines = source_cache.get(file_path)
+    if lines is None:
+        with open(file_path, "r") as fh:
+            lines = fh.readlines()
+        source_cache[file_path] = lines
+
+    methods: dict[str, tuple[int, str]] = {}
+    i = 0
+    total = len(lines)
+    while i < total:
+        line = lines[i]
+        if not re.match(r"^\s*[+-]\s*\(", line):
+            i += 1
+            continue
+
+        start = i
+        signature_lines = [line]
+        while "{" not in "".join(signature_lines) and i + 1 < total:
+            if "".join(signature_lines).strip().endswith(";"):
+                break
+            i += 1
+            signature_lines.append(lines[i])
+
+        signature_text = "".join(signature_lines).strip()
+        if "{" not in signature_text:
+            i += 1
+            continue
+
+        signature = " ".join(part.strip() for part in signature_lines)
+        selector = _selector_from_objc_signature(signature)
+        brace_depth = sum(part.count("{") - part.count("}") for part in signature_lines)
+        block_lines = list(signature_lines)
+        while brace_depth > 0 and i + 1 < total:
+            i += 1
+            block_lines.append(lines[i])
+            brace_depth += lines[i].count("{") - lines[i].count("}")
+
+        if selector:
+            methods[selector] = (start + 1, "".join(block_lines))
+        i += 1
+
+    method_cache[file_path] = methods
+    return methods
+
+
+def _find_named_code_block(
+    file_path: str,
+    symbol_name: str,
+    source_cache: dict[str, list[str]],
+) -> tuple[int, str] | None:
+    """Find a C/C++/ObjC++-style code block by symbol name."""
+    if not file_path or not os.path.isfile(file_path) or not symbol_name:
+        return None
+
+    lines = source_cache.get(file_path)
+    if lines is None:
+        with open(file_path, "r") as fh:
+            lines = fh.readlines()
+        source_cache[file_path] = lines
+
+    pattern = re.compile(rf"\b{re.escape(symbol_name)}\s*\(")
+    total = len(lines)
+    i = 0
+    while i < total:
+        line = lines[i]
+        if not pattern.search(line):
+            i += 1
+            continue
+
+        start = i
+        header_lines = [line]
+        header_text = "".join(header_lines)
+        while "{" not in header_text and i + 1 < total:
+            if header_text.strip().endswith(";"):
+                break
+            i += 1
+            header_lines.append(lines[i])
+            header_text = "".join(header_lines)
+
+        if "{" not in header_text:
+            i += 1
+            continue
+
+        brace_depth = header_text.count("{") - header_text.count("}")
+        block_lines = list(header_lines)
+        while brace_depth > 0 and i + 1 < total:
+            i += 1
+            block_lines.append(lines[i])
+            brace_depth += lines[i].count("{") - lines[i].count("}")
+        return (start + 1, "".join(block_lines))
+
+    return None
+
+
+def _find_method_block(
+    file_path: str,
+    symbol_name: str,
+    source_cache: dict[str, list[str]],
+    method_cache: dict[str, dict[str, tuple[int, str]]],
+) -> tuple[int, str] | None:
+    """Return the method block for one symbol name, if the source can be parsed."""
+    methods = _extract_objc_method_blocks(file_path, source_cache, method_cache)
+    block = methods.get(symbol_name)
+    if block is not None:
+        return block
+    return _find_named_code_block(file_path, symbol_name, source_cache)
 
 
 # ── Graph builder ─────────────────────────────────────────────────────
@@ -222,6 +374,8 @@ def build_notification_graph(
     notifications: dict[str, dict] = {}
     callback_requests: list[tuple[str, str]] = []
     callback_cache: dict[tuple[str, str], dict] = {}
+    source_cache: dict[str, list[str]] = {}
+    method_cache: dict[str, dict[str, tuple[int, str]]] = {}
 
     pending_observers: list[dict] = []
     pending_target_actions: list[dict] = []
@@ -237,12 +391,22 @@ def build_notification_graph(
             abs_path = os.path.join(source_root, abs_path)
 
         selector = None
+        control_event = None
         noti_name = "unknown"
         line_num = 0
 
         if role == "notification_poster":
-            # Look up from grep results.
-            gi = post_files.get(os.path.realpath(abs_path))
+            method_block = _find_method_block(
+                os.path.realpath(abs_path), name, source_cache, method_cache
+            )
+            gi = method_block
+            if gi and "postNotificationName" not in gi[1]:
+                gi = None
+            if gi is None and method_block is not None:
+                continue
+            if gi is None and method_block is None:
+                # Fall back to file-level grep when method parsing misses.
+                gi = post_files.get(os.path.realpath(abs_path))
             if gi:
                 line_num = gi[0]
                 noti_name = parse_post_notification_line(gi[1]) or "unknown"
@@ -260,19 +424,37 @@ def build_notification_graph(
             notifications[noti_name]["posters"].append(entry)
 
         elif role in ("notification_observer", "target_action"):
+            if callee_name.startswith("removeObserver:"):
+                continue
             # Try @selector first, then NSSelectorFromString, then addObserver.
-            for gset in [sel_files, ns_files, obs_files]:
-                gi = gset.get(os.path.realpath(abs_path))
+            method_block = _find_method_block(
+                os.path.realpath(abs_path), name, source_cache, method_cache
+            )
+            method_sets = []
+            if method_block:
+                line_num, line_text = method_block
+                method_sets.append(("method", (line_num, line_text)))
+            fallback_sets = [
+                ("selector", sel_files.get(os.path.realpath(abs_path))),
+                ("ns_selector", ns_files.get(os.path.realpath(abs_path))),
+                ("observer", obs_files.get(os.path.realpath(abs_path))),
+            ]
+            for kind, gi in method_sets + fallback_sets:
                 if gi:
                     line_num, line_text = gi[0], gi[1]
+                    parsed_selector, parsed_control_event = parse_target_action_line(line_text)
+                    if parsed_selector:
+                        selector = parsed_selector
+                    if parsed_control_event:
+                        control_event = parsed_control_event
                     sel_match = _SELECTOR_RE.search(line_text)
-                    if sel_match:
+                    if sel_match and not selector:
                         selector = sel_match.group(1)
-                    elif gset is ns_files:
+                    elif kind == "ns_selector":
                         ns_sel = re.search(r'NSSelectorFromString\(\s*@?"(\w+:?)"\)', line_text)
                         if ns_sel:
                             selector = ns_sel.group(1)
-                    elif gset is obs_files:
+                    elif kind in ("method", "observer"):
                         parsed = parse_addobserver_line(line_text)
                         if parsed:
                             selector, noti_name = parsed[0], parsed[1] or noti_name
@@ -284,7 +466,8 @@ def build_notification_graph(
             entry = {
                 "usr": usr, "name": name, "module": module,
                 "file_path": file_path, "line": line_num,
-                "selector": selector, "notification_name": noti_name,
+                "selector": selector, "control_event": control_event,
+                "notification_name": noti_name,
                 "callback": None,
             }
             if role == "target_action":
@@ -339,6 +522,25 @@ def build_notification_graph(
 # ── Persist to graph ───────────────────────────────────────────────────
 
 
+def _delete_notification_edges_for_files(conn, changed_files: list[str]) -> None:
+    """Delete persisted notification edges tied to the given source files."""
+    if not changed_files:
+        return
+    files = [os.path.realpath(path) for path in changed_files]
+    conn.execute(
+        "MATCH (p:Symbol)-[r:Posts]->(:Notification) "
+        "WHERE p.file_path IN $files "
+        "DELETE r",
+        {"files": files},
+    )
+    conn.execute(
+        "MATCH (:Notification)-[r:Observes]->(:Symbol) "
+        "WHERE r.observer_file_path IN $files "
+        "DELETE r",
+        {"files": files},
+    )
+
+
 def persist_notification_graph(
     conn, source_root: str = "", build_id: str = "",
     changed_files: list[str] | None = None,
@@ -356,6 +558,8 @@ def persist_notification_graph(
 
     graph = build_notification_graph(conn, source_root=source_root,
                                      changed_files=changed_files)
+    if changed_files is not None:
+        _delete_notification_edges_for_files(conn, changed_files)
 
     # Build Posts edges: poster symbol → Notification node.
     posts_rows: list[list[str]] = []
@@ -445,52 +649,86 @@ def persist_notification_graph(
     return count
 
 
-def _query_persisted_graph(conn, notification_name: str = "") -> dict:
+def _query_persisted_graph(
+    conn, notification_name: str = "", build_id: str = "",
+) -> dict:
     """Query persisted Notification nodes and Posts/Observes edges.
 
     Returns the same shape as ``build_notification_graph`` so the CLI
     can use either source transparently.
     """
-    noti_filter = ""
     params: dict = {}
+    clauses: list[str] = []
     if notification_name:
-        noti_filter = "WHERE n.name CONTAINS $name"
+        clauses.append("n.name CONTAINS $name")
         params["name"] = notification_name
+    posts_where = ["($build_id = '' OR ps.build_id = $build_id)"]
+    if clauses:
+        posts_where.extend(clauses)
+    notification_where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    observer_only_where = (
+        "WHERE NOT EXISTS { MATCH (:Symbol)-[ps:Posts]->(n) "
+        "WHERE $build_id = '' OR ps.build_id = $build_id }"
+    )
+    if clauses:
+        observer_only_where = (
+            "WHERE "
+            + " AND ".join(clauses)
+            + " AND NOT EXISTS { MATCH (:Symbol)-[ps:Posts]->(n) "
+            "WHERE $build_id = '' OR ps.build_id = $build_id }"
+        )
+    params["build_id"] = build_id or ""
 
     notifications: dict[str, dict] = {}
     rows = conn.execute(
-        f"MATCH (p:Symbol)-[ps:Posts]->(n:Notification) {noti_filter} "
+        "MATCH (p:Symbol)-[ps:Posts]->(n:Notification) "
+        f"WHERE {' AND '.join(posts_where)} "
         "OPTIONAL MATCH (n)-[ob:Observes]->(cb:Symbol) "
+        "WHERE $build_id = '' OR ob.build_id = $build_id "
         "RETURN DISTINCT n.name, p.usr, p.name, p.module, p.file_path, "
         "cb.usr, cb.name, cb.module, ob.selector, "
         "ob.observer_usr, ob.observer_name, ob.observer_file_path",
         params,
     ).get_all()
 
+    seen_posters: dict[str, set[tuple[str, str, str, str]]] = {}
+    seen_observers: dict[str, set[tuple[str, str, str, str, str, str]]] = {}
     for r in rows:
         noti_name = r[0]
-        posters = notifications.setdefault(noti_name, {"posters": [], "observers": []})
-        posters["posters"].append({
-            "usr": r[1], "name": r[2], "module": r[3] or "",
-            "file_path": r[4] or "", "line": 0, "notification_name": noti_name,
-        })
-        if r[5]:
-            posters["observers"].append({
-                "usr": r[9] or "",
-                "name": r[10] or "",
-                "file_path": r[11] or "",
-                "module": "", "line": 0,
-                "selector": r[8] or "",
-                "notification_name": noti_name,
-                "callback": {"usr": r[5], "name": r[6], "module": r[7] or ""},
+        data = notifications.setdefault(noti_name, {"posters": [], "observers": []})
+        poster_key = (r[1] or "", r[2] or "", r[3] or "", r[4] or "")
+        if r[1] and poster_key not in seen_posters.setdefault(noti_name, set()):
+            seen_posters[noti_name].add(poster_key)
+            data["posters"].append({
+                "usr": r[1], "name": r[2], "module": r[3] or "",
+                "file_path": r[4] or "", "line": 0, "notification_name": noti_name,
             })
+        if r[5]:
+            observer_key = (
+                r[9] or "",
+                r[10] or "",
+                r[11] or "",
+                r[8] or "",
+                r[5] or "",
+                r[6] or "",
+            )
+            if observer_key not in seen_observers.setdefault(noti_name, set()):
+                seen_observers[noti_name].add(observer_key)
+                data["observers"].append({
+                    "usr": r[9] or "",
+                    "name": r[10] or "",
+                    "file_path": r[11] or "",
+                    "module": "", "line": 0,
+                    "selector": r[8] or "",
+                    "notification_name": noti_name,
+                    "callback": {"usr": r[5], "name": r[6], "module": r[7] or ""},
+                })
 
     # Also collect notifications that only have observers (no posters).
-    obs_filter = (noti_filter + " AND") if noti_filter else "WHERE"
     obs_rows = conn.execute(
-        f"MATCH (n:Notification) {obs_filter} "
-        "NOT EXISTS { MATCH (:Symbol)-[:Posts]->(n) } "
+        f"MATCH (n:Notification) {observer_only_where} "
         "OPTIONAL MATCH (n)-[ob:Observes]->(cb:Symbol) "
+        "WHERE $build_id = '' OR ob.build_id = $build_id "
         "RETURN n.name, cb.usr, cb.name, cb.module, ob.selector, "
         "ob.observer_usr, ob.observer_name, ob.observer_file_path",
         params,
@@ -499,15 +737,25 @@ def _query_persisted_graph(conn, notification_name: str = "") -> dict:
         noti_name = r[0]
         data = notifications.setdefault(noti_name, {"posters": [], "observers": []})
         if r[1]:
-            data["observers"].append({
-                "usr": r[5] or "",
-                "name": r[6] or "",
-                "file_path": r[7] or "",
-                "module": "", "line": 0,
-                "selector": r[4] or "",
-                "notification_name": noti_name,
-                "callback": {"usr": r[1], "name": r[2], "module": r[3] or ""},
-            })
+            observer_key = (
+                r[5] or "",
+                r[6] or "",
+                r[7] or "",
+                r[4] or "",
+                r[1] or "",
+                r[2] or "",
+            )
+            if observer_key not in seen_observers.setdefault(noti_name, set()):
+                seen_observers[noti_name].add(observer_key)
+                data["observers"].append({
+                    "usr": r[5] or "",
+                    "name": r[6] or "",
+                    "file_path": r[7] or "",
+                    "module": "", "line": 0,
+                    "selector": r[4] or "",
+                    "notification_name": noti_name,
+                    "callback": {"usr": r[1], "name": r[2], "module": r[3] or ""},
+                })
 
     return {
         "publishers": [],

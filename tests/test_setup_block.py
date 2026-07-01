@@ -44,8 +44,11 @@ def test_orchard_block_keeps_graph_context_labels():
     assert "call_style" in block
     assert "execution_boundary" in block
     assert "source_scope" in block
+    assert "dynamic_binding_hints" in block
     assert "outside_workspace_root" in block
     assert "data.summary" in block
+    assert "orchard_notification_graph" in block
+    assert "orchard_target_action_graph" in block
     assert "exact C++ object field offsets" in block
     assert "orchard_class_layout" not in block
     assert "## Graph Schema" not in block

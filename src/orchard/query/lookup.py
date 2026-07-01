@@ -66,6 +66,7 @@ class GraphLookup:
         self._callees_cache: dict[str, list[dict]] = {}
         self._callers_cache: dict[str, list[dict]] = {}
         self._workspace_root_cache: str | None = None
+        self._target_action_cache: list[dict] | None = None
 
     # ---- Symbol resolution ------------------------------------------------
 
@@ -234,6 +235,7 @@ class GraphLookup:
         )
         callees: dict[str, dict] = {}
         has_notification_observer = False
+        has_target_action = False
         for r in preferred_rows:
             reason_val = r[8] or "indexstore_relation_only"
             lang = r[4] or ""
@@ -250,6 +252,8 @@ class GraphLookup:
                 entry["semantic_role"] = role
                 if role == "notification_observer":
                     has_notification_observer = True
+                if role == "target_action":
+                    has_target_action = True
             boundary = execution_boundary_for(entry)
             if boundary:
                 entry["execution_boundary"] = boundary
@@ -280,6 +284,13 @@ class GraphLookup:
                     for entry in result:
                         if entry.get("semantic_role") == "notification_observer":
                             entry.setdefault("notification_bridges", []).append(bridge)
+
+        if has_target_action:
+            bridges = self.target_action_bridges_for_registrar(usr)
+            if bridges:
+                for entry in result:
+                    if entry.get("semantic_role") == "target_action":
+                        entry["target_action_bridges"] = bridges
 
         # Don't cache when bridges are included (bridge data varies by observer).
         if not include_notification_bridges:
@@ -366,6 +377,58 @@ class GraphLookup:
         ).get_all()
         self._workspace_root_cache = rows[0][0] if rows and rows[0][0] else ""
         return self._workspace_root_cache
+
+    def _target_action_entries(self) -> list[dict]:
+        """Return derived target-action entries for the current graph."""
+        if self._target_action_cache is not None:
+            return self._target_action_cache
+        from orchard.derive.notification_graph import build_notification_graph
+
+        graph = build_notification_graph(
+            self._conn,
+            source_root=self.workspace_root() or "",
+        )
+        self._target_action_cache = graph.get("target_actions", [])
+        return self._target_action_cache
+
+    def target_action_bridges_for_registrar(self, observer_usr: str) -> list[dict]:
+        """Return target-action bridge details for a registrar method."""
+        bridges: list[dict] = []
+        for entry in self._target_action_entries():
+            if entry.get("usr") != observer_usr:
+                continue
+            callback = entry.get("callback")
+            bridge = {
+                "line": entry.get("line"),
+                "selector": entry.get("selector"),
+                "control_event": entry.get("control_event"),
+                "callback": None if not callback else {
+                    "usr": callback.get("usr"),
+                    "name": callback.get("name"),
+                    "module": callback.get("module") or "",
+                },
+            }
+            bridges.append(bridge)
+        return bridges
+
+    def target_action_bindings_for_callback(self, callback_usr: str) -> list[dict]:
+        """Return target-action binding summaries keyed by callback USR."""
+        bindings: list[dict] = []
+        for entry in self._target_action_entries():
+            callback = entry.get("callback") or {}
+            if callback.get("usr") != callback_usr:
+                continue
+            bindings.append({
+                "usr": entry.get("usr"),
+                "name": entry.get("name"),
+                "file_path": entry.get("file_path"),
+                "module": entry.get("module") or "",
+                "line": entry.get("line"),
+                "selector": entry.get("selector"),
+                "control_event": entry.get("control_event"),
+                "callback_name": callback.get("name"),
+            })
+        return bindings
 
     # ---- Module statistics --------------------------------------------------
 

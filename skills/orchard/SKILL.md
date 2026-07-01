@@ -136,11 +136,17 @@ Each caller includes:
   (`sdk_callback`, `worker_thread_dispatch`, `main_thread_task`,
   `notification_callback_sink`, `lifecycle_uninit_path`)
 - `source_scope`: whether `file_path` is inside or outside the active workspace root
+- `dynamic_binding_hints`: summary-only runtime binding evidence when no static
+  caller exists (currently used for notification callbacks and UIKit target-action callbacks)
 
 Use `call_style` and `execution_boundary` to turn "A calls B" into a better
 crash hypothesis. A chain like `GetUsingScene <- GetMicUsingScene <- process_msg`
 is not just a caller chain; `process_msg` suggests a worker-thread dispatch
 boundary, so lifecycle/race hypotheses deserve attention.
+
+When `data` is empty, do not stop at `"no callers found"` until you check
+`dynamic_binding_hints`. For notification callbacks, follow up with
+`notification-graph`; for UIKit actions, follow up with `target-action-graph`.
 
 ### find_callees — What does this symbol call?
 
@@ -174,6 +180,11 @@ by default for `notification_observer` callees — showing which notification
 name, @selector, and callback each observer is wired to.  This gives you
 the full chain: **who registered → selector → event key → callback**.
 
+**Target-action bridges**: when a callee has `semantic_role = target_action`,
+`find_callees` and `find_references` include `target_action_bridges` with the
+registration line, selector, raw `forControlEvents:` token, and resolved
+callback symbol when Orchard can recover it.
+
 ### find_references — Incoming + outgoing in one call
 
 ```bash
@@ -183,7 +194,8 @@ orchard find_references --usr "<USR>"
 Returns `incoming` (callers) and `outgoing` (callees) with the same
 `confidence` + `provenance` as find_callers/find_callees.  **ObjC callees
 also carry `semantic_role`** — notification_observer, delegate_setter,
-framework_callback, etc.
+framework_callback, etc.  Target-action callees also carry
+`target_action_bridges` when available.
 
 ### impact — Blast-radius analysis
 

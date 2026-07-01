@@ -218,3 +218,63 @@ def test_notification_graph_group_by_observer_empty(conn_with_notifications):
     )
     resp = get_notification_graph(conn_with_notifications, req)
     assert resp.data.get("observers", {"x": 1}) == {}
+
+
+def test_notification_graph_filters_edges_by_build_id(conn_with_notifications):
+    from orchard.handlers.notification_graph import (
+        NotificationGraphRequest, get_notification_graph,
+    )
+
+    conn_with_notifications.execute(
+        "CREATE (:Symbol {id: 's:stalePoster', usr: 's:stalePoster', precise_id: '', "
+        "name: 'stalePoster()', language: 'objc', kind: 'objc.method', "
+        "module: 'M', file_path: '/src/Stale.m', signature: '', "
+        "container_usr: '', access_level: 'internal', origin: 'derived', "
+        "is_generated: false})"
+    )
+    conn_with_notifications.execute(
+        "MATCH (p:Symbol {id:'s:stalePoster'}), (n:Notification {name:'MyNotification'}) "
+        "CREATE (p)-[:Posts {confidence:0.7, provenance:'derive/notification', "
+        "build_id:'old-build'}]->(n)"
+    )
+    conn_with_notifications.execute(
+        "MATCH (n:Notification {name:'MyNotification'}), (d:Symbol {id:'s:D'}) "
+        "CREATE (n)-[:Observes {selector:'handleNotification:', "
+        "observer_usr:'s:staleObserver()', observer_name:'staleObserver()', "
+        "observer_file_path:'/src/Stale.m', "
+        "confidence:0.7, provenance:'derive/notification', build_id:'old-build'}]->(d)"
+    )
+
+    resp = get_notification_graph(conn_with_notifications, NotificationGraphRequest(build_id="b1"))
+
+    my_noti = resp.data["notifications"]["MyNotification"]
+    assert [poster["name"] for poster in my_noti["posters"]] == ["postNotificationA()"]
+    assert [obs["name"] for obs in my_noti["observers"]] == ["registerNotifications()"]
+
+
+def test_notification_graph_dedupes_joined_observers(conn_with_notifications):
+    from orchard.handlers.notification_graph import (
+        NotificationGraphRequest, get_notification_graph,
+    )
+
+    conn_with_notifications.execute(
+        "CREATE (:Symbol {id: 's:A2', usr: 's:poster2', precise_id: '', "
+        "name: 'postNotificationA2()', language: 'objc', kind: 'objc.method', "
+        "module: 'M', file_path: '/src/PosterA2.m', signature: '', "
+        "container_usr: '', access_level: 'internal', origin: 'derived', "
+        "is_generated: false})"
+    )
+    conn_with_notifications.execute(
+        "MATCH (a:Symbol {id:'s:A2'}), (n:Notification {name:'MyNotification'}) "
+        "CREATE (a)-[:Posts {confidence:0.7, provenance:'derive/notification', "
+        "build_id:'b1'}]->(n)"
+    )
+
+    resp = get_notification_graph(conn_with_notifications, NotificationGraphRequest(build_id="b1"))
+
+    my_noti = resp.data["notifications"]["MyNotification"]
+    assert sorted(poster["name"] for poster in my_noti["posters"]) == [
+        "postNotificationA()",
+        "postNotificationA2()",
+    ]
+    assert [obs["name"] for obs in my_noti["observers"]] == ["registerNotifications()"]

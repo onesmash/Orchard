@@ -284,6 +284,19 @@ Use this flow when a UIKit callback is triggered by runtime binding rather than
 an ordinary static call edge. `find_callers` may show no direct caller while
 `target-action-graph` reveals the concrete binding records.
 
+### "Why does this notification callback have no caller?"
+
+```bash
+orchard search --name "onMyNotesPageRefreshed:"
+orchard find_callers --usr "<USR>"
+orchard notification-graph -n kNoti_MyNotes_PageRefreshed -f json
+```
+
+Use this flow when an ObjC callback is reached through
+`NSNotificationCenter` wiring rather than an ordinary static call edge.
+`find_callers` may show no direct caller while `notification-graph` reveals
+the poster -> observer -> callback chain.
+
 ## Troubleshooting
 
 - **`orchard: command not found`**: install Orchard with `uv tool install ...`
@@ -294,6 +307,8 @@ an ordinary static call edge. `find_callers` may show no direct caller while
 - **Auto-detection picks the wrong target / DerivedData**: pass `--target` and
   `--index-store` explicitly.
 - **Graph still looks stale after ingest**: rerun with `--full`.
+- **Notification callback has no static caller**: inspect
+  `orchard notification-graph` before concluding it is unused.
 - **Action callback has no static caller**: inspect
   `orchard target-action-graph` before concluding it is unused.
 - **Need several CLI queries in one go**: use `orchard pipe` instead of many
