@@ -215,6 +215,7 @@ def cmd_ingest(args: list[str]):
     from orchard.ingest.symbolgraph import SymbolRecord
     from orchard.pipeline.runner import _map_indexstore_kind
     from orchard.ingest.state import load_state, save_state, touch_timestamp
+    from orchard.ingest.state import save_candidate_output_paths_manifest
     from pathlib import Path
     from orchard.build.xcode_settings import (
         discover_compiled_targets,
@@ -352,12 +353,17 @@ def cmd_ingest(args: list[str]):
 
     t0 = time.monotonic()
     print("ingest: reading index store...", flush=True)
-    r, file_status = read_index_store(
+    read_result = read_index_store(
         index_store, entry_target,
         source_roots=source_roots,
         incremental_since=incremental_since,
         targets=targets,
     )
+    if len(read_result) == 2:
+        r, file_status = read_result
+        output_path_mappings = None
+    else:
+        r, file_status, output_path_mappings = read_result
 
     # Incremental cleanup: delete stale symbols for changed and deleted files
     # across ALL previously ingested targets.
@@ -499,6 +505,14 @@ def cmd_ingest(args: list[str]):
 
     t_done = time.monotonic()
     print(f"done  {t_done - t0:.0f}s  (p_done={t_done - t_pd:.0f}s ago)", flush=True)
+
+    if incremental_since is None and output_path_mappings:
+        save_candidate_output_paths_manifest(
+            project_dir,
+            index_store,
+            targets,
+            output_path_mappings,
+        )
 
     # Persist state for next incremental run.
     # Reuse the main ingest pass's file-status payload when available.

@@ -13,6 +13,7 @@ let package = Package(
       name: "orchard-indexstore-reader",
       dependencies: [
         .product(name: "IndexStoreDB", package: "indexstore-db"),
+        .product(name: "IndexStore", package: "indexstore-db"),
       ]
     ),
     .testTarget(

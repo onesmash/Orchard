@@ -723,6 +723,56 @@ def test_cmd_ingest_full_persists_file_list_in_state(tmp_path, monkeypatch):
     ]
 
 
+def test_cmd_ingest_full_writes_candidate_output_paths_manifest(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: (
+            IndexStoreResult(),
+            {"changed": [], "all": ["/repo/ios-client/Zoom/AppDelegate.swift"]},
+            [
+                {
+                    "main_file": "/repo/ios-client/Zoom/AppDelegate.swift",
+                    "output_file": "/tmp/opaque/AppDelegate-1.o",
+                    "unit_name": "AppDelegate-1.o-opaque",
+                }
+            ],
+        ),
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "T",
+        "--db", str(tmp_path / "graph.db"),
+        "--full",
+    ])
+
+    manifest_path = tmp_path / ".orchard" / "candidate-output-paths.json"
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert data["index_store_path"] == "/fake/store"
+    assert data["compiled_targets"] == ["T"]
+    assert data["output_paths"] == ["/tmp/opaque/AppDelegate-1.o"]
+    assert data["mappings"] == [
+        {
+            "main_file": "/repo/ios-client/Zoom/AppDelegate.swift",
+            "output_file": "/tmp/opaque/AppDelegate-1.o",
+            "unit_name": "AppDelegate-1.o-opaque",
+        }
+    ]
+
+
 def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monkeypatch, capsys):
     from orchard.cli import cmd_ingest
 

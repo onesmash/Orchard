@@ -87,7 +87,7 @@ def test_real_cli_read_index_store_produces_calledby(tmp_path):
     lib_path = _build_index(src_dir, index_path)
 
     # Real CLI run + real parse (no mock).
-    result, _ = read_index_store(str(index_path), scope_id="T", emit_occurrences=True)
+    result, _, _ = read_index_store(str(index_path), scope_id="T", emit_occurrences=True)
 
     # Our source defines caller() and callee(); find their USRs.
     our_usrs = {occ.usr for occ in result.occurrences if occ.file_path == lib_path}
@@ -139,10 +139,16 @@ def test_real_cli_read_index_store_reports_all_files_for_full_ingest(tmp_path):
     index_path = tmp_path / "idx"
     lib_path = _build_index(src_dir, index_path)
 
-    _result, file_status = read_index_store(str(index_path), scope_id="T")
+    _result, file_status, output_path_mappings = read_index_store(
+        str(index_path),
+        scope_id="T",
+        source_root=str(src_dir),
+    )
 
     assert file_status is not None
     assert lib_path in file_status["all"]
+    if output_path_mappings is not None:
+        assert any(mapping["main_file"] == lib_path for mapping in output_path_mappings)
 
 
 def test_installed_wheel_cli_can_ingest_minimal_index(tmp_path):
@@ -220,7 +226,7 @@ def test_installed_wheel_cli_can_ingest_minimal_index(tmp_path):
     reason="requires local Zoom DerivedData store and ExtensionSiri sources",
 )
 def test_real_zoom_extension_siri_preserves_objc_sdk_symbols():
-    result, _ = read_index_store(
+    result, _, _ = read_index_store(
         str(REAL_ZOOM_STORE),
         scope_id="T",
         source_root=str(REAL_EXTENSION_SIRI_ROOT),

@@ -72,6 +72,7 @@ var targets: [String] = []
 var incrementalSince: Double?       // Unix epoch seconds
 var listFilesOnly: Bool = false
 var emitOccurrences = false
+var dumpUnitOutputPaths = false
 
 var i = 1
 while i < args.count {
@@ -106,8 +107,11 @@ while i < args.count {
   if a == "--emit-occurrences" {
     emitOccurrences = true; i += 1; continue
   }
+  if a == "--dump-unit-output-paths" {
+    dumpUnitOutputPaths = true; i += 1; continue
+  }
   if a == "--help" || a == "-h" {
-    print("usage: orchard-indexstore-reader <index-store-path> [--libindexstore <dylib>] [--source-root <dir>] [--incremental-since <ts>] [--list-files] [--emit-occurrences]")
+    print("usage: orchard-indexstore-reader <index-store-path> [--libindexstore <dylib>] [--source-root <dir>] [--incremental-since <ts>] [--list-files] [--emit-occurrences] [--dump-unit-output-paths]")
     exit(0)
   }
   if storePath == nil { storePath = a }
@@ -356,6 +360,47 @@ if let since = incrementalSince {
   filePaths = changedFiles
 }
 
+var outputPathMappingsForStatus: [[String: String]] = []
+if dumpUnitOutputPaths {
+  let dumpStart = Date()
+  logProgress("collecting raw unit output-path mappings")
+  let mappings = try collectRawUnitOutputPathMappings(
+    indexStorePath: storePath,
+    dylibPath: dylibPath,
+    db: db,
+    filePaths: allFiles
+  )
+  let payload = mappings.map { mapping in
+    [
+      "unit_name": mapping.unitName,
+      "main_file": mapping.mainFile,
+      "output_file": mapping.outputFile,
+    ]
+  }
+  let json = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+  FileHandle.standardOutput.write(json)
+  FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+  logProgress("raw unit output-path mapping completed in \(stageSeconds(since: dumpStart))")
+  exit(0)
+} else if incrementalSince == nil {
+  let mappingStart = Date()
+  logProgress("collecting raw unit output-path mappings")
+  let mappings = try collectRawUnitOutputPathMappings(
+    indexStorePath: storePath,
+    dylibPath: dylibPath,
+    db: db,
+    filePaths: allFiles
+  )
+  outputPathMappingsForStatus = mappings.map { mapping in
+    [
+      "unit_name": mapping.unitName,
+      "main_file": mapping.mainFile,
+      "output_file": mapping.outputFile,
+    ]
+  }
+  logProgress("raw unit output-path mapping completed in \(stageSeconds(since: mappingStart))")
+}
+
 // 2. First pass: collect best (canonical) occurrence per USR.
 //    SourceKit-LSP uses `forEachCanonicalSymbolOccurrence` which picks ONE
 //    canonical provider per USR across all TUs.  We replicate that by
@@ -475,7 +520,10 @@ for (_, slot) in bestSlot {
 
 // ---- File status (stderr, for Python to consume) ----
 let statusChangedFiles = incrementalSince != nil ? changedFiles : []
-let status: [String: Any] = ["changed": statusChangedFiles, "all": allFiles]
+var status: [String: Any] = ["changed": statusChangedFiles, "all": allFiles]
+if !outputPathMappingsForStatus.isEmpty {
+  status["output_path_mappings"] = outputPathMappingsForStatus
+}
 let statusJSON = try! JSONSerialization.data(withJSONObject: status, options: [])
 lineWriter.flush()
 FileHandle.standardError.write(statusJSON)

@@ -108,6 +108,7 @@ def _run_cli(
     list_files: bool = False,
     targets: list[str] | None = None,
     emit_occurrences: bool = False,
+    dump_unit_output_paths: bool = False,
 ):
     """Run the CLI and return ``(stdout_lines, stderr)``."""
     cmd = [_cli_path(), index_store_path]
@@ -125,6 +126,8 @@ def _run_cli(
         cmd += ["--list-files"]
     if emit_occurrences:
         cmd += ["--emit-occurrences"]
+    if dump_unit_output_paths:
+        cmd += ["--dump-unit-output-paths"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
@@ -212,7 +215,7 @@ def read_index_store(
     incremental_since: float | None = None,
     targets: list[str] | None = None,
     emit_occurrences: bool = False,
-) -> tuple[IndexStoreResult, dict | None]:
+) -> tuple[IndexStoreResult, dict | None, list[dict[str, str]] | None]:
     t0 = time.monotonic()
     result = IndexStoreResult()
     lines, stderr = _run_cli(
@@ -264,7 +267,12 @@ def read_index_store(
             result.warnings.append(f"invalid JSONL line ({exc}): {snippet}")
     result.elapsed_s = round(time.monotonic() - t0, 3)
     file_status = _parse_file_status(stderr)
-    return result, file_status
+    output_path_mappings = None
+    if file_status is not None:
+        raw_mappings = file_status.get("output_path_mappings")
+        if isinstance(raw_mappings, list):
+            output_path_mappings = raw_mappings
+    return result, file_status, output_path_mappings
 
 
 def list_source_files(

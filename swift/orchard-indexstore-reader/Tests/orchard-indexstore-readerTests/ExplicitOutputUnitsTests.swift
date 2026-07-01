@@ -1,7 +1,60 @@
+import IndexStoreDB
 import XCTest
 @testable import orchard_indexstore_reader
 
 final class ExplicitOutputUnitsTests: XCTestCase {
+  private func openIndexStoreDB(storePath: String) throws -> IndexStoreDB {
+    let dylibPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/libIndexStore.dylib"
+    let library = try IndexStoreLibrary(dylibPath: dylibPath)
+    let databasePath = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+      .path
+    try FileManager.default.createDirectory(atPath: databasePath, withIntermediateDirectories: true)
+    let db = try IndexStoreDB(
+      storePath: storePath,
+      databasePath: databasePath,
+      library: library,
+      waitUntilDoneInitializing: true,
+      listenToUnitEvents: false
+    )
+    db.pollForUnitChangesAndWait(isInitialScan: true)
+    return db
+  }
+
+  @discardableResult
+  private func buildMinimalSwiftIndex(
+    tmp: URL,
+    sourceText: String = """
+    public func callee() -> Int { return 1 }
+    public func caller() -> Int { return callee() }
+    """
+  ) throws -> (storePath: URL, sourceFile: URL, unitOutputPath: URL) {
+    let storePath = tmp.appendingPathComponent("idx", isDirectory: true)
+    let srcDir = tmp.appendingPathComponent("src", isDirectory: true)
+    let sourceFile = srcDir.appendingPathComponent("Lib.swift")
+    let unitOutputPath = srcDir.appendingPathComponent("Lib.o")
+    let dylibPath = srcDir.appendingPathComponent("libtest.dylib")
+
+    try FileManager.default.createDirectory(at: storePath, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: srcDir, withIntermediateDirectories: true)
+    try sourceText.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/swiftc")
+    process.arguments = [
+      "-index-store-path", storePath.path,
+      "-index-unit-output-path", unitOutputPath.path,
+      sourceFile.path,
+      "-emit-library",
+      "-o", dylibPath.path,
+    ]
+    try process.run()
+    process.waitUntilExit()
+    XCTAssertEqual(process.terminationStatus, 0)
+
+    return (storePath, sourceFile, unitOutputPath)
+  }
+
   func testScanProgressMessageHidesFilePaths() {
     XCTAssertEqual(scanProgressMessage(250, 7228), "scanning files 250/7228")
   }
@@ -236,5 +289,44 @@ final class ExplicitOutputUnitsTests: XCTestCase {
         "/Zoom.build/Debug-iphonesimulator/Ext.build/Objects-normal/arm64/Thing.o",
       ])
     )
+  }
+
+  func testUnitNamesContainingFileDoesNotExposeExplicitOutputPathIdentifiers() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let fixture = try buildMinimalSwiftIndex(tmp: tmp)
+    let db = try openIndexStoreDB(storePath: fixture.storePath.path)
+    let unitNames = db.unitNamesContainingFile(path: fixture.sourceFile.path)
+
+    XCTAssertFalse(unitNames.isEmpty, "unitNames should not be empty")
+    XCTAssertFalse(unitNames.contains(fixture.unitOutputPath.path), "unitNames=\(unitNames)")
+    XCTAssertNil(db.dateOfUnitFor(outputPath: unitNames[0]), "unitNames=\(unitNames)")
+    XCTAssertNil(db.dateOfUnitFor(outputPath: fixture.unitOutputPath.path))
+  }
+
+  func testCollectRawUnitOutputPathMappingsReadsExplicitOutputFile() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let fixture = try buildMinimalSwiftIndex(tmp: tmp)
+    let db = try openIndexStoreDB(storePath: fixture.storePath.path)
+    let dylibPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/libIndexStore.dylib"
+
+    let mappings = try collectRawUnitOutputPathMappings(
+      indexStorePath: fixture.storePath.path,
+      dylibPath: dylibPath,
+      db: db,
+      filePaths: [fixture.sourceFile.path]
+    )
+
+    XCTAssertEqual(mappings.count, 1)
+    XCTAssertEqual(mappings[0].mainFile, fixture.sourceFile.path)
+    XCTAssertFalse(mappings[0].unitName.isEmpty)
+    XCTAssertFalse(mappings[0].outputFile.isEmpty)
+    XCTAssertNotEqual(mappings[0].outputFile, fixture.unitOutputPath.path)
+    XCTAssertTrue(mappings[0].outputFile.hasSuffix("Lib-1.o"))
   }
 }
