@@ -1,7 +1,7 @@
 """``orchard setup`` — one-shot configuration for Claude Code and Codex.
 
-Configures the MCP server entry, installs the orchard skill, and injects
-the orchard code-intelligence block into CLAUDE.md / AGENTS.md.
+Configures the MCP server entry, installs the bundled Orchard skills, and
+injects the Orchard code-intelligence block into CLAUDE.md / AGENTS.md.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def cmd_setup(args: list[str]) -> None:
     )
     ap.add_argument(
         "--skill", action="store_true",
-        help="Install only the orchard skill",
+        help="Install only the bundled Orchard skills",
     )
     ap.add_argument(
         "--model", action="store_true",
@@ -191,32 +191,40 @@ def _setup_codex_mcp() -> tuple[bool, str]:
 # Skill
 # ---------------------------------------------------------------------------
 
-_SKILL_TARGETS = [
-    Path.home() / ".claude" / "skills" / "orchard",
-    Path.home() / ".agents" / "skills" / "orchard",
+_BUNDLED_SKILL_NAMES = [
+    "orchard",
+    "orchard-cli",
+    "orchard-debugging",
+    "orchard-exploring",
+    "orchard-impact-analysis",
+]
+
+_SKILL_TARGET_ROOTS = [
+    Path.home() / ".claude" / "skills",
+    Path.home() / ".agents" / "skills",
 ]
 
 
-def _skill_source_dir() -> Path:
-    """Return the path to the bundled skill directory.
+def _skill_source_dir(skill_name: str) -> Path:
+    """Return the path to one bundled skill directory.
 
     Works in two scenarios:
 
-    1. **Wheel install**: ``orchard/setup.py`` and ``orchard/skills/orchard/``
+    1. **Wheel install**: ``orchard/setup.py`` and ``orchard/skills/<name>/``
        sit side-by-side in site-packages.
     2. **Dev install** (``pip install -e .``): ``setup.py`` is at
-       ``src/orchard/setup.py`` while skills live at ``<repo>/skills/orchard/``
+       ``src/orchard/setup.py`` while skills live at ``<repo>/skills/<name>/``
        (three levels up).
     """
     base = Path(__file__).resolve().parent
 
     # Wheel install: skills are adjacent to this module.
-    pkg = base / "skills" / "orchard"
+    pkg = base / "skills" / skill_name
     if pkg.is_dir():
         return pkg
 
     # Dev install: walk up from src/orchard/ to repo root.
-    dev = base.parent.parent / "skills" / "orchard"
+    dev = base.parent.parent / "skills" / skill_name
     if dev.is_dir():
         return dev
 
@@ -224,26 +232,29 @@ def _skill_source_dir() -> Path:
 
 
 def _setup_skill() -> tuple[bool, str]:
-    """Copy the bundled orchard skill into ``~/.claude/skills/orchard/`` and
-    ``~/.agents/skills/orchard/``.
+    """Copy bundled Orchard skills into Claude/Codex skill directories.
 
     Returns ``(ok, message)``.
     """
-    src = _skill_source_dir()
-
-    if not src.is_dir():
-        return False, f"Skill: source not found at {src}"
-
     installed = []
-    for target in _SKILL_TARGETS:
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(src, target, dirs_exist_ok=True)
-            installed.append(str(target))
-        except OSError as e:
-            return False, f"Skill: copy to {target} failed: {e}"
+    for skill_name in _BUNDLED_SKILL_NAMES:
+        src = _skill_source_dir(skill_name)
+        if not src.is_dir():
+            return False, f"Skill: source not found at {src}"
 
-    return True, f"Skill: installed to {', '.join(installed)}"
+        for root in _SKILL_TARGET_ROOTS:
+            target = root / skill_name
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(src, target, dirs_exist_ok=True)
+                installed.append(str(target))
+            except OSError as e:
+                return False, f"Skill: copy to {target} failed: {e}"
+
+    return True, (
+        "Skill: installed bundled Orchard skills "
+        f"({', '.join(_BUNDLED_SKILL_NAMES)}) to {', '.join(installed)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +308,7 @@ _ORCHARD_BLOCK_END = "<!-- orchard:end -->"
 _ORCHARD_BLOCK = """<!-- orchard:start -->
 # Orchard — Apple Semantic Graph
 
-This project is indexed by orchard as **{project_name}** ({symbol_count:,} symbols, {calls_count:,} calls, {contains_count:,} contains). Use Orchard MCP tools for compiler-indexed code navigation, deterministic symbol graph enrichment, and impact analysis.
+This project is indexed by orchard as **{project_name}**. Use Orchard MCP tools for compiler-indexed code navigation, deterministic symbol graph enrichment, and impact analysis.
 
 > Data source: Xcode IndexStore. If freshness is stale/unknown, run `orchard ingest --project-dir .`.
 
@@ -385,41 +396,6 @@ After committing code changes, re-run `orchard ingest --project-dir .` to update
 
 <!-- orchard:end -->"""
 
-
-def _resolve_db(project_dir: Path) -> str | None:
-    """Return the path to the orchard graph DB for *project_dir*, or None.
-
-    Priority: ``.orchard/graph.db`` in *project_dir*, then walk up.
-    """
-    for directory in [project_dir, *project_dir.parents]:
-        db = directory / ".orchard" / "graph.db"
-        if db.exists():
-            return str(db)
-    return None
-
-
-def _collect_stats(project_dir: Path) -> dict[str, int]:
-    """Return symbol/calls/contains counts by reading the project's graph DB."""
-    from orchard.graph.db import get_connection
-
-    db_path = _resolve_db(project_dir)
-    if db_path is None:
-        return {}
-    conn = get_connection(db_path)
-    try:
-        try:
-            sym = conn.execute("MATCH (s:Symbol) RETURN count(s)").get_all()[0][0]
-            calls = conn.execute("MATCH ()-[r:Calls]->() RETURN count(r)").get_all()[0][0]
-            contains = conn.execute("MATCH ()-[r:Contains]->() RETURN count(r)").get_all()[0][0]
-        except RuntimeError as exc:
-            if "does not exist" not in str(exc):
-                raise
-            return {}
-        return {"symbol_count": sym, "calls_count": calls, "contains_count": contains}
-    finally:
-        conn.close()
-
-
 def _upsert_block(path: Path, block: str) -> bool:
     """Insert or update the orchard block in *path*.  Returns True if written."""
     start = _ORCHARD_BLOCK_START
@@ -451,20 +427,10 @@ def _upsert_block(path: Path, block: str) -> bool:
 def _setup_claude_md(project_dir: Path) -> tuple[bool, str]:
     """Inject the orchard code-intelligence block into CLAUDE.md and AGENTS.md.
 
-    Stats are read from the project's ``.orchard/graph.db`` so the block
-    carries live symbol / call / containment counts.
-
     Returns ``(ok, message)``.
     """
-    stats = _collect_stats(project_dir)
-    if not stats:
-        return False, (
-            "CLAUDE.md: no orchard database found. "
-            "Run `orchard ingest --project-dir .` first."
-        )
-
     project_name = project_dir.name
-    block = _ORCHARD_BLOCK.format(project_name=project_name, **stats)
+    block = _ORCHARD_BLOCK.format(project_name=project_name)
 
     updated: list[str] = []
     for md_name in ("CLAUDE.md", "AGENTS.md"):

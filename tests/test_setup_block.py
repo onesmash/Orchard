@@ -1,14 +1,8 @@
-from orchard.graph.db import get_connection
-from orchard.setup import _ORCHARD_BLOCK, _collect_stats, _setup_claude_md
+from orchard.setup import _ORCHARD_BLOCK, _setup_claude_md
 
 
 def _render_block() -> str:
-    return _ORCHARD_BLOCK.format(
-        project_name="Demo",
-        symbol_count=1,
-        calls_count=2,
-        contains_count=3,
-    )
+    return _ORCHARD_BLOCK.format(project_name="Demo")
 
 
 def test_orchard_block_mentions_single_frame_boundary():
@@ -57,25 +51,13 @@ def test_orchard_block_keeps_graph_context_labels():
     assert "## Graph Schema" not in block
 
 
-def test_collect_stats_treats_schema_less_database_as_missing(tmp_path):
+def test_setup_claude_md_injects_block_without_database(tmp_path):
     project_dir = tmp_path / "project"
-    db_path = tmp_path / ".orchard" / "graph.db"
     project_dir.mkdir()
-    conn = get_connection(str(db_path))
-    conn.close()
-
-    assert _collect_stats(project_dir) == {}
-
-
-def test_setup_claude_md_reports_missing_database_for_schema_less_database(tmp_path):
-    project_dir = tmp_path / "project"
-    db_path = tmp_path / ".orchard" / "graph.db"
-    project_dir.mkdir()
-    conn = get_connection(str(db_path))
-    conn.close()
 
     ok, msg = _setup_claude_md(project_dir)
 
-    assert ok is False
-    assert "no orchard database found" in msg
-    assert "orchard ingest --project-dir ." in msg
+    assert ok is True
+    assert "injected orchard block" in msg
+    assert "stats unavailable before first ingest" not in (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "stats unavailable before first ingest" not in (project_dir / "AGENTS.md").read_text(encoding="utf-8")

@@ -32,7 +32,7 @@ and C++ codebases via a CLI and MCP server.
 - **Execution flows** — automatic process detection from the call graph
 - **Hybrid search** — BM25 + vector embeddings for semantic code search
 - **One-shot setup** — `orchard setup` configures the MCP server, installs
-  the Claude Code skill, downloads the embedding model, and injects the
+  the Orchard skill bundle for Claude/Codex, downloads the embedding model, and injects the
   code-intelligence block into CLAUDE.md
 
 ## Quick Start
@@ -76,11 +76,14 @@ orchard setup
 
 This configures everything Claude Code needs:
 - ✅ MCP server entry in `settings.json`
-- ✅ Orchard skill in `.claude/skills/orchard/`
+- ✅ Orchard skill bundle in `.claude/skills/`
+  (`orchard`, `orchard-cli`, `orchard-debugging`, `orchard-exploring`,
+  `orchard-impact-analysis`)
 - ✅ Embedding model download
 - ✅ Code-intelligence block injected into `CLAUDE.md` / `AGENTS.md`
 
 Use `--mcp`, `--skill`, `--model`, or `--claude-md` to install individual components.
+`orchard setup --skill` installs the full Orchard skill bundle.
 
 ## Usage
 
