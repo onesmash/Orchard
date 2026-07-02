@@ -219,6 +219,7 @@ def cmd_ingest(args: list[str]):
         _unit_dir_mtime,
         list_source_files,
         read_index_store,
+        register_indexd_session,
     )
     from orchard.build.context import BuildContext, make_build_id
     from orchard.normalize.identity import (
@@ -319,6 +320,15 @@ def cmd_ingest(args: list[str]):
                 file=sys.stderr,
             )
             sys.exit(2)
+
+        register_indexd_session(
+            project_dir=str(Path(ns.project_dir).resolve()),
+            index_store_path=index_store,
+            graph_db_path=ns.db,
+            target_args=targets,
+            entry_target=entry_target,
+            incremental=ns.incremental,
+        )
 
         if not ns.incremental:
             _reset_graph_db(ns.db)

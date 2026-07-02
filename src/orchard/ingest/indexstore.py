@@ -378,6 +378,32 @@ class _IndexdClient:
             "params": {},
         })
 
+    def register_session(
+        self,
+        store_path: str,
+        graph_db_path: str,
+        context: dict,
+    ) -> dict:
+        def _canonicalize_path(value: str) -> str:
+            return str(Path(value).expanduser().resolve()) if value else ""
+
+        normalized_context = dict(context)
+        for key in ("projectDir", "indexStorePath", "graphDBPath"):
+            if key in normalized_context:
+                normalized_context[key] = _canonicalize_path(str(normalized_context[key]))
+        responses = self._request({
+            "id": "register_session",
+            "method": "register_session",
+            "params": {
+                "storePath": _canonicalize_path(store_path),
+                "graphDBPath": _canonicalize_path(graph_db_path),
+                "context": normalized_context,
+            },
+        })
+        if not responses or not responses[0].get("ok"):
+            raise ConnectionError(f"indexd register_session failed: {responses}")
+        return responses[0].get("result", {})
+
     def warm(
         self,
         index_store_path: str,
@@ -497,6 +523,32 @@ def shutdown_indexd(socket_path: str | None = None) -> dict[str, object]:
         "stopped": stopped,
         "status": indexd_status(resolved_socket),
     }
+
+
+def register_indexd_session(
+    project_dir: str,
+    index_store_path: str,
+    graph_db_path: str,
+    target_args: list[str] | None,
+    entry_target: str,
+    incremental: bool,
+) -> dict | None:
+    socket_path = _indexd_socket_path()
+    if not socket_path:
+        return None
+    context = {
+        "projectDir": str(Path(project_dir).expanduser().resolve()),
+        "indexStorePath": str(Path(index_store_path).expanduser().resolve()),
+        "graphDBPath": str(Path(graph_db_path).expanduser().resolve()),
+        "targetArgs": list(target_args or []),
+        "entryTarget": entry_target,
+        "incremental": incremental,
+    }
+    try:
+        client = _IndexdClient(socket_path)
+        return client.register_session(index_store_path, graph_db_path, context)
+    except Exception:
+        return None
 
 
 def _run_indexd(

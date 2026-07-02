@@ -2,6 +2,7 @@ import json
 import pytest
 from unittest.mock import patch
 from orchard.ingest.indexstore import (
+    _IndexdClient,
     _default_indexd_socket_path,
     _daemon_matches_current_build,
     _cli_path,
@@ -18,6 +19,7 @@ from orchard.ingest.indexstore import (
     indexd_status,
     list_source_files,
     read_index_store,
+    register_indexd_session,
     OccurrenceRecord,
     RelationRecord,
     shutdown_indexd,
@@ -395,6 +397,96 @@ def test_run_indexd_uses_client_warm_and_scan(monkeypatch):
     assert captured["scan"] == ("session-1", 123.0, False)
     assert len(lines) == 1
     assert '"all":["f"]' in stderr
+
+
+def test_indexd_client_register_session_sends_expected_payload(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    def fake_request(self, payload):
+        captured["payload"] = payload
+        return [{"ok": True, "result": {"sessionId": "session-1"}}]
+
+    monkeypatch.setattr(_IndexdClient, "_request", fake_request)
+
+    client = _IndexdClient("/tmp/indexd.sock")
+    result = client.register_session(
+        store_path=str(tmp_path / ".." / "IndexStore"),
+        graph_db_path=str(tmp_path / ".." / "graph.db"),
+        context={
+            "projectDir": str(tmp_path / ".." / "project"),
+            "indexStorePath": str(tmp_path / ".." / "IndexStore"),
+            "graphDBPath": str(tmp_path / ".." / "graph.db"),
+            "targetArgs": ["Zoom", "zPSApp"],
+            "entryTarget": "Zoom",
+            "incremental": True,
+        },
+    )
+
+    assert result == {"sessionId": "session-1"}
+    assert captured["payload"] == {
+        "id": "register_session",
+        "method": "register_session",
+        "params": {
+            "storePath": str((tmp_path / ".." / "IndexStore").resolve()),
+            "graphDBPath": str((tmp_path / ".." / "graph.db").resolve()),
+            "context": {
+                "projectDir": str((tmp_path / ".." / "project").resolve()),
+                "indexStorePath": str((tmp_path / ".." / "IndexStore").resolve()),
+                "graphDBPath": str((tmp_path / ".." / "graph.db").resolve()),
+                "targetArgs": ["Zoom", "zPSApp"],
+                "entryTarget": "Zoom",
+                "incremental": True,
+            },
+        },
+    }
+
+
+def test_register_indexd_session_returns_none_without_autostart_when_socket_is_unreachable(monkeypatch):
+    monkeypatch.setenv("ORCHARD_INDEXD_SOCKET", "/tmp/indexd.sock")
+
+    def fail_if_called(_socket_path):
+        raise AssertionError("register_indexd_session must not autostart/restart indexd")
+
+    class FakeClient:
+        def __init__(self, socket_path):
+            assert socket_path == "/tmp/indexd.sock"
+
+        def register_session(self, *_args, **_kwargs):
+            raise ConnectionError("socket unreachable")
+
+    monkeypatch.setattr("orchard.ingest.indexstore._ensure_indexd_running", fail_if_called)
+    monkeypatch.setattr("orchard.ingest.indexstore._IndexdClient", FakeClient)
+
+    result = register_indexd_session(
+        project_dir="/repo",
+        index_store_path="/repo/DerivedData/IndexStore",
+        graph_db_path="/repo/.orchard/graph.db",
+        target_args=["Zoom"],
+        entry_target="Zoom",
+        incremental=True,
+    )
+
+    assert result is None
+
+
+def test_register_indexd_session_returns_none_when_socket_is_missing(monkeypatch):
+    monkeypatch.delenv("ORCHARD_INDEXD_SOCKET", raising=False)
+    monkeypatch.setenv("ORCHARD_INDEXD_AUTOSTART", "0")
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore._IndexdClient",
+        lambda *_args, **_kwargs: pytest.fail("client should not be constructed"),
+    )
+
+    result = register_indexd_session(
+        project_dir="/repo",
+        index_store_path="/repo/DerivedData/IndexStore",
+        graph_db_path="/repo/.orchard/graph.db",
+        target_args=["Zoom"],
+        entry_target="Zoom",
+        incremental=True,
+    )
+
+    assert result is None
 
 
 def test_indexd_status_reports_ping_and_build_match(monkeypatch):

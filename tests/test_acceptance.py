@@ -987,6 +987,61 @@ def test_cmd_ingest_persists_compiled_scope_state(tmp_path, monkeypatch):
     assert "index_store_paths" not in data
 
 
+def test_cmd_ingest_registers_indexd_session_with_normalized_context(tmp_path, monkeypatch):
+    from orchard.cli import cmd_ingest
+    from orchard.ingest.indexstore import IndexStoreResult
+
+    project = tmp_path / "Zoom.xcodeproj"
+    project.mkdir()
+    derived_data = tmp_path / "Zoom-abc"
+    captured: dict[str, object] = {}
+    events: list[str] = []
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(project))
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.match_derived_data",
+        lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
+    )
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr(
+        "orchard.build.xcode_settings.resolve_source_roots_for_targets",
+        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.register_indexd_session",
+        lambda **kwargs: events.append("register") or captured.update(kwargs) or {"sessionId": "session-1"},
+    )
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.read_index_store",
+        lambda *args, **kwargs: events.append("read") or (IndexStoreResult(), None, None),
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+
+    cmd_ingest([
+        "--project-dir", str(tmp_path),
+        "--target", "Zoom",
+    ])
+
+    assert events[:2] == ["register", "read"]
+    assert captured == {
+        "project_dir": str(tmp_path.resolve()),
+        "index_store_path": str((derived_data / "Index.noindex" / "DataStore").resolve()),
+        "graph_db_path": str((tmp_path / ".orchard" / "graph.db").resolve()),
+        "target_args": ["Zoom", "zPSApp"],
+        "entry_target": "Zoom",
+        "incremental": True,
+    }
+
+
 def test_cmd_ingest_logs_and_upserts_compiled_scope_once(tmp_path, monkeypatch, capsys):
     from orchard.cli import cmd_ingest
     from orchard.ingest.indexstore import IndexStoreResult, SymbolLineRecord
