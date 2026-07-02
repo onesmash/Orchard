@@ -136,11 +136,18 @@ The isolation boundary is the ingest session. Each session represents one rememb
 Typical session identity should be derived from the scope-defining ingest inputs, such as:
 
 - `index-store` path
-- `project-dir`
-- target set or entry target
-- any additional scope inputs that change which graph data is produced
+- graph database path
 
 When a watch event arrives, the daemon should first identify the affected session, then schedule background ingest only for that session's remembered scope.
+
+For v1, session identity should be normalized from:
+
+- canonical `index-store` path
+- canonical graph database path
+
+The daemon should treat that pair as the stable input/output identity of a session. If a later CLI run resolves to the same `index-store` path and graph database path, it should reuse the existing session rather than create a new one.
+
+Target-set differences do not create a new session in this model. Instead, a later CLI run with the same session key refreshes the remembered ingest context stored on that session.
 
 ### Locking model
 
