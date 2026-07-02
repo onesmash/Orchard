@@ -905,6 +905,22 @@ def cmd_stats(args: list[str]):
     conn.close()
 
 
+def cmd_indexd(args: list[str]):
+    import argparse
+    from orchard.ingest.indexstore import indexd_status, shutdown_indexd
+
+    ap = argparse.ArgumentParser(prog="orchard indexd")
+    ap.add_argument("action", choices=["status", "shutdown"])
+    ap.add_argument("--socket", default="", help="Override daemon socket path")
+    ns = ap.parse_args(args)
+
+    if ns.action == "status":
+        _print_json(indexd_status(ns.socket or None))
+        return
+
+    _print_json(shutdown_indexd(ns.socket or None))
+
+
 # ---------------------------------------------------------------------------
 # Audit command
 # ---------------------------------------------------------------------------
@@ -1394,6 +1410,7 @@ COMMANDS: dict[str, tuple] = {
     "find_references": (cmd_find_references, "Find incoming and outgoing references for a symbol"),
     "hierarchy":     (cmd_hierarchy,     "Show type hierarchy (supertypes/subtypes)"),
     "ingest":        (cmd_ingest,        "Build the graph from Xcode IndexStore data"),
+    "indexd":        (cmd_indexd,        "Manage local orchard-indexd daemon state"),
     "stats":         (cmd_stats,         "Database overview and freshness check"),
     "audit":         (cmd_audit,         "Module coverage report with Xcode target gap detection"),
     "process":       (cmd_process_list,  "List detected execution flows (Process nodes)"),

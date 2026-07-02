@@ -170,21 +170,16 @@ logProgress("resolved libIndexStore at \(dylibPath)")
 
 // MARK: - Open IndexStoreDB (per-run temp database)
 
-let dbPath = persistentDatabasePath(storePath: storePath)
-try? FileManager.default.createDirectory(atPath: dbPath, withIntermediateDirectories: true)
-
-logProgress("opening IndexStoreDB with persistent databasePath=\(dbPath)")
-let libraryStart = Date()
-let library = try IndexStoreLibrary(dylibPath: dylibPath)
-logProgress("IndexStoreLibrary loaded in \(stageSeconds(since: libraryStart))")
+let expectedDBPath = persistentDatabasePath(storePath: storePath)
+logProgress("opening IndexStoreDB with persistent databasePath=\(expectedDBPath)")
 let dbOpenStart = Date()
-let db = try IndexStoreDB(
+let openedSession = try openIndexSession(
   storePath: storePath,
-  databasePath: dbPath,
-  library: library,
+  dylibPath: dylibPath,
   waitUntilDoneInitializing: true,
   listenToUnitEvents: false
 )
+let db = openedSession.db
 logProgress("IndexStoreDB opened in \(stageSeconds(since: dbOpenStart)); starting initial scan")
 let initialScanStart = Date()
 db.pollForUnitChangesAndWait(isInitialScan: true)
@@ -270,42 +265,20 @@ func underRoot(_ p: String) -> Bool {
   return true
 }
 
-// Note: URL.pathExtension returns the extension WITHOUT a leading dot.
-let sourceExtensions: Set<String> = [
-  "swift", "m", "mm", "c", "cc", "cpp", "cxx", "c++",
-  "h", "hh", "hpp", "hxx",
-]
-
 var filePaths: [String] = []
-
-let effectiveSourceRoots: [String]
-if !sourceRoots.isEmpty {
-  effectiveSourceRoots = sourceRoots
-} else if !targets.isEmpty {
-  effectiveSourceRoots = (try? sourceRootsForTargets(indexStorePath: storePath, targets: targets)) ?? []
-  if !effectiveSourceRoots.isEmpty {
-    logProgress("derived \(effectiveSourceRoots.count) source roots from targets")
-  }
-} else {
-  effectiveSourceRoots = []
+let effectiveSourceRoots = resolveEffectiveSourceRoots(
+  explicitSourceRoots: sourceRoots,
+  targets: targets,
+  storePath: storePath
+)
+if sourceRoots.isEmpty && !effectiveSourceRoots.isEmpty {
+  logProgress("derived \(effectiveSourceRoots.count) source roots from targets")
 }
 
 if !effectiveSourceRoots.isEmpty {
-  let fm = FileManager.default
   logProgress("enumerating source files under source roots")
   let enumerationStart = Date()
-  var seen = Set<String>()
-  for root in effectiveSourceRoots {
-    let baseURL = URL(fileURLWithPath: root)
-    if let enumerator = fm.enumerator(at: baseURL, includingPropertiesForKeys: nil) {
-      while let url = enumerator.nextObject() as? URL {
-        if sourceExtensions.contains(url.pathExtension) {
-          let p = url.path
-          if underRoot(p) && seen.insert(p).inserted { filePaths.append(p) }
-        }
-      }
-    }
-  }
+  filePaths = enumerateSourceFiles(sourceRoots: effectiveSourceRoots, underRoot: underRoot)
   logProgress("filesystem enumeration completed in \(stageSeconds(since: enumerationStart))")
 } else {
   FileHandle.standardError.write(
@@ -313,14 +286,7 @@ if !effectiveSourceRoots.isEmpty {
   )
   logProgress("discovering file paths via allSymbolNames fallback")
   let fallbackDiscoveryStart = Date()
-  var seen = Set<String>()
-  for name in db.allSymbolNames() {
-    for occ in db.canonicalOccurrences(ofName: name) {
-      let p = occ.location.path
-      if !p.isEmpty { seen.insert(p) }
-    }
-  }
-  filePaths = Array(seen)
+  filePaths = discoverFilePaths(db: db)
   logProgress("allSymbolNames discovery completed in \(stageSeconds(since: fallbackDiscoveryStart))")
 }
 
@@ -338,21 +304,19 @@ if listFilesOnly {
 var allFiles = filePaths
 var changedFiles: [String] = []
 if let since = incrementalSince {
+  let filtered = filterChangedFiles(db: db, allFiles: filePaths, since: since)
+  changedFiles = filtered.changedFiles
+  let skipped = filtered.skippedCount
   let sinceDate = Date(timeIntervalSince1970: since)
-  var skipped = 0
-  changedFiles = filePaths.filter { fp in
-    guard let unitDate = db.dateOfLatestUnitFor(filePath: fp) else {
-      // No unit → new file, treat as changed.
-      return true
-    }
-    return unitDate > sinceDate
-  }
-  skipped = filePaths.count - changedFiles.count
   logProgress("incremental: \(changedFiles.count) changed, \(skipped) skipped (since \(sinceDate))")
   if changedFiles.isEmpty {
     // No changes — emit empty output but report file list via stderr.
-    let status: [String: Any] = ["changed": [], "all": allFiles]
-    let json = try! JSONSerialization.data(withJSONObject: status, options: [])
+    let json = try! makeFileStatusPayload(
+      incrementalSince: incrementalSince,
+      changedFiles: [],
+      allFiles: allFiles,
+      outputPathMappings: []
+    )
     FileHandle.standardError.write(json)
     FileHandle.standardError.write("\n".data(using: .utf8)!)
     exit(0)
@@ -401,132 +365,32 @@ if dumpUnitOutputPaths {
   logProgress("raw unit output-path mapping completed in \(stageSeconds(since: mappingStart))")
 }
 
-// 2. First pass: collect best (canonical) occurrence per USR.
-//    SourceKit-LSP uses `forEachCanonicalSymbolOccurrence` which picks ONE
-//    canonical provider per USR across all TUs.  We replicate that by
-//    preferring definition / declaration (the "authoritative" occurrence)
-//    over call / reference sites.  Priority breaks ties deterministically.
-
-struct CanonicalSlot {
-  let usr: String
-  let name: String
-  let symbolKind: String
-  let language: String
-  let module: String
-  let file: String
-  let priority: Int
-}
-
-/// Higher = more authoritative (definition > declaration > other).
-func _canonicalPriority(_ roles: SymbolRole) -> Int {
-  if roles.contains(.definition)   { return 3 }
-  if roles.contains(.declaration)  { return 2 }
-  return 1
-}
-
-func _langString(_ lang: Language) -> String {
-  switch lang { case .swift: return "swift"; case .objc: return "objc"; case .c: return "c"; case .cxx: return "cxx" }
-}
-
-var bestSlot: [String: CanonicalSlot] = [:]   // usr → canonical descriptor
-var dupCount = 0
-bestSlot.reserveCapacity(filePaths.count * 8)
-var emittedRels = Set<RelationDedupKey>()
-emittedRels.reserveCapacity(filePaths.count * 16)
-var processedFileCount = 0
-
 logProgress("pass 1: scanning all files for canonical symbols + relations")
-
-for file in filePaths {
-  processedFileCount += 1
-  if processedFileCount == 1 || processedFileCount % 250 == 0 || processedFileCount == filePaths.count {
-    logInlineProgress(
-      scanProgressMessage(processedFileCount, filePaths.count),
-      finished: processedFileCount == filePaths.count
-    )
-  }
-  for occ in db.symbolOccurrences(inFilePath: file) {
-    let usr = occ.symbol.usr
-    let roles = occ.roles
-    let occurrenceRole = occurrenceRoleName(roles)
-    let path = occ.location.path
-    let line = occ.location.line
-    let col = occ.location.utf8Column
-
-    // ---- Symbol descriptor: prefer canonical (highest-priority) occurrence ----
-    let priority = _canonicalPriority(roles)
-    if let cur = bestSlot[usr] {
-      if priority > cur.priority {
-        dupCount += 1
-        bestSlot[usr] = CanonicalSlot(
-          usr: usr, name: occ.symbol.name,
-          symbolKind: String(describing: occ.symbol.kind),
-          language: _langString(occ.symbol.language),
-          module: occ.location.moduleName, file: file, priority: priority)
-      }
-    } else {
-      bestSlot[usr] = CanonicalSlot(
-        usr: usr, name: occ.symbol.name,
-        symbolKind: String(describing: occ.symbol.kind),
-        language: _langString(occ.symbol.language),
-        module: occ.location.moduleName, file: file, priority: priority)
-    }
-
-    // ---- Occurrences ----
-    if emitOccurrences && (roles.contains(.definition) || roles.contains(.declaration) || roles.contains(.call)) {
-      writeLine(
-        "{\"kind\":\"occurrence\",\"usr\":\(js(usr)),"
-        + "\"file\":\(js(path)),\"line\":\(line),\"column\":\(col),"
-        + "\"role\":\(js(occurrenceRole))}"
+let scanSummary = try scanCanonicalSymbolsAndRelations(
+  db: db,
+  filePaths: filePaths,
+  emitOccurrences: emitOccurrences,
+  emit: { writeLine($0) },
+  progress: { processedFileCount, totalFileCount in
+    if processedFileCount == 1 || processedFileCount % 250 == 0 || processedFileCount == totalFileCount {
+      logInlineProgress(
+        scanProgressMessage(processedFileCount, totalFileCount),
+        finished: processedFileCount == totalFileCount
       )
     }
-
-    // ---- Relations ----
-    for rel in occ.relations {
-      for roleName in relationRoleNames(rel.roles) {
-        let key = RelationDedupKey(
-          fromUSR: usr,
-          toUSR: rel.symbol.usr,
-          role: roleName,
-          occurrenceRole: occurrenceRole
-        )
-        if emittedRels.insert(key).inserted {
-          writeLine(
-            "{\"kind\":\"relation\",\"from_usr\":\(js(usr)),"
-            + "\"from_usr_name\":\(js(occ.symbol.name)),"
-            + "\"to_usr\":\(js(rel.symbol.usr)),"
-            + "\"to_usr_name\":\(js(rel.symbol.name)),"
-            + "\"role\":\(js(roleName)),"
-            + "\"occurrence_role\":\(js(occurrenceRole)),"
-            + "\"file\":\(js(path)),\"line\":\(line),\"column\":\(col)}"
-          )
-        }
-      }
-    }
   }
-}
-
-// ---- Emit symbol descriptors from canonical slots ----
-logProgress("pass 1 done: canonical symbols=\(bestSlot.count) (upgraded \(dupCount) duplicates)")
-
-for (_, slot) in bestSlot {
-  writeLine(
-    "{\"kind\":\"symbol\",\"usr\":\(js(slot.usr)),"
-    + "\"name\":\(js(slot.name)),\"symbol_kind\":\(js(slot.symbolKind)),"
-    + "\"language\":\(js(slot.language)),\"module\":\(js(slot.module)),"
-    + "\"file\":\(js(slot.file))}"
-  )
-}
+)
+logProgress("pass 1 done: canonical symbols=\(scanSummary.symbolCount) (upgraded \(scanSummary.duplicateUpgradeCount) duplicates)")
 
 // ---- File status (stderr, for Python to consume) ----
-let statusChangedFiles = incrementalSince != nil ? changedFiles : []
-var status: [String: Any] = ["changed": statusChangedFiles, "all": allFiles]
-if !outputPathMappingsForStatus.isEmpty {
-  status["output_path_mappings"] = outputPathMappingsForStatus
-}
-let statusJSON = try! JSONSerialization.data(withJSONObject: status, options: [])
+let statusJSON = try! makeFileStatusPayload(
+  incrementalSince: incrementalSince,
+  changedFiles: changedFiles,
+  allFiles: allFiles,
+  outputPathMappings: outputPathMappingsForStatus
+)
 lineWriter.flush()
 FileHandle.standardError.write(statusJSON)
 FileHandle.standardError.write("\n".data(using: .utf8)!)
 
-logProgress("completed emit: symbols=\(bestSlot.count) relations=\(emittedRels.count)")
+logProgress("completed emit: symbols=\(scanSummary.symbolCount) relations=\(scanSummary.relationCount)")

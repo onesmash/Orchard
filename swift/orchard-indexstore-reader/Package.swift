@@ -16,10 +16,18 @@ let package = Package(
         .product(name: "IndexStore", package: "indexstore-db"),
       ]
     ),
+    .executableTarget(
+      name: "orchard-indexd",
+      dependencies: [
+        .product(name: "IndexStoreDB", package: "indexstore-db"),
+        .product(name: "IndexStore", package: "indexstore-db"),
+      ]
+    ),
     .testTarget(
       name: "orchard-indexstore-readerTests",
       dependencies: [
         .target(name: "orchard-indexstore-reader"),
+        .target(name: "orchard-indexd"),
       ]
     ),
   ]

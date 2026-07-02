@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from orchard.graph.db import get_connection, init_schema
-from orchard.ingest.indexstore import _cli_path, read_index_store
+from orchard.ingest.indexstore import _cli_path, _indexd_path, read_index_store
 from orchard.ingest.symbolgraph import SymbolRecord
 from orchard.normalize.identity import upsert_calls, upsert_symbols
 from orchard.handlers.callers import CallerRequest, find_callers
@@ -186,6 +186,18 @@ def test_installed_wheel_cli_can_ingest_minimal_index(tmp_path):
         text=True,
     ).stdout.strip()
     assert "site-packages/orchard/_bin/" in cli_path
+
+    indexd_path = subprocess.run(
+        [
+            str(python_bin),
+            "-c",
+            "from orchard.ingest.indexstore import _indexd_path; print(_indexd_path())",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert "site-packages/orchard/_bin/" in indexd_path
 
     project_dir = tmp_path / "project"
     project_dir.mkdir()

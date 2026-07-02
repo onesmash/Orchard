@@ -35,18 +35,23 @@ class CustomBuildHook(BuildHookInterface):
             return
 
         pkg = root / "swift" / "orchard-indexstore-reader"
-        print("Building packaged orchard-indexstore-reader (release)...", file=sys.stderr)
+        print("Building packaged orchard-indexstore-reader sidecars (release)...", file=sys.stderr)
         subprocess.run(
             ["swift", "build", "-c", "release", "--package-path", str(pkg)],
             check=True,
         )
 
-        binary = pkg / ".build" / "release" / "orchard-indexstore-reader"
-        if not binary.exists():
-            raise FileNotFoundError(f"Expected build output not found: {binary}")
+        reader_binary = pkg / ".build" / "release" / "orchard-indexstore-reader"
+        indexd_binary = pkg / ".build" / "release" / "orchard-indexd"
+        for binary in [reader_binary, indexd_binary]:
+            if not binary.exists():
+                raise FileNotFoundError(f"Expected build output not found: {binary}")
 
         build_data["pure_python"] = False
         build_data["tag"] = "py3-none-macosx_11_0_arm64"
-        build_data.setdefault("force_include", {})[str(binary)] = (
+        build_data.setdefault("force_include", {})[str(reader_binary)] = (
             "orchard/_bin/darwin-arm64/orchard-indexstore-reader"
+        )
+        build_data.setdefault("force_include", {})[str(indexd_binary)] = (
+            "orchard/_bin/darwin-arm64/orchard-indexd"
         )

@@ -17,7 +17,7 @@ from orchard.build.context import BuildContext, make_build_id
 from orchard.handlers.symbol_context import get_symbol_context, SymbolContextRequest
 from orchard.handlers.callers import find_callers, CallerRequest
 from orchard.validation.freshness import freshness_for
-from orchard.cli import cmd_find_callers, cmd_find_callees, cmd_find_references, cmd_search, cmd_stats
+from orchard.cli import cmd_find_callers, cmd_find_callees, cmd_find_references, cmd_indexd, cmd_search, cmd_stats
 
 
 @pytest.fixture
@@ -1142,6 +1142,39 @@ def test_cmd_stats_reports_parent_database_discovery(tmp_path, capsys, monkeypat
     cmd_stats([])
     out = capsys.readouterr().out
     assert f"Using database at {db_path} (found in parent directory)" in out
+
+
+def test_cmd_indexd_status_prints_json(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.indexd_status",
+        lambda _socket_path=None: {
+            "socket_path": "/tmp/orchard-indexd.sock",
+            "running": True,
+            "matches_current_build": True,
+        },
+    )
+
+    cmd_indexd(["status"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["running"] is True
+    assert payload["matches_current_build"] is True
+
+
+def test_cmd_indexd_shutdown_prints_json(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.shutdown_indexd",
+        lambda _socket_path=None: {
+            "stopped": True,
+            "status": {"running": False},
+        },
+    )
+
+    cmd_indexd(["shutdown"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stopped"] is True
+    assert payload["status"]["running"] is False
 
 
 def test_cli_json_output_not_polluted_by_parent_db_notice(tmp_path, capsys, monkeypatch):

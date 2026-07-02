@@ -1,6 +1,7 @@
 import IndexStoreDB
 import XCTest
 @testable import orchard_indexstore_reader
+@testable import orchard_indexd
 
 final class ExplicitOutputUnitsTests: XCTestCase {
   private func openIndexStoreDB(storePath: String) throws -> IndexStoreDB {
@@ -57,6 +58,55 @@ final class ExplicitOutputUnitsTests: XCTestCase {
 
   func testScanProgressMessageHidesFilePaths() {
     XCTAssertEqual(scanProgressMessage(250, 7228), "scanning files 250/7228")
+  }
+
+  func testReaderScannerHelpersProduceExpectedFixtureRelations() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let fixture = try buildMinimalSwiftIndex(tmp: tmp)
+    let db = try openIndexStoreDB(storePath: fixture.storePath.path)
+    var lines: [String] = []
+
+    let summary = try scanCanonicalSymbolsAndRelations(
+      db: db,
+      filePaths: [fixture.sourceFile.path],
+      emitOccurrences: false,
+      emit: { lines.append($0) }
+    )
+
+    XCTAssertEqual(summary.symbolCount, 3)
+    XCTAssertEqual(summary.relationCount, 4)
+    XCTAssertTrue(lines.contains { $0.contains("\"kind\":\"symbol\"") })
+    XCTAssertTrue(lines.contains { $0.contains("\"kind\":\"relation\"") })
+  }
+
+  func testIndexdSessionManagerReusesSessionForSameStorePath() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let fixture = try buildMinimalSwiftIndex(tmp: tmp)
+    let manager = SessionManager()
+    let dylibPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/libIndexStore.dylib"
+
+    let first = try manager.getOrCreateSession(
+      storePath: fixture.storePath.path,
+      sourceRoots: [tmp.path],
+      targets: ["Zoom"],
+      dylibPath: dylibPath
+    )
+    let second = try manager.getOrCreateSession(
+      storePath: fixture.storePath.path,
+      sourceRoots: [tmp.path],
+      targets: ["Zoom"],
+      dylibPath: dylibPath
+    )
+
+    XCTAssertEqual(first.session.sessionId, second.session.sessionId)
+    XCTAssertFalse(first.reused)
+    XCTAssertTrue(second.reused)
   }
 
   func testSourceRootsForTargetsGroupsFilesAcrossMultipleRoots() throws {
@@ -315,7 +365,7 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     let db = try openIndexStoreDB(storePath: fixture.storePath.path)
     let dylibPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/libIndexStore.dylib"
 
-    let mappings = try collectRawUnitOutputPathMappings(
+    let mappings = try orchard_indexstore_reader.collectRawUnitOutputPathMappings(
       indexStorePath: fixture.storePath.path,
       dylibPath: dylibPath,
       db: db,

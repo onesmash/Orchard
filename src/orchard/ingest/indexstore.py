@@ -1,14 +1,21 @@
 import json
 import os
 import platform
+import socket
 import subprocess
 import shutil
 import sys
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
+
+from orchard import __version__ as ORCHARD_VERSION
+
+
+_INDEXD_PROTOCOL_VERSION = 1
 
 
 @dataclass
@@ -54,7 +61,7 @@ class IndexStoreResult:
 
 
 def _cli_path() -> str:
-    packaged = _packaged_cli_path()
+    packaged = _packaged_binary_path("orchard-indexstore-reader")
     if packaged:
         return packaged
     repo_root = Path(__file__).parent.parent.parent.parent
@@ -71,8 +78,8 @@ def _cli_path() -> str:
     raise FileNotFoundError("orchard-indexstore-reader not found; build the Swift CLI first")
 
 
-def _packaged_cli_path() -> str | None:
-    rel = _packaged_cli_relpath()
+def _packaged_binary_path(binary_name: str) -> str | None:
+    rel = _packaged_binary_relpath(binary_name)
     if rel is None:
         return None
     try:
@@ -90,14 +97,22 @@ def _packaged_cli_path() -> str | None:
     return str(candidate)
 
 
-def _packaged_cli_relpath() -> Path | None:
+def _packaged_binary_relpath(binary_name: str) -> Path | None:
     system = platform.system().lower()
     machine = platform.machine().lower()
     if system == "darwin" and machine in {"arm64", "aarch64"}:
-        return Path("darwin-arm64") / "orchard-indexstore-reader"
+        return Path("darwin-arm64") / binary_name
     if system == "darwin" and machine == "x86_64":
-        return Path("darwin-x86_64") / "orchard-indexstore-reader"
+        return Path("darwin-x86_64") / binary_name
     return None
+
+
+def _packaged_cli_path() -> str | None:
+    return _packaged_binary_path("orchard-indexstore-reader")
+
+
+def _packaged_cli_relpath() -> Path | None:
+    return _packaged_binary_relpath("orchard-indexstore-reader")
 
 
 def _run_cli(
@@ -160,6 +175,387 @@ def _run_cli(
     return stdout_lines, stderr_data
 
 
+def _indexd_path() -> str:
+    packaged = _packaged_binary_path("orchard-indexd")
+    if packaged:
+        return packaged
+    repo_root = Path(__file__).parent.parent.parent.parent
+    candidates = [
+        repo_root / "swift" / "orchard-indexstore-reader" / ".build" / "release" / "orchard-indexd",
+        repo_root / "bin" / "orchard-indexd",
+    ]
+    for candidate in candidates:
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    on_path = shutil.which("orchard-indexd")
+    if on_path:
+        return on_path
+    raise FileNotFoundError("orchard-indexd not found; build the Swift daemon first")
+
+
+def _indexd_autostart_enabled() -> bool:
+    return os.environ.get("ORCHARD_INDEXD_AUTOSTART", "1") != "0"
+
+
+def _default_indexd_socket_path() -> str:
+    run_dir = Path.home() / ".orchard" / "run"
+    return str(run_dir / "orchard-indexd.sock")
+
+
+def _indexd_socket_path() -> str:
+    configured = os.environ.get("ORCHARD_INDEXD_SOCKET")
+    if configured:
+        return configured
+    if _indexd_autostart_enabled():
+        return _default_indexd_socket_path()
+    return ""
+
+
+def _indexd_log_path() -> str:
+    log_dir = Path.home() / ".orchard" / "logs"
+    return str(log_dir / "orchard-indexd.log")
+
+
+def _indexd_pid_path(socket_path: str | None = None) -> str:
+    resolved = socket_path or _indexd_socket_path()
+    socket_file = Path(resolved)
+    return str(socket_file.with_suffix(".pid"))
+
+
+_INDEXD_START_LOCK = threading.Lock()
+
+
+def _current_indexd_binary_info() -> dict[str, int | str]:
+    binary_path = Path(_indexd_path()).resolve()
+    stat = binary_path.stat()
+    return {
+        "protocol_version": _INDEXD_PROTOCOL_VERSION,
+        "orchard_version": ORCHARD_VERSION,
+        "executable_path": str(binary_path),
+        "binary_size": stat.st_size,
+        "binary_mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _daemon_matches_current_build(info: dict) -> bool:
+    try:
+        current = _current_indexd_binary_info()
+    except Exception:
+        return False
+    return (
+        info.get("protocolVersion") == current["protocol_version"]
+        and info.get("executablePath") == current["executable_path"]
+        and info.get("binarySize") == current["binary_size"]
+        and info.get("binaryMTimeNs") == current["binary_mtime_ns"]
+    )
+
+
+def _read_indexd_pid(pid_path: str) -> int | None:
+    try:
+        raw = Path(pid_path).read_text(encoding="utf-8").strip()
+        if not raw:
+            return None
+        return int(raw)
+    except (OSError, ValueError):
+        return None
+
+
+def _is_process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _cleanup_stale_indexd_socket(socket_path: str, pid_path: str) -> None:
+    pid = _read_indexd_pid(pid_path)
+    if pid is not None and _is_process_alive(pid):
+        return
+    with suppress(FileNotFoundError):
+        Path(socket_path).unlink()
+    with suppress(FileNotFoundError):
+        Path(pid_path).unlink()
+
+
+def _wait_for_indexd(socket_path: str, timeout_s: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    client = _IndexdClient(socket_path)
+    while time.monotonic() < deadline:
+        with suppress(Exception):
+            info = client.ping()
+            if info and _daemon_matches_current_build(info):
+                return True
+        time.sleep(0.1)
+    return False
+
+
+def _start_indexd_process(socket_path: str) -> subprocess.Popen[str]:
+    socket_file = Path(socket_path)
+    socket_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_path = _indexd_pid_path(socket_path)
+    _cleanup_stale_indexd_socket(socket_path, pid_path)
+
+    log_path = Path(_indexd_log_path())
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = log_path.open("a", encoding="utf-8")
+    return subprocess.Popen(
+        [_indexd_path(), "--socket", socket_path, "--pid-file", pid_path],
+        stdout=log_handle,
+        stderr=log_handle,
+        text=True,
+        start_new_session=True,
+    )
+
+
+def _ensure_indexd_running(socket_path: str) -> bool:
+    if not socket_path:
+        return False
+    pid_path = _indexd_pid_path(socket_path)
+    _cleanup_stale_indexd_socket(socket_path, pid_path)
+    with suppress(Exception):
+        info = _IndexdClient(socket_path).ping()
+        if info and _daemon_matches_current_build(info):
+            return True
+        if info:
+            _IndexdClient(socket_path).shutdown()
+
+    if not _indexd_autostart_enabled():
+        return False
+
+    with _INDEXD_START_LOCK:
+        _cleanup_stale_indexd_socket(socket_path, pid_path)
+        with suppress(Exception):
+            info = _IndexdClient(socket_path).ping()
+            if info and _daemon_matches_current_build(info):
+                return True
+            if info:
+                _IndexdClient(socket_path).shutdown()
+
+        proc = _start_indexd_process(socket_path)
+        if _wait_for_indexd(socket_path):
+            return True
+        with suppress(Exception):
+            proc.terminate()
+        _cleanup_stale_indexd_socket(socket_path, pid_path)
+        return False
+
+
+class _IndexdClient:
+    def __init__(self, socket_path: str):
+        if not socket_path:
+            raise ConnectionError("ORCHARD_INDEXD_SOCKET not configured")
+        self.socket_path = socket_path
+
+    def _request(self, payload: dict) -> list[dict]:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.connect(self.socket_path)
+            sock.sendall(json.dumps(payload).encode("utf-8") + b"\n")
+            sock.shutdown(socket.SHUT_WR)
+            data = sock.recv(65536)
+            chunks = [data]
+            while data:
+                data = sock.recv(65536)
+                if data:
+                    chunks.append(data)
+            raw = b"".join(chunks).decode("utf-8")
+        return [json.loads(line) for line in raw.splitlines() if line.strip()]
+
+    def ping(self) -> dict | None:
+        responses = self._request({
+            "id": "ping",
+            "method": "ping",
+            "params": {},
+        })
+        if not responses or not responses[0].get("ok"):
+            return None
+        return responses[0].get("result")
+
+    def shutdown(self) -> None:
+        self._request({
+            "id": "shutdown",
+            "method": "shutdown",
+            "params": {},
+        })
+
+
+def indexd_status(socket_path: str | None = None) -> dict[str, object]:
+    resolved_socket = socket_path or _indexd_socket_path()
+    pid_path = _indexd_pid_path(resolved_socket) if resolved_socket else ""
+    pid = _read_indexd_pid(pid_path) if pid_path else None
+    status: dict[str, object] = {
+        "socket_path": resolved_socket,
+        "pid_path": pid_path,
+        "socket_exists": bool(resolved_socket and Path(resolved_socket).exists()),
+        "pid_file_exists": bool(pid_path and Path(pid_path).exists()),
+        "pid": pid,
+        "pid_alive": bool(pid is not None and _is_process_alive(pid)),
+        "autostart_enabled": _indexd_autostart_enabled(),
+        "matches_current_build": False,
+        "running": False,
+        "ping": None,
+    }
+    if not resolved_socket:
+        return status
+    with suppress(Exception):
+        info = _IndexdClient(resolved_socket).ping()
+        if info:
+            status["running"] = True
+            status["ping"] = info
+            status["matches_current_build"] = _daemon_matches_current_build(info)
+    return status
+
+
+def shutdown_indexd(socket_path: str | None = None) -> dict[str, object]:
+    resolved_socket = socket_path or _indexd_socket_path()
+    pid_path = _indexd_pid_path(resolved_socket) if resolved_socket else ""
+    stopped = False
+    pid = _read_indexd_pid(pid_path) if pid_path else None
+    if resolved_socket:
+        with suppress(Exception):
+            _IndexdClient(resolved_socket).shutdown()
+            stopped = True
+    if pid is not None:
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and _is_process_alive(pid):
+            time.sleep(0.05)
+    _cleanup_stale_indexd_socket(resolved_socket, pid_path)
+    return {
+        "socket_path": resolved_socket,
+        "pid_path": pid_path,
+        "stopped": stopped,
+        "status": indexd_status(resolved_socket),
+    }
+
+    def warm(
+        self,
+        index_store_path: str,
+        source_roots: list[str] | None,
+        targets: list[str] | None,
+    ) -> str:
+        responses = self._request({
+            "id": "warm",
+            "method": "warm",
+            "params": {
+                "storePath": index_store_path,
+                "sourceRoots": source_roots or [],
+                "targets": targets or [],
+            },
+        })
+        if not responses or not responses[0].get("ok"):
+            raise ConnectionError(f"indexd warm failed: {responses}")
+        return responses[0]["result"]["sessionId"]
+
+    def scan(
+        self,
+        session_id: str,
+        incremental_since: float | None,
+        emit_occurrences: bool,
+    ) -> tuple[list[str], str]:
+        responses = self._request({
+            "id": "scan",
+            "method": "scan",
+            "params": {
+                "sessionId": session_id,
+                "incrementalSince": incremental_since,
+                "emitOccurrences": emit_occurrences,
+            },
+        })
+        if not responses:
+            raise ConnectionError("indexd scan returned no responses")
+        lines: list[str] = []
+        file_status: dict | None = None
+        for msg in responses:
+            if msg.get("stream") == "chunk":
+                for record in msg.get("records", []):
+                    if isinstance(record, str):
+                        lines.append(record)
+                    else:
+                        lines.append(json.dumps(record, ensure_ascii=False))
+            elif msg.get("stream") == "end":
+                file_status = msg.get("fileStatus")
+        if file_status is None:
+            raise ConnectionError(f"indexd scan missing fileStatus: {responses}")
+        return lines, json.dumps(file_status, ensure_ascii=False)
+
+    def list_files(self, session_id: str) -> list[str]:
+        responses = self._request({
+            "id": "list_files",
+            "method": "list_files",
+            "params": {"sessionId": session_id},
+        })
+        if not responses or not responses[0].get("ok"):
+            raise ConnectionError(f"indexd list_files failed: {responses}")
+        return responses[0]["result"]["files"]
+
+    def dump_unit_output_paths(self, session_id: str) -> list[dict[str, str]]:
+        responses = self._request({
+            "id": "dump_unit_output_paths",
+            "method": "dump_unit_output_paths",
+            "params": {"sessionId": session_id},
+        })
+        if not responses or not responses[0].get("ok"):
+            raise ConnectionError(f"indexd dump_unit_output_paths failed: {responses}")
+        return responses[0]["result"]["output_path_mappings"]
+
+
+def _run_indexd(
+    index_store_path: str,
+    source_root: str | None = None,
+    source_roots: list[str] | None = None,
+    incremental_since: float | None = None,
+    list_files: bool = False,
+    targets: list[str] | None = None,
+    emit_occurrences: bool = False,
+    dump_unit_output_paths: bool = False,
+):
+    client = _IndexdClient(_indexd_socket_path())
+    roots = source_roots or ([source_root] if source_root else [])
+    session_id = client.warm(index_store_path, roots, targets)
+    if list_files:
+        return [], json.dumps(client.list_files(session_id), ensure_ascii=False)
+    if dump_unit_output_paths:
+        return [json.dumps(client.dump_unit_output_paths(session_id), ensure_ascii=False)], ""
+    return client.scan(session_id, incremental_since, emit_occurrences)
+
+
+def _run_reader(
+    index_store_path: str,
+    source_root: str | None = None,
+    source_roots: list[str] | None = None,
+    incremental_since: float | None = None,
+    list_files: bool = False,
+    targets: list[str] | None = None,
+    emit_occurrences: bool = False,
+    dump_unit_output_paths: bool = False,
+):
+    socket_path = _indexd_socket_path()
+    if socket_path and _ensure_indexd_running(socket_path):
+        try:
+            return _run_indexd(
+                index_store_path,
+                source_root=source_root,
+                source_roots=source_roots,
+                incremental_since=incremental_since,
+                list_files=list_files,
+                targets=targets,
+                emit_occurrences=emit_occurrences,
+                dump_unit_output_paths=dump_unit_output_paths,
+            )
+        except Exception:
+            pass
+    return _run_cli(
+        index_store_path,
+        source_root=source_root,
+        source_roots=source_roots,
+        incremental_since=incremental_since,
+        list_files=list_files,
+        targets=targets,
+        emit_occurrences=emit_occurrences,
+        dump_unit_output_paths=dump_unit_output_paths,
+    )
+
+
 def _parse_file_status(stderr: str) -> dict | None:
     """Extract the file-status JSON dict from the CLI's stderr.
 
@@ -218,7 +614,7 @@ def read_index_store(
 ) -> tuple[IndexStoreResult, dict | None, list[dict[str, str]] | None]:
     t0 = time.monotonic()
     result = IndexStoreResult()
-    lines, stderr = _run_cli(
+    lines, stderr = _run_reader(
         index_store_path,
         source_root=source_root,
         source_roots=source_roots,
@@ -280,14 +676,39 @@ def list_source_files(
     source_root: str | None = None,
 ) -> list[str]:
     """Return the list of source files under *source_root* (via --list-files)."""
-    _, stderr = _run_cli(index_store_path, source_root=source_root, list_files=True)
-    # The JSON array is the last line of stderr.
-    lines = stderr.strip().split("\n")
+    _, payload = _run_reader(index_store_path, source_root=source_root, list_files=True)
+    lines = payload.strip().split("\n")
     for line in reversed(lines):
         line = line.strip()
         if line.startswith("["):
             try:
                 return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+    return []
+
+
+def dump_unit_output_paths(
+    index_store_path: str,
+    source_root: str | None = None,
+    source_roots: list[str] | None = None,
+    targets: list[str] | None = None,
+) -> list[dict[str, str]]:
+    """Return unit/main-file/output-file mappings from the index store."""
+    lines, _ = _run_reader(
+        index_store_path,
+        source_root=source_root,
+        source_roots=source_roots,
+        targets=targets,
+        dump_unit_output_paths=True,
+    )
+    for raw in reversed(lines):
+        line = raw.strip()
+        if line.startswith("["):
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, list):
+                    return obj
             except json.JSONDecodeError:
                 continue
     return []
