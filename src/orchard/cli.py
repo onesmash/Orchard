@@ -287,268 +287,274 @@ def cmd_ingest(args: list[str]):
         print("error: --target is required when no Xcode project is auto-detected",
               file=sys.stderr)
         sys.exit(2)
+    from orchard.ingest.lock import LOCK_BUSY_EXIT_CODE, try_acquire_graph_db_lock
+    graph_db_lock = try_acquire_graph_db_lock(ns.db)
+    if graph_db_lock is None:
+        print("INGEST_LOCK_BUSY", file=sys.stderr)
+        sys.exit(LOCK_BUSY_EXIT_CODE)
 
-    derived_data_root = infer_derived_data_root(index_store)
-    if derived_data_root:
-        compiled_targets = discover_compiled_targets(derived_data_root)
-        if compiled_targets:
-            if entry_target not in compiled_targets:
-                print(
-                    f"error: target '{entry_target}' was not compiled in DerivedData '{derived_data_root}'.",
-                    file=sys.stderr,
-                )
-                print(f"  compiled targets: {', '.join(compiled_targets)}", file=sys.stderr)
-                sys.exit(2)
-            targets = compiled_targets
-    if project is None:
-        project = find_xcode_project(ns.project_dir)
-    source_roots = resolve_source_roots_for_targets(project or ns.project_dir, targets)
-    if compiled_targets and not source_roots:
-        print(
-            f"error: could not resolve source roots from Xcode project config for compiled targets: {', '.join(targets)}",
-            file=sys.stderr,
-        )
-        print(
-            f"  project: {project or ns.project_dir}",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-
-    if not ns.incremental:
-        _reset_graph_db(ns.db)
-    conn = _conn(ns.db)
-    project_dir = str(Path(ns.project_dir).resolve())
-    ctx = BuildContext(
-        build_id="",
-        build_system="xcodebuild",
-        workspace_root=project_dir,
-        scheme=None,
-        target=entry_target,
-        configuration="debug",
-        sdk="",
-        triple="",
-        toolchain_id="xcode",
-        derived_data_path=derived_data_root,
-        index_store_path=index_store,
-        symbolgraph_output_path=ns.symbolgraph or None,
-        commit_sha=None,
-        build_config_hash=f"cli:{','.join(targets) or entry_target}",
-    )
-    ctx.build_id = make_build_id(ctx)
-    upsert_build_snapshot(conn, ctx)
-
-    # Resolve incremental mode.
-    incremental_since: float | None = None
-    old_state: dict | None = load_state(project_dir)
-    if ns.incremental:
-        print(f"incremental: state path {state_path}")
-        if old_state:
-            incremental_since = old_state.get("last_ingest_ts")
-            print(f"incremental: last_ingest_ts {incremental_since}")
-            prev_targets = old_state.get("compiled_targets", [])
-            if prev_targets:
-                print(f"incremental: previously ingested targets: "
-                      f"{','.join(prev_targets)}")
-        else:
-            print("incremental: no previous state found, falling back to full ingest")
-
-    # L1: IndexStore-level fast path — if no unit files changed since last
-    # ingest, skip the entire scan (~100ms vs ~90s).  The unit directory mtime
-    # is shared across all targets in the same IndexStore.
-    if ns.incremental and incremental_since is not None:
-        print(f"incremental: index-store {index_store}")
-        unit_ts = _unit_dir_mtime(index_store)
-        print(f"incremental: unit_ts {unit_ts}")
-        prev_targets = set(old_state.get("compiled_targets", []) if old_state else [])
-        requested_targets = set(targets)
-        if unit_ts <= incremental_since and requested_targets.issubset(prev_targets):
-            print(f"incremental: fast path hit (unit_ts {unit_ts} <= "
-                  f"last_ingest_ts {incremental_since})")
-            conn.close()
-            return
-
-    t0 = time.monotonic()
-    print("ingest: reading index store...", flush=True)
-    read_result = read_index_store(
-        index_store, entry_target,
-        source_roots=source_roots,
-        incremental_since=incremental_since,
-        targets=targets,
-    )
-    if len(read_result) == 2:
-        r, file_status = read_result
-        output_path_mappings = None
-    else:
-        r, file_status, output_path_mappings = read_result
-
-    # Incremental cleanup: delete stale symbols for changed and deleted files
-    # across ALL previously ingested targets.
-    deleted_total = 0
-    if incremental_since is not None and file_status:
-        changed = file_status.get("changed", [])
-        all_files = file_status.get("all", [])
-        old_files = set(old_state.get("files", []) if old_state else [])
-        old_targets = old_state.get("compiled_targets", targets) if old_state else targets
-        deleted_files = old_files - set(all_files)
-        to_clean = changed + list(deleted_files)
-        if to_clean:
-            print(f"incremental: cleaning {len(changed)} changed + "
-                  f"{len(deleted_files)} deleted files across "
-                  f"{len(old_targets)} target(s)...")
-            # scope_id is unused in delete_symbols_for_files — one batch
-            # delete covers all targets.
-            deleted_total = delete_symbols_for_files(conn, entry_target, to_clean)
-            # Batch-delete stale File nodes too (same per-file N+1 issue).
-            conn.execute(
-                "MATCH (f:File) WHERE f.path IN $fps DETACH DELETE f",
-                {"fps": to_clean},
+    with graph_db_lock:
+        derived_data_root = infer_derived_data_root(index_store)
+        if derived_data_root:
+            compiled_targets = discover_compiled_targets(derived_data_root)
+            if compiled_targets:
+                if entry_target not in compiled_targets:
+                    print(
+                        f"error: target '{entry_target}' was not compiled in DerivedData '{derived_data_root}'.",
+                        file=sys.stderr,
+                    )
+                    print(f"  compiled targets: {', '.join(compiled_targets)}", file=sys.stderr)
+                    sys.exit(2)
+                targets = compiled_targets
+        if project is None:
+            project = find_xcode_project(ns.project_dir)
+        source_roots = resolve_source_roots_for_targets(project or ns.project_dir, targets)
+        if compiled_targets and not source_roots:
+            print(
+                f"error: could not resolve source roots from Xcode project config for compiled targets: {', '.join(targets)}",
+                file=sys.stderr,
             )
-            print(f"incremental: {deleted_total:,} old symbols deleted")
-        if not r.symbols and not r.relations:
-            # No changes — update state and exit.
-            all_list = file_status.get("all", []) if file_status else []
-            save_state(project_dir, touch_timestamp(), targets,
-                       index_store, files=all_list)
-            print("incremental: no changes detected")
-            conn.close()
-            return
+            print(
+                f"  project: {project or ns.project_dir}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
 
-    print(f"ingest: {r.elapsed_s}s  {len(r.symbols):,} syms  "
-          f"{len(r.relations):,} rels  {len(targets)} target(s)",
-          flush=True)
-
-    # Treat the compiled targets as one build scope rather than duplicating
-    # the same symbol/relation ingest work once per target.
-    scope_target = entry_target
-    syms = [SymbolRecord(usr=s.usr, precise_id="", name=s.name,
-                         kind=_map_indexstore_kind(s.symbol_kind),
-                         module=s.module or scope_target, language=s.language,
-                         file_path=s.file_path or "", signature="",
-                         access_level="public", container_usr=None)
-            for s in r.symbols]
-    t_us = time.monotonic()
-    upsert_symbols(conn, syms, scope_target)
-    print(f"  symbols: upserted ({time.monotonic()-t_us:.1f}s)", flush=True)
-    t_uc = time.monotonic()
-    upsert_calls(conn, r.relations, scope_target, source="indexstore",
-                 build_id=ctx.build_id)
-    print(f"  calls: upserted ({time.monotonic()-t_uc:.1f}s)", flush=True)
-    t_ui = time.monotonic()
-    upsert_indexstore_rels(conn, r.relations, scope_target, source="indexstore",
-                           build_id=ctx.build_id)
-    print(f"  struct: upserted ({time.monotonic()-t_ui:.1f}s)", flush=True)
-    print(f"  scope: {','.join(targets)}")
-
-    # File upsert (shared across targets).
-    from orchard.normalize.identity import upsert_files
-    t_uf = time.monotonic()
-    fc = upsert_files(conn, syms)
-    print(f"  files: {fc:,} ({time.monotonic()-t_uf:.1f}s)", flush=True)
-    print(f"  [trace] files printed, t={time.monotonic()-t0:.0f}s, sg={ns.symbolgraph!r}",
-          file=sys.stderr, flush=True)
-
-    # SymbolGraph ingest: parse JSON and upsert its symbols + relationships.
-    if ns.symbolgraph:
-        from orchard.ingest.symbolgraph import parse_symbolgraph
-        from orchard.normalize.identity import upsert_symbol_rels
-        t_sg = time.monotonic()
-        sg = parse_symbolgraph(ns.symbolgraph, targets[0])
-        if sg.symbols:
-            upsert_symbols(conn, sg.symbols, targets[0])
-        if sg.relationships:
-            upsert_symbol_rels(conn, sg.relationships, targets[0])
-        print(f"  symbolgraph: {len(sg.symbols):,} syms, "
-              f"{len(sg.relationships):,} rels  ({time.monotonic()-t_sg:.1f}s)")
-
-    print(f"  [trace] before community import, t={time.monotonic()-t0:.0f}s",
-          file=sys.stderr, flush=True)
-    # Community detection via Leiden algorithm.
-    try:
-        t_import_start = time.monotonic()
-        from orchard.derive.community_detection import run_community_detection
-        t_import_done = time.monotonic()
-        print(f"  communities: import took {t_import_done - t_import_start:.1f}s "
-              f"(t={time.monotonic()-t0:.0f}s)", flush=True)
-        t_cd = time.monotonic()
-        result = run_community_detection(conn, ctx.build_id)
-        print(f"  communities: {result['communities_found']} communities, "
-              f"{result['members_assigned']} members  ({time.monotonic()-t_cd:.1f}s)")
-    except Exception:
-        pass  # skip on mock/test databases
-
-    # Notification graph: persist Notification nodes + Posts/Observes edges.
-    try:
-        from orchard.derive.notification_graph import persist_notification_graph
-        t_ng = time.monotonic()
-        print("  notification-graph: scanning source files...", flush=True)
-        # Incremental with no changes → skip grep (empty list).
-        # Incremental with changes → scan only changed files.
-        # Full ingest → scan the known full file set from file_status.
-        if file_status:
-            changed_only = file_status.get("all", [])
-            if incremental_since is not None:
-                changed_only = file_status.get("changed")  # list or None
-                if changed_only is None:
-                    changed_only = []  # no changes → skip
-        else:
-            changed_only = None  # full scan
-        ng_count = persist_notification_graph(
-            conn, source_root=project_dir,
-            build_id=ctx.build_id, changed_files=changed_only)
-        if ng_count:
-            print(f"  notification-graph: {ng_count:,} edges "
-                  f"({time.monotonic()-t_ng:.1f}s)")
-    except Exception as e:
-        pass  # skip when source files are unavailable
-
-    # Process detection via entry-point scoring + BFS tracing.
-    try:
-        from orchard.derive.process_detection import detect_processes
-        print("  processes: detecting execution flows...", flush=True)
-        t_pd = time.monotonic()
-        # Incremental: only re-detect processes whose entry points are in
-        # changed files.  Full ingest (file_status is falsy): detect all.
-        inc_files: list[str] | None = None
-        if incremental_since is not None and file_status:
-            inc_files = file_status.get("changed")
-        procs = detect_processes(conn, ctx.build_id, changed_files=inc_files)
-        cross = sum(1 for p in procs if p.process_type == "cross_community")
-        print(f"  processes: {len(procs)} detected "
-              f"({cross} cross-community)  ({time.monotonic()-t_pd:.1f}s)",
-              flush=True)
-    except Exception as e:
-        print(f"  processes: ERROR — {e}", flush=True)
-
-    t_done = time.monotonic()
-    print(f"done  {t_done - t0:.0f}s  (p_done={t_done - t_pd:.0f}s ago)", flush=True)
-
-    if incremental_since is None and output_path_mappings:
-        save_candidate_output_paths_manifest(
-            project_dir,
-            index_store,
-            targets,
-            output_path_mappings,
+        if not ns.incremental:
+            _reset_graph_db(ns.db)
+        conn = _conn(ns.db)
+        project_dir = str(Path(ns.project_dir).resolve())
+        ctx = BuildContext(
+            build_id="",
+            build_system="xcodebuild",
+            workspace_root=project_dir,
+            scheme=None,
+            target=entry_target,
+            configuration="debug",
+            sdk="",
+            triple="",
+            toolchain_id="xcode",
+            derived_data_path=derived_data_root,
+            index_store_path=index_store,
+            symbolgraph_output_path=ns.symbolgraph or None,
+            commit_sha=None,
+            build_config_hash=f"cli:{','.join(targets) or entry_target}",
         )
+        ctx.build_id = make_build_id(ctx)
+        upsert_build_snapshot(conn, ctx)
 
-    # Persist state for next incremental run.
-    # Reuse the main ingest pass's file-status payload when available.
-    # Incremental uses it for cleanup; full ingest uses the same file list
-    # for state persistence without a second CLI scan.
-    if file_status and "all" in file_status:
-        save_state(project_dir, touch_timestamp(), targets, index_store,
-                   files=file_status["all"])
-    else:
-        source_root = source_roots[0] if len(source_roots) == 1 else None
+        # Resolve incremental mode.
+        incremental_since: float | None = None
+        old_state: dict | None = load_state(project_dir)
+        if ns.incremental:
+            print(f"incremental: state path {state_path}")
+            if old_state:
+                incremental_since = old_state.get("last_ingest_ts")
+                print(f"incremental: last_ingest_ts {incremental_since}")
+                prev_targets = old_state.get("compiled_targets", [])
+                if prev_targets:
+                    print(f"incremental: previously ingested targets: "
+                          f"{','.join(prev_targets)}")
+            else:
+                print("incremental: no previous state found, falling back to full ingest")
+
+        # L1: IndexStore-level fast path — if no unit files changed since last
+        # ingest, skip the entire scan (~100ms vs ~90s).  The unit directory mtime
+        # is shared across all targets in the same IndexStore.
+        if ns.incremental and incremental_since is not None:
+            print(f"incremental: index-store {index_store}")
+            unit_ts = _unit_dir_mtime(index_store)
+            print(f"incremental: unit_ts {unit_ts}")
+            prev_targets = set(old_state.get("compiled_targets", []) if old_state else [])
+            requested_targets = set(targets)
+            if unit_ts <= incremental_since and requested_targets.issubset(prev_targets):
+                print(f"incremental: fast path hit (unit_ts {unit_ts} <= "
+                      f"last_ingest_ts {incremental_since})")
+                conn.close()
+                return
+
+        t0 = time.monotonic()
+        print("ingest: reading index store...", flush=True)
+        read_result = read_index_store(
+            index_store, entry_target,
+            source_roots=source_roots,
+            incremental_since=incremental_since,
+            targets=targets,
+        )
+        if len(read_result) == 2:
+            r, file_status = read_result
+            output_path_mappings = None
+        else:
+            r, file_status, output_path_mappings = read_result
+
+        # Incremental cleanup: delete stale symbols for changed and deleted files
+        # across ALL previously ingested targets.
+        deleted_total = 0
+        if incremental_since is not None and file_status:
+            changed = file_status.get("changed", [])
+            all_files = file_status.get("all", [])
+            old_files = set(old_state.get("files", []) if old_state else [])
+            old_targets = old_state.get("compiled_targets", targets) if old_state else targets
+            deleted_files = old_files - set(all_files)
+            to_clean = changed + list(deleted_files)
+            if to_clean:
+                print(f"incremental: cleaning {len(changed)} changed + "
+                      f"{len(deleted_files)} deleted files across "
+                      f"{len(old_targets)} target(s)...")
+                # scope_id is unused in delete_symbols_for_files — one batch
+                # delete covers all targets.
+                deleted_total = delete_symbols_for_files(conn, entry_target, to_clean)
+                # Batch-delete stale File nodes too (same per-file N+1 issue).
+                conn.execute(
+                    "MATCH (f:File) WHERE f.path IN $fps DETACH DELETE f",
+                    {"fps": to_clean},
+                )
+                print(f"incremental: {deleted_total:,} old symbols deleted")
+            if not r.symbols and not r.relations:
+                # No changes — update state and exit.
+                all_list = file_status.get("all", []) if file_status else []
+                save_state(project_dir, touch_timestamp(), targets,
+                           index_store, files=all_list)
+                print("incremental: no changes detected")
+                conn.close()
+                return
+
+        print(f"ingest: {r.elapsed_s}s  {len(r.symbols):,} syms  "
+              f"{len(r.relations):,} rels  {len(targets)} target(s)",
+              flush=True)
+
+        # Treat the compiled targets as one build scope rather than duplicating
+        # the same symbol/relation ingest work once per target.
+        scope_target = entry_target
+        syms = [SymbolRecord(usr=s.usr, precise_id="", name=s.name,
+                             kind=_map_indexstore_kind(s.symbol_kind),
+                             module=s.module or scope_target, language=s.language,
+                             file_path=s.file_path or "", signature="",
+                             access_level="public", container_usr=None)
+                for s in r.symbols]
+        t_us = time.monotonic()
+        upsert_symbols(conn, syms, scope_target)
+        print(f"  symbols: upserted ({time.monotonic()-t_us:.1f}s)", flush=True)
+        t_uc = time.monotonic()
+        upsert_calls(conn, r.relations, scope_target, source="indexstore",
+                     build_id=ctx.build_id)
+        print(f"  calls: upserted ({time.monotonic()-t_uc:.1f}s)", flush=True)
+        t_ui = time.monotonic()
+        upsert_indexstore_rels(conn, r.relations, scope_target, source="indexstore",
+                               build_id=ctx.build_id)
+        print(f"  struct: upserted ({time.monotonic()-t_ui:.1f}s)", flush=True)
+        print(f"  scope: {','.join(targets)}")
+
+        # File upsert (shared across targets).
+        from orchard.normalize.identity import upsert_files
+        t_uf = time.monotonic()
+        fc = upsert_files(conn, syms)
+        print(f"  files: {fc:,} ({time.monotonic()-t_uf:.1f}s)", flush=True)
+        print(f"  [trace] files printed, t={time.monotonic()-t0:.0f}s, sg={ns.symbolgraph!r}",
+              file=sys.stderr, flush=True)
+
+        # SymbolGraph ingest: parse JSON and upsert its symbols + relationships.
+        if ns.symbolgraph:
+            from orchard.ingest.symbolgraph import parse_symbolgraph
+            from orchard.normalize.identity import upsert_symbol_rels
+            t_sg = time.monotonic()
+            sg = parse_symbolgraph(ns.symbolgraph, targets[0])
+            if sg.symbols:
+                upsert_symbols(conn, sg.symbols, targets[0])
+            if sg.relationships:
+                upsert_symbol_rels(conn, sg.relationships, targets[0])
+            print(f"  symbolgraph: {len(sg.symbols):,} syms, "
+                  f"{len(sg.relationships):,} rels  ({time.monotonic()-t_sg:.1f}s)")
+
+        print(f"  [trace] before community import, t={time.monotonic()-t0:.0f}s",
+              file=sys.stderr, flush=True)
+        # Community detection via Leiden algorithm.
         try:
-            files = list_source_files(index_store, source_root=source_root)
+            t_import_start = time.monotonic()
+            from orchard.derive.community_detection import run_community_detection
+            t_import_done = time.monotonic()
+            print(f"  communities: import took {t_import_done - t_import_start:.1f}s "
+                  f"(t={time.monotonic()-t0:.0f}s)", flush=True)
+            t_cd = time.monotonic()
+            result = run_community_detection(conn, ctx.build_id)
+            print(f"  communities: {result['communities_found']} communities, "
+                  f"{result['members_assigned']} members  ({time.monotonic()-t_cd:.1f}s)")
         except Exception:
-            files = None
-        save_state(project_dir, touch_timestamp(), targets, index_store,
-                   files=files or None)
-    t_saved = time.monotonic()
-    print(f"  state: saved ({t_saved - t_done:.1f}s)", flush=True)
-    conn.close()
-    print(f"  db: closed ({(time.monotonic() - t_saved):.1f}s)", flush=True)
+            pass  # skip on mock/test databases
+
+        # Notification graph: persist Notification nodes + Posts/Observes edges.
+        try:
+            from orchard.derive.notification_graph import persist_notification_graph
+            t_ng = time.monotonic()
+            print("  notification-graph: scanning source files...", flush=True)
+            # Incremental with no changes → skip grep (empty list).
+            # Incremental with changes → scan only changed files.
+            # Full ingest → scan the known full file set from file_status.
+            if file_status:
+                changed_only = file_status.get("all", [])
+                if incremental_since is not None:
+                    changed_only = file_status.get("changed")  # list or None
+                    if changed_only is None:
+                        changed_only = []  # no changes → skip
+            else:
+                changed_only = None  # full scan
+            ng_count = persist_notification_graph(
+                conn, source_root=project_dir,
+                build_id=ctx.build_id, changed_files=changed_only)
+            if ng_count:
+                print(f"  notification-graph: {ng_count:,} edges "
+                      f"({time.monotonic()-t_ng:.1f}s)")
+        except Exception as e:
+            pass  # skip when source files are unavailable
+
+        # Process detection via entry-point scoring + BFS tracing.
+        try:
+            from orchard.derive.process_detection import detect_processes
+            print("  processes: detecting execution flows...", flush=True)
+            t_pd = time.monotonic()
+            # Incremental: only re-detect processes whose entry points are in
+            # changed files.  Full ingest (file_status is falsy): detect all.
+            inc_files: list[str] | None = None
+            if incremental_since is not None and file_status:
+                inc_files = file_status.get("changed")
+            procs = detect_processes(conn, ctx.build_id, changed_files=inc_files)
+            cross = sum(1 for p in procs if p.process_type == "cross_community")
+            print(f"  processes: {len(procs)} detected "
+                  f"({cross} cross-community)  ({time.monotonic()-t_pd:.1f}s)",
+                  flush=True)
+        except Exception as e:
+            print(f"  processes: ERROR — {e}", flush=True)
+
+        t_done = time.monotonic()
+        print(f"done  {t_done - t0:.0f}s  (p_done={t_done - t_pd:.0f}s ago)", flush=True)
+
+        if incremental_since is None and output_path_mappings:
+            save_candidate_output_paths_manifest(
+                project_dir,
+                index_store,
+                targets,
+                output_path_mappings,
+            )
+
+        # Persist state for next incremental run.
+        # Reuse the main ingest pass's file-status payload when available.
+        # Incremental uses it for cleanup; full ingest uses the same file list
+        # for state persistence without a second CLI scan.
+        if file_status and "all" in file_status:
+            save_state(project_dir, touch_timestamp(), targets, index_store,
+                       files=file_status["all"])
+        else:
+            source_root = source_roots[0] if len(source_roots) == 1 else None
+            try:
+                files = list_source_files(index_store, source_root=source_root)
+            except Exception:
+                files = None
+            save_state(project_dir, touch_timestamp(), targets, index_store,
+                       files=files or None)
+        t_saved = time.monotonic()
+        print(f"  state: saved ({t_saved - t_done:.1f}s)", flush=True)
+        conn.close()
+        print(f"  db: closed ({(time.monotonic() - t_saved):.1f}s)", flush=True)
 
 
 def cmd_search(args: list[str]):

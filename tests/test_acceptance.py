@@ -10,8 +10,12 @@ are not required to run these tests.
 """
 import pytest
 import json
+import re
+import hashlib
+from pathlib import Path
 from orchard.graph.db import get_connection, init_schema
 from orchard.ingest.symbolgraph import SymbolRecord
+from orchard.ingest.lock import LOCK_BUSY_EXIT_CODE, graph_db_lock_path
 from orchard.normalize.identity import upsert_symbols, upsert_build_snapshot
 from orchard.build.context import BuildContext, make_build_id
 from orchard.handlers.symbol_context import get_symbol_context, SymbolContextRequest
@@ -545,6 +549,59 @@ def test_cmd_ingest_full_notification_graph_reuses_full_file_list(tmp_path, monk
     ])
 
     assert captured["changed_files"] == ["/repo/ios-client/Observer.m", "/repo/ios-client/Poster.m"]
+
+
+def test_graph_db_lock_path_hashes_graph_db(tmp_path):
+    graph_db_a = tmp_path / ".orchard" / "graph.db"
+    graph_db_b = tmp_path / ".orchard" / "other.db"
+    graph_db_a.parent.mkdir(parents=True, exist_ok=True)
+    graph_db_a.write_text("", encoding="utf-8")
+
+    alias_root = tmp_path / "alias"
+    alias_root.symlink_to(graph_db_a.parent, target_is_directory=True)
+    graph_db_a_alias = alias_root / graph_db_a.name
+
+    lock_path_a = Path(graph_db_lock_path(str(graph_db_a)))
+    lock_path_b = Path(graph_db_lock_path(str(graph_db_b)))
+    lock_path_a_alias = Path(graph_db_lock_path(str(graph_db_a_alias)))
+    expected_hash_a = hashlib.sha256(str(graph_db_a.resolve()).encode("utf-8")).hexdigest()
+    expected_hash_b = hashlib.sha256(str(graph_db_b.resolve()).encode("utf-8")).hexdigest()
+
+    assert lock_path_a.parent == Path.home() / ".orchard" / "locks"
+    assert re.fullmatch(r"orchard-ingest-[0-9a-f]{64}\.lock", lock_path_a.name)
+    assert lock_path_a.name == f"orchard-ingest-{expected_hash_a}.lock"
+    assert lock_path_a_alias == lock_path_a
+    assert lock_path_b.name == f"orchard-ingest-{expected_hash_b}.lock"
+    assert lock_path_a != lock_path_b
+
+
+def test_cmd_ingest_returns_lock_busy_when_lock_held(tmp_path, monkeypatch, capsys):
+    from orchard import cli as cli_mod
+    from orchard.ingest.lock import try_acquire_graph_db_lock
+
+    graph_db = tmp_path / ".orchard" / "graph.db"
+    graph_db.parent.mkdir(parents=True, exist_ok=True)
+    graph_db.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        cli_mod,
+        "_conn",
+        lambda _path, read_only=False: (_ for _ in ()).throw(AssertionError("should not open db")),
+    )
+
+    held_lock = try_acquire_graph_db_lock(str(graph_db))
+    assert held_lock is not None
+    with held_lock:
+        with pytest.raises(SystemExit) as excinfo:
+            cli_mod.cmd_ingest([
+                "--index-store", "/tmp/IndexStore",
+                "--project-dir", str(tmp_path),
+                "--target", "Zoom",
+                "--db", str(graph_db),
+            ])
+
+    assert excinfo.value.code == LOCK_BUSY_EXIT_CODE
+    assert capsys.readouterr().err.strip() == "INGEST_LOCK_BUSY"
 
 
 def test_cmd_ingest_fails_closed_when_project_config_roots_missing_for_compiled_targets(tmp_path, monkeypatch):
