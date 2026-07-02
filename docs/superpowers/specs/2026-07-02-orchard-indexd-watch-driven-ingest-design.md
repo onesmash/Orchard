@@ -121,6 +121,14 @@ This keeps background updates scoped to a known project/session rather than lett
 
 In v1, the daemon should only schedule background graph refresh for sessions that already have such a remembered ingest context.
 
+That remembered ingest context follows an intentional last-writer-wins rule:
+
+- session identity is based on stable input/output paths
+- remembered ingest context is refreshed by the most recent explicit CLI registration for that session
+- later background refreshes use that most recently registered context
+
+This means target-set differences do not fork the session. They only update the background-refresh scope that session will use going forward.
+
 ### Session isolation
 
 The daemon is a process host, not the isolation boundary.
@@ -148,6 +156,35 @@ For v1, session identity should be normalized from:
 The daemon should treat that pair as the stable input/output identity of a session. If a later CLI run resolves to the same `index-store` path and graph database path, it should reuse the existing session rather than create a new one.
 
 Target-set differences do not create a new session in this model. Instead, a later CLI run with the same session key refreshes the remembered ingest context stored on that session.
+
+### Session lifecycle and bootstrap
+
+In v1, a session must be created or refreshed by an explicit foreground CLI path. The daemon does not invent sessions by scanning local `DerivedData` or guessing project intent.
+
+Required bootstrap flow:
+
+1. user runs an explicit Orchard CLI command with enough information to resolve a concrete ingest scope
+2. CLI normalizes that scope into final effective ingest context
+3. CLI sends a register-or-refresh session RPC to `orchard-indexd`
+4. daemon creates the session if it does not exist, or refreshes remembered context if it already exists
+5. background watch/debounce/retry scheduling is enabled only after that registration succeeds
+
+For v1, the required registration source is:
+
+- `orchard ingest`
+
+Additional commands such as `warm` may become valid registration sources later, but they are not required by this design.
+
+The register-or-refresh RPC must carry at least:
+
+- canonical `index-store` path
+- canonical graph database path
+- normalized remembered ingest context used for future daemon-triggered CLI runs
+
+This lifecycle keeps the implementation boundary clear:
+
+- CLI resolves user intent and session context
+- daemon stores that context and schedules follow-up work
 
 ### Locking model
 
@@ -284,11 +321,13 @@ The daemon should still keep the session marked as logically behind, so a later 
 
 `orchard ingest` should be launched asynchronously from the daemon.
 
-The daemon must keep running its watch and timer loop while an ingest is in flight, but it must enforce single-flight semantics:
+The daemon must keep running its watch and timer loop while an ingest is in flight, but it must enforce single-flight semantics per graph database path:
 
-- only one ingest subprocess may run at a time
+- at most one ingest subprocess may be in flight for a given graph database path
 
-While an ingest is running:
+This scope matches the graph-write serialization resource and mirrors the CLI lock scope. Sessions targeting different graph databases may run independently. Sessions targeting the same graph database must not overlap.
+
+While an ingest for a given graph database path is running:
 
 - new watch events are still accepted
 - they only advance pending state
@@ -493,7 +532,8 @@ Testing should cover:
 - lock-busy result causing retry scheduling
 - non-lock failure not causing retry loops
 - generation accounting when new changes arrive during an in-flight ingest
-- single-flight enforcement preventing overlapping ingest subprocesses
+- single-flight enforcement preventing overlapping ingest subprocesses for the same graph database path
+- distinct graph database paths not being forced through unnecessary global serialization
 - successful ingest clearing pending work only up to the target generation
 
 ## Rollout Notes
