@@ -434,14 +434,27 @@ class _IndexdClient:
         index_store_path: str,
         source_roots: list[str] | None,
         targets: list[str] | None,
+        graph_db_path: str | None = None,
+        context: dict | None = None,
     ) -> str:
+        def _canonicalize_path(value: str) -> str:
+            return str(Path(value).expanduser().resolve()) if value else ""
+
+        normalized_context = None
+        if context is not None:
+            normalized_context = dict(context)
+            for key in ("projectDir", "indexStorePath", "graphDBPath"):
+                if key in normalized_context:
+                    normalized_context[key] = _canonicalize_path(str(normalized_context[key]))
         responses = self._request({
             "id": "warm",
             "method": "warm",
             "params": {
-                "storePath": index_store_path,
+                "storePath": _canonicalize_path(index_store_path),
                 "sourceRoots": source_roots or [],
                 "targets": targets or [],
+                "graphDBPath": _canonicalize_path(graph_db_path or ""),
+                "context": normalized_context,
             },
         })
         if not responses or not responses[0].get("ok"):
@@ -561,7 +574,30 @@ def register_indexd_session(
     socket_path = _indexd_socket_path()
     if not socket_path:
         return None
-    context = {
+    context = _make_ingest_context(
+        project_dir,
+        index_store_path,
+        graph_db_path,
+        target_args,
+        entry_target,
+        incremental,
+    )
+    try:
+        client = _IndexdClient(socket_path)
+        return client.register_session(index_store_path, graph_db_path, context)
+    except Exception:
+        return None
+
+
+def _make_ingest_context(
+    project_dir: str,
+    index_store_path: str,
+    graph_db_path: str,
+    target_args: list[str] | None,
+    entry_target: str,
+    incremental: bool,
+) -> dict:
+    return {
         "projectDir": str(Path(project_dir).expanduser().resolve()),
         "indexStorePath": str(Path(index_store_path).expanduser().resolve()),
         "graphDBPath": str(Path(graph_db_path).expanduser().resolve()),
@@ -569,11 +605,37 @@ def register_indexd_session(
         "entryTarget": entry_target,
         "incremental": incremental,
     }
-    try:
-        client = _IndexdClient(socket_path)
-        return client.register_session(index_store_path, graph_db_path, context)
-    except Exception:
-        return None
+
+
+def warm_indexd_session_async(
+    index_store_path: str,
+    source_roots: list[str] | None = None,
+    targets: list[str] | None = None,
+    graph_db_path: str | None = None,
+    context: dict | None = None,
+) -> bool:
+    socket_path = _indexd_socket_path()
+    if not socket_path or not _indexd_autostart_enabled():
+        return False
+
+    def _warm() -> None:
+        try:
+            if not _ensure_indexd_running(socket_path):
+                return
+            client = _IndexdClient(socket_path)
+            client.warm(
+                index_store_path,
+                source_roots,
+                targets,
+                graph_db_path=graph_db_path,
+                context=context,
+            )
+        except Exception:
+            return
+
+    thread = threading.Thread(target=_warm, name="orchard-indexd-warm", daemon=True)
+    thread.start()
+    return True
 
 
 def _run_indexd(
@@ -585,10 +647,17 @@ def _run_indexd(
     targets: list[str] | None = None,
     emit_occurrences: bool = False,
     dump_unit_output_paths: bool = False,
+    registration_context: dict | None = None,
 ):
     client = _IndexdClient(_indexd_socket_path())
     roots = source_roots or ([source_root] if source_root else [])
-    session_id = client.warm(index_store_path, roots, targets)
+    session_id = client.warm(
+        index_store_path,
+        roots,
+        targets,
+        graph_db_path=registration_context["graphDBPath"] if registration_context else None,
+        context=registration_context,
+    )
     if list_files:
         return [], json.dumps(client.list_files(session_id), ensure_ascii=False)
     if dump_unit_output_paths:
@@ -605,6 +674,7 @@ def _run_reader(
     targets: list[str] | None = None,
     emit_occurrences: bool = False,
     dump_unit_output_paths: bool = False,
+    registration_context: dict | None = None,
 ):
     socket_path = _indexd_socket_path()
     if socket_path and _ensure_indexd_running(socket_path):
@@ -618,6 +688,7 @@ def _run_reader(
                 targets=targets,
                 emit_occurrences=emit_occurrences,
                 dump_unit_output_paths=dump_unit_output_paths,
+                registration_context=registration_context,
             )
         except Exception:
             pass
@@ -688,6 +759,7 @@ def read_index_store(
     incremental_since: float | None = None,
     targets: list[str] | None = None,
     emit_occurrences: bool = False,
+    registration_context: dict | None = None,
 ) -> tuple[IndexStoreResult, dict | None, list[dict[str, str]] | None]:
     t0 = time.monotonic()
     result = IndexStoreResult()
@@ -698,6 +770,7 @@ def read_index_store(
         incremental_since=incremental_since,
         targets=targets,
         emit_occurrences=emit_occurrences,
+        registration_context=registration_context,
     )
     for raw in lines:
         line = raw.strip()
@@ -751,9 +824,15 @@ def read_index_store(
 def list_source_files(
     index_store_path: str,
     source_root: str | None = None,
+    registration_context: dict | None = None,
 ) -> list[str]:
     """Return the list of source files under *source_root* (via --list-files)."""
-    _, payload = _run_reader(index_store_path, source_root=source_root, list_files=True)
+    _, payload = _run_reader(
+        index_store_path,
+        source_root=source_root,
+        list_files=True,
+        registration_context=registration_context,
+    )
     lines = payload.strip().split("\n")
     for line in reversed(lines):
         line = line.strip()
@@ -770,6 +849,7 @@ def dump_unit_output_paths(
     source_root: str | None = None,
     source_roots: list[str] | None = None,
     targets: list[str] | None = None,
+    registration_context: dict | None = None,
 ) -> list[dict[str, str]]:
     """Return unit/main-file/output-file mappings from the index store."""
     lines, _ = _run_reader(
@@ -778,6 +858,7 @@ def dump_unit_output_paths(
         source_roots=source_roots,
         targets=targets,
         dump_unit_output_paths=True,
+        registration_context=registration_context,
     )
     for raw in reversed(lines):
         line = raw.strip()

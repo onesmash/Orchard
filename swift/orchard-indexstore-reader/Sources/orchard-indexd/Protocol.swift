@@ -17,6 +17,8 @@ struct WarmParams {
   let sourceRoots: [String]
   let targets: [String]
   let dylibPath: String?
+  let graphDBPath: String?
+  let context: IngestContext?
 }
 
 struct WarmResult: Encodable {

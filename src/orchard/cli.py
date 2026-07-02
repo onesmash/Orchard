@@ -216,10 +216,12 @@ def cmd_ingest(args: list[str]):
                     help="Path to a SymbolGraph JSON file to ingest alongside IndexStore data")
     ns = ap.parse_args(args)
     from orchard.ingest.indexstore import (
+        _make_ingest_context,
         _unit_dir_mtime,
         list_source_files,
         read_index_store,
         register_indexd_session,
+        warm_indexd_session_async,
     )
     from orchard.build.context import BuildContext, make_build_id
     from orchard.normalize.identity import (
@@ -245,6 +247,7 @@ def cmd_ingest(args: list[str]):
     state_path = Path(ns.project_dir).resolve() / ".orchard" / "ingest-state.json"
     project: str | None = None
     compiled_targets: list[str] = []
+    registration_context: dict | None = None
 
     # Parse comma-separated targets.
     requested_targets: list[str] = [t.strip() for t in ns.target.split(",") if t.strip()] if ns.target else []
@@ -329,6 +332,14 @@ def cmd_ingest(args: list[str]):
             entry_target=entry_target,
             incremental=ns.incremental,
         )
+        registration_context = _make_ingest_context(
+            project_dir=str(Path(ns.project_dir).resolve()),
+            index_store_path=index_store,
+            graph_db_path=ns.db,
+            target_args=targets,
+            entry_target=entry_target,
+            incremental=ns.incremental,
+        )
 
         if not ns.incremental:
             _reset_graph_db(ns.db)
@@ -378,6 +389,13 @@ def cmd_ingest(args: list[str]):
             prev_targets = set(old_state.get("compiled_targets", []) if old_state else [])
             requested_targets = set(targets)
             if unit_ts <= incremental_since and requested_targets.issubset(prev_targets):
+                warm_indexd_session_async(
+                    index_store,
+                    source_roots=source_roots,
+                    targets=targets,
+                    graph_db_path=ns.db,
+                    context=registration_context,
+                )
                 print(f"incremental: fast path hit (unit_ts {unit_ts} <= "
                       f"last_ingest_ts {incremental_since})")
                 conn.close()
@@ -390,6 +408,7 @@ def cmd_ingest(args: list[str]):
             source_roots=source_roots,
             incremental_since=incremental_since,
             targets=targets,
+            registration_context=registration_context,
         )
         if len(read_result) == 2:
             r, file_status = read_result
@@ -556,7 +575,11 @@ def cmd_ingest(args: list[str]):
         else:
             source_root = source_roots[0] if len(source_roots) == 1 else None
             try:
-                files = list_source_files(index_store, source_root=source_root)
+                files = list_source_files(
+                    index_store,
+                    source_root=source_root,
+                    registration_context=registration_context,
+                )
             except Exception:
                 files = None
             save_state(project_dir, touch_timestamp(), targets, index_store,

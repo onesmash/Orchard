@@ -21,6 +21,7 @@ from orchard.ingest.indexstore import (
     list_source_files,
     read_index_store,
     register_indexd_session,
+    warm_indexd_session_async,
     OccurrenceRecord,
     RelationRecord,
     shutdown_indexd,
@@ -415,8 +416,8 @@ def test_run_indexd_uses_client_warm_and_scan(monkeypatch):
         def __init__(self, socket_path):
             captured["socket_path"] = socket_path
 
-        def warm(self, index_store_path, source_roots, targets):
-            captured["warm"] = (index_store_path, source_roots, targets)
+        def warm(self, index_store_path, source_roots, targets, graph_db_path=None, context=None):
+            captured["warm"] = (index_store_path, source_roots, targets, graph_db_path, context)
             return "session-1"
 
         def scan(self, session_id, incremental_since, emit_occurrences):
@@ -437,10 +438,53 @@ def test_run_indexd_uses_client_warm_and_scan(monkeypatch):
     )
 
     assert captured["socket_path"] == "/tmp/indexd.sock"
-    assert captured["warm"] == ("/fake/store", ["/src"], ["Zoom"])
+    assert captured["warm"] == ("/fake/store", ["/src"], ["Zoom"], None, None)
     assert captured["scan"] == ("session-1", 123.0, False)
     assert len(lines) == 1
     assert '"all":["f"]' in stderr
+
+
+def test_run_indexd_passes_registration_context_to_warm(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, socket_path):
+            captured["socket_path"] = socket_path
+
+        def warm(self, index_store_path, source_roots, targets, graph_db_path=None, context=None):
+            captured["warm"] = (index_store_path, source_roots, targets, graph_db_path, context)
+            return "session-1"
+
+        def scan(self, session_id, incremental_since, emit_occurrences):
+            return [], '{"changed":[],"all":[]}'
+
+    monkeypatch.setenv("ORCHARD_INDEXD_SOCKET", "/tmp/indexd.sock")
+    monkeypatch.setattr("orchard.ingest.indexstore._IndexdClient", FakeClient)
+
+    from orchard.ingest.indexstore import _run_indexd
+
+    context = {
+        "projectDir": "/repo",
+        "indexStorePath": "/fake/store",
+        "graphDBPath": "/repo/.orchard/graph.db",
+        "targetArgs": ["Zoom"],
+        "entryTarget": "Zoom",
+        "incremental": True,
+    }
+    _run_indexd(
+        "/fake/store",
+        source_roots=["/src"],
+        targets=["Zoom"],
+        registration_context=context,
+    )
+
+    assert captured["warm"] == (
+        "/fake/store",
+        ["/src"],
+        ["Zoom"],
+        "/repo/.orchard/graph.db",
+        context,
+    )
 
 
 def test_indexd_client_register_session_sends_expected_payload(monkeypatch, tmp_path):
@@ -472,6 +516,52 @@ def test_indexd_client_register_session_sends_expected_payload(monkeypatch, tmp_
         "method": "register_session",
         "params": {
             "storePath": str((tmp_path / ".." / "IndexStore").resolve()),
+            "graphDBPath": str((tmp_path / ".." / "graph.db").resolve()),
+            "context": {
+                "projectDir": str((tmp_path / ".." / "project").resolve()),
+                "indexStorePath": str((tmp_path / ".." / "IndexStore").resolve()),
+                "graphDBPath": str((tmp_path / ".." / "graph.db").resolve()),
+                "targetArgs": ["Zoom", "zPSApp"],
+                "entryTarget": "Zoom",
+                "incremental": True,
+            },
+        },
+    }
+
+
+def test_indexd_client_warm_sends_registration_context_when_provided(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    def fake_request(self, payload):
+        captured["payload"] = payload
+        return [{"ok": True, "result": {"sessionId": "session-1"}}]
+
+    monkeypatch.setattr(_IndexdClient, "_request", fake_request)
+
+    client = _IndexdClient("/tmp/indexd.sock")
+    session_id = client.warm(
+        index_store_path=str(tmp_path / ".." / "IndexStore"),
+        source_roots=["/src"],
+        targets=["Zoom", "zPSApp"],
+        graph_db_path=str(tmp_path / ".." / "graph.db"),
+        context={
+            "projectDir": str(tmp_path / ".." / "project"),
+            "indexStorePath": str(tmp_path / ".." / "IndexStore"),
+            "graphDBPath": str(tmp_path / ".." / "graph.db"),
+            "targetArgs": ["Zoom", "zPSApp"],
+            "entryTarget": "Zoom",
+            "incremental": True,
+        },
+    )
+
+    assert session_id == "session-1"
+    assert captured["payload"] == {
+        "id": "warm",
+        "method": "warm",
+        "params": {
+            "storePath": str((tmp_path / ".." / "IndexStore").resolve()),
+            "sourceRoots": ["/src"],
+            "targets": ["Zoom", "zPSApp"],
             "graphDBPath": str((tmp_path / ".." / "graph.db").resolve()),
             "context": {
                 "projectDir": str((tmp_path / ".." / "project").resolve()),
@@ -531,6 +621,79 @@ def test_register_indexd_session_returns_none_when_socket_is_missing(monkeypatch
     )
 
     assert result is None
+
+
+def test_warm_indexd_session_async_starts_background_thread_without_blocking(monkeypatch):
+    actions: list[str] = []
+
+    class FakeThread:
+        def __init__(self, target=None, name=None, daemon=None):
+            actions.append(("thread_init", name, daemon))
+            self._target = target
+
+        def start(self):
+            actions.append("thread_start")
+
+    monkeypatch.setenv("ORCHARD_INDEXD_SOCKET", "/tmp/indexd.sock")
+    monkeypatch.setenv("ORCHARD_INDEXD_AUTOSTART", "1")
+    monkeypatch.setattr("orchard.ingest.indexstore.threading.Thread", FakeThread)
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore._ensure_indexd_running",
+        lambda *_args, **_kwargs: pytest.fail("warm should not run synchronously on caller thread"),
+    )
+
+    assert warm_indexd_session_async("/fake/store", ["/src"], ["Zoom"]) is True
+    assert actions == [("thread_init", "orchard-indexd-warm", True), "thread_start"]
+
+
+def test_warm_indexd_session_async_passes_registration_context(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, socket_path):
+            captured["socket_path"] = socket_path
+
+        def warm(self, index_store_path, source_roots, targets, graph_db_path=None, context=None):
+            captured["warm"] = (index_store_path, source_roots, targets, graph_db_path, context)
+            return "session-1"
+
+    class InlineThread:
+        def __init__(self, target=None, name=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setenv("ORCHARD_INDEXD_SOCKET", "/tmp/indexd.sock")
+    monkeypatch.setenv("ORCHARD_INDEXD_AUTOSTART", "1")
+    monkeypatch.setattr("orchard.ingest.indexstore.threading.Thread", InlineThread)
+    monkeypatch.setattr("orchard.ingest.indexstore._ensure_indexd_running", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("orchard.ingest.indexstore._IndexdClient", FakeClient)
+
+    context = {
+        "projectDir": "/repo",
+        "indexStorePath": "/fake/store",
+        "graphDBPath": "/repo/.orchard/graph.db",
+        "targetArgs": ["Zoom"],
+        "entryTarget": "Zoom",
+        "incremental": True,
+    }
+    assert warm_indexd_session_async(
+        "/fake/store",
+        ["/src"],
+        ["Zoom"],
+        graph_db_path="/repo/.orchard/graph.db",
+        context=context,
+    ) is True
+
+    assert captured["socket_path"] == "/tmp/indexd.sock"
+    assert captured["warm"] == (
+        "/fake/store",
+        ["/src"],
+        ["Zoom"],
+        "/repo/.orchard/graph.db",
+        context,
+    )
 
 
 def test_indexd_status_reports_ping_and_build_match(monkeypatch):

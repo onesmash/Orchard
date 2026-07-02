@@ -2,6 +2,12 @@ import Foundation
 import Darwin
 
 private let daemonProtocolVersion = 1
+private let daemonSessionSweepIntervalMilliseconds: Int32 = 1_000
+private let defaultSessionIdleTimeoutSeconds: TimeInterval = 1800
+
+private func daemonLog(_ message: String) {
+  defaultIndexdLogSink(message)
+}
 
 @main
 struct OrchardIndexdMain {
@@ -9,6 +15,7 @@ struct OrchardIndexdMain {
     let socketPath = parseSocketPath()
     let pidFilePath = parsePIDFilePath(socketPath: socketPath)
     let orchardCLIPath = parseOrchardCLIPath()
+    let sessionIdleTimeoutSeconds = parseSessionIdleTimeoutSeconds()
     let runtimeInfo = collectRuntimeInfo(orchardCLIPath: orchardCLIPath)
     try? FileManager.default.removeItem(atPath: socketPath)
 
@@ -51,8 +58,24 @@ struct OrchardIndexdMain {
     }
 
     let manager = SessionManager()
+    daemonLog("daemon started socket=\(socketPath) session_idle_timeout=\(String(format: "%.1f", sessionIdleTimeoutSeconds))s")
 
     while true {
+      let evicted = manager.evictIdleSessions(idleForAtLeast: sessionIdleTimeoutSeconds)
+      if evicted > 0 {
+        daemonLog("evicted idle sessions count=\(evicted)")
+      }
+
+      switch waitForReadableSocket(serverFD: serverFD, timeoutMilliseconds: daemonSessionSweepIntervalMilliseconds) {
+      case .ready:
+        break
+      case .timedOut, .interrupted:
+        continue
+      case .failed(let errorCode):
+        daemonLog("socket wait failed errno=\(errorCode)")
+        continue
+      }
+
       let clientFD = accept(serverFD, nil, nil)
       guard clientFD >= 0 else {
         continue
@@ -75,7 +98,10 @@ struct OrchardIndexdMain {
           continue
         }
 
+        daemonLog("rpc received method=\(method) id=\(id)")
+
         if method == "shutdown" {
+          daemonLog("rpc shutdown requested id=\(id)")
           return
         }
 
@@ -115,6 +141,10 @@ struct OrchardIndexdMain {
           }
 
           do {
+            let targetList = registerParams.context.targetArgs.joined(separator: ",")
+            daemonLog(
+              "watch-event received source=register_session store=\(registerParams.storePath) graph_db=\(registerParams.graphDBPath) entry=\(registerParams.context.entryTarget) targets=\(targetList) incremental=\(registerParams.context.incremental)"
+            )
             let result = try manager.registerOrRefreshSession(
               storePath: registerParams.storePath,
               graphDBPath: registerParams.graphDBPath,
@@ -159,6 +189,9 @@ struct OrchardIndexdMain {
           let sourceRoots = params["sourceRoots"] as? [String] ?? []
           let targets = params["targets"] as? [String] ?? []
           let dylibPath = params["dylibPath"] as? String
+          let graphDBPath = params["graphDBPath"] as? String ?? ""
+          let contextObject = params["context"] as? [String: Any] ?? [:]
+          let context = decodeIngestContext(from: contextObject)
 
           if storePath.isEmpty {
             try writeLine(DaemonResponse<WarmResult>(
@@ -171,12 +204,67 @@ struct OrchardIndexdMain {
           }
 
           do {
-            let result = try manager.getOrCreateSession(
-              storePath: storePath,
-              sourceRoots: sourceRoots,
-              targets: targets,
-              dylibPath: dylibPath
-            )
+            let targetList = targets.joined(separator: ",")
+            let result: (session: IndexdSession, reused: Bool)
+            if let context {
+              if graphDBPath.isEmpty {
+                try writeLine(DaemonResponse<WarmResult>(
+                  id: id,
+                  ok: false,
+                  result: nil,
+                  error: DaemonError(code: "missing_graph_db_path", message: "graphDBPath is required when context is provided")
+                ), to: output)
+                continue
+              }
+              if context.indexStorePath != storePath {
+                try writeLine(DaemonResponse<WarmResult>(
+                  id: id,
+                  ok: false,
+                  result: nil,
+                  error: DaemonError(code: "mismatched_store_path", message: "context.indexStorePath must match storePath")
+                ), to: output)
+                continue
+              }
+              if context.graphDBPath != graphDBPath {
+                try writeLine(DaemonResponse<WarmResult>(
+                  id: id,
+                  ok: false,
+                  result: nil,
+                  error: DaemonError(code: "mismatched_graph_db_path", message: "context.graphDBPath must match graphDBPath")
+                ), to: output)
+                continue
+              }
+              daemonLog(
+                "rpc warm store=\(storePath) graph_db=\(graphDBPath) source_roots=\(sourceRoots.count) targets=\(targetList) registration_context=true reused_hint=unknown"
+              )
+              result = try manager.registerOrRefreshSession(
+                storePath: storePath,
+                graphDBPath: graphDBPath,
+                ingestContext: context,
+                sourceRoots: sourceRoots,
+                targets: targets,
+                dylibPath: dylibPath
+              )
+              result.session.maybeScheduleBackgroundIngest(
+                orchardCLIPath: orchardCLIPath,
+                beginInFlight: {
+                  manager.beginGraphDBIngest(graphDBPath: graphDBPath)
+                },
+                endInFlight: {
+                  manager.endGraphDBIngest(graphDBPath: graphDBPath)
+                }
+              )
+            } else {
+              daemonLog(
+                "rpc warm store=\(storePath) source_roots=\(sourceRoots.count) targets=\(targetList) registration_context=false reused_hint=unknown"
+              )
+              result = try manager.getOrCreateSession(
+                storePath: storePath,
+                sourceRoots: sourceRoots,
+                targets: targets,
+                dylibPath: dylibPath
+              )
+            }
             try writeLine(DaemonResponse(
               id: id,
               ok: true,
@@ -214,6 +302,10 @@ struct OrchardIndexdMain {
             continue
           }
 
+          let incrementalSinceDescription = incrementalSince.map { String($0) } ?? "nil"
+          daemonLog(
+            "rpc scan session=\(sessionID) incremental_since=\(incrementalSinceDescription) emit_occurrences=\(emitOccurrences)"
+          )
           session.poll()
           let scanned = session.scan(
             incrementalSince: incrementalSince,
@@ -390,6 +482,50 @@ private func parseOrchardCLIPath() -> String {
     return args[index + 1]
   }
   return "orchard"
+}
+
+private func parseSessionIdleTimeoutSeconds() -> TimeInterval {
+  let args = CommandLine.arguments
+  if let index = args.firstIndex(of: "--session-idle-timeout"), index + 1 < args.count,
+     let parsed = parsePositiveTimeInterval(args[index + 1]) {
+    return parsed
+  }
+  if let configured = ProcessInfo.processInfo.environment["ORCHARD_INDEXD_SESSION_IDLE_TIMEOUT_SECS"],
+     let parsed = parsePositiveTimeInterval(configured) {
+    return parsed
+  }
+  return defaultSessionIdleTimeoutSeconds
+}
+
+private func parsePositiveTimeInterval(_ rawValue: String) -> TimeInterval? {
+  guard let seconds = Double(rawValue), seconds > 0 else {
+    return nil
+  }
+  return seconds
+}
+
+private enum SocketWaitResult {
+  case ready
+  case timedOut
+  case interrupted
+  case failed(Int32)
+}
+
+private func waitForReadableSocket(serverFD: Int32, timeoutMilliseconds: Int32) -> SocketWaitResult {
+  var pollFD = pollfd(fd: serverFD, events: Int16(POLLIN), revents: 0)
+  let result = withUnsafeMutablePointer(to: &pollFD) { pointer in
+    Darwin.poll(pointer, 1, timeoutMilliseconds)
+  }
+  if result > 0 {
+    return .ready
+  }
+  if result == 0 {
+    return .timedOut
+  }
+  if errno == EINTR {
+    return .interrupted
+  }
+  return .failed(errno)
 }
 
 private func collectRuntimeInfo(orchardCLIPath: String) -> RuntimeInfo {
