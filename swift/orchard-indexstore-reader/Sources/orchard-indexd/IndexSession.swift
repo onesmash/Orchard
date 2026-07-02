@@ -33,6 +33,10 @@ final class IndexdSession {
   private(set) var sourceRoots: [String]
   private(set) var targets: [String]
   private(set) var ingestContext: IngestContext?
+  private(set) var seenGeneration: UInt64 = 0
+  private(set) var ackedGeneration: UInt64 = 0
+  private(set) var ingestRunning = false
+  private(set) var ingestTargetGeneration: UInt64?
   let library: IndexStoreLibrary
   let db: IndexStoreDB
   let dylibPath: String

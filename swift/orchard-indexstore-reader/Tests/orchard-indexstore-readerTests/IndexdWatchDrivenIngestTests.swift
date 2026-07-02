@@ -144,6 +144,67 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     )
 
     XCTAssertEqual(refreshed.session.ingestContext, secondContext)
+    XCTAssertEqual(refreshed.session.sourceRoots, [tmp.path])
+    XCTAssertEqual(refreshed.session.targets, ["Zoom", "zPSApp"])
+    XCTAssertEqual(refreshed.session.seenGeneration, 0)
+    XCTAssertEqual(refreshed.session.ackedGeneration, 0)
+    XCTAssertFalse(refreshed.session.ingestRunning)
+    XCTAssertNil(refreshed.session.ingestTargetGeneration)
+  }
+
+  func testLatestRegistrationWinsForRememberedContextOnReusedSession() throws {
+    let manager = SessionManager()
+    let firstContext = IngestContext(
+      projectDir: "/tmp/project",
+      indexStorePath: "/tmp/store",
+      graphDBPath: "/tmp/graph.db",
+      targetArgs: ["Zoom"],
+      entryTarget: "Zoom",
+      incremental: true
+    )
+    let secondContext = IngestContext(
+      projectDir: "/tmp/project",
+      indexStorePath: "/tmp/store",
+      graphDBPath: "/tmp/graph.db",
+      targetArgs: ["Zoom", "zPSApp"],
+      entryTarget: "zPSApp",
+      incremental: false
+    )
+
+    let first = try manager.registerOrRefreshSession(
+      storePath: "/tmp/store",
+      graphDBPath: "/tmp/graph.db",
+      ingestContext: firstContext,
+      sourceRoots: ["/tmp/project"],
+      targets: ["Zoom"],
+      dylibPath: nil
+    )
+    let refreshed = try manager.registerOrRefreshSession(
+      storePath: "/tmp/store",
+      graphDBPath: "/tmp/graph.db",
+      ingestContext: secondContext,
+      sourceRoots: ["/tmp/project/next"],
+      targets: ["Zoom", "zPSApp"],
+      dylibPath: nil
+    )
+
+    XCTAssertEqual(first.session.sessionId, refreshed.session.sessionId)
+    XCTAssertEqual(refreshed.session.ingestContext, secondContext)
+    XCTAssertEqual(refreshed.session.ingestContext?.targetArgs, ["Zoom", "zPSApp"])
+    XCTAssertEqual(refreshed.session.sourceRoots, ["/tmp/project/next"])
+    XCTAssertEqual(refreshed.session.targets, ["Zoom", "zPSApp"])
+  }
+
+  func testSingleFlightIsScopedPerGraphDBPath() {
+    let manager = SessionManager()
+
+    XCTAssertTrue(manager.beginGraphDBIngest(graphDBPath: "/tmp/a.db"))
+    XCTAssertFalse(manager.beginGraphDBIngest(graphDBPath: "/tmp/a.db"))
+    XCTAssertTrue(manager.beginGraphDBIngest(graphDBPath: "/tmp/b.db"))
+
+    manager.endGraphDBIngest(graphDBPath: "/tmp/a.db")
+
+    XCTAssertTrue(manager.beginGraphDBIngest(graphDBPath: "/tmp/a.db"))
   }
 
   func testDecodeRegisterSessionParamsRejectsMismatchedPaths() throws {

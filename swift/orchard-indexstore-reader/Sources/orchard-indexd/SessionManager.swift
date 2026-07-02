@@ -3,6 +3,7 @@ import CryptoKit
 
 final class SessionManager {
   private var sessions: [String: IndexdSession] = [:]
+  private var inFlightGraphDBs = Set<String>()
   private let lock = NSLock()
 
   func getOrCreateSession(
@@ -69,6 +70,20 @@ final class SessionManager {
     lock.lock()
     defer { lock.unlock() }
     return sessions[id]
+  }
+
+  func beginGraphDBIngest(graphDBPath: String) -> Bool {
+    let key = canonicalSessionPath(graphDBPath)
+    lock.lock()
+    defer { lock.unlock() }
+    return inFlightGraphDBs.insert(key).inserted
+  }
+
+  func endGraphDBIngest(graphDBPath: String) {
+    let key = canonicalSessionPath(graphDBPath)
+    lock.lock()
+    defer { lock.unlock() }
+    inFlightGraphDBs.remove(key)
   }
 }
 
