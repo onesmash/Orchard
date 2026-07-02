@@ -32,6 +32,7 @@ final class IndexdSession {
 
   private(set) var sourceRoots: [String]
   private(set) var targets: [String]
+  private(set) var ingestContext: IngestContext?
   let library: IndexStoreLibrary
   let db: IndexStoreDB
   let dylibPath: String
@@ -43,12 +44,14 @@ final class IndexdSession {
     storePath: String,
     sourceRoots: [String],
     targets: [String],
-    dylibPath: String?
+    dylibPath: String?,
+    ingestContext: IngestContext?
   ) throws {
     self.sessionId = sessionId
     self.storePath = storePath
     self.sourceRoots = sourceRoots
     self.targets = targets
+    self.ingestContext = ingestContext
     self.queue = DispatchQueue(label: "orchard.indexd.\(sessionId)")
 
     let resolvedDylib = dylibPath ?? ProcessInfo.processInfo.environment["ORCHARD_LIBINDEXSTORE"] ?? "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/libIndexStore.dylib"
@@ -74,6 +77,12 @@ final class IndexdSession {
   func update(sourceRoots: [String], targets: [String]) {
     self.sourceRoots = sourceRoots
     self.targets = targets
+  }
+
+  func refresh(sourceRoots: [String], targets: [String], ingestContext: IngestContext) {
+    self.sourceRoots = sourceRoots
+    self.targets = targets
+    self.ingestContext = ingestContext
   }
 
   func poll() {

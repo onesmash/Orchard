@@ -25,6 +25,18 @@ struct WarmResult: Encodable {
   let dbPath: String
 }
 
+struct RegisterSessionParams {
+  let storePath: String
+  let graphDBPath: String
+  let context: IngestContext
+}
+
+struct RegisterSessionResult: Encodable {
+  let sessionId: String
+  let reused: Bool
+  let graphDBPath: String
+}
+
 struct PingResult: Encodable {
   let status: String
   let protocolVersion: Int

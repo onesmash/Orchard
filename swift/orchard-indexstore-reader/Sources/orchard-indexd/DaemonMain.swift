@@ -95,6 +95,51 @@ struct OrchardIndexdMain {
           continue
         }
 
+        if method == "register_session" {
+          let params = requestObject["params"] as? [String: Any] ?? [:]
+          let registerParams: RegisterSessionParams
+          do {
+            registerParams = try decodeRegisterSessionParams(from: params)
+          } catch let error as RegisterSessionDecodeError {
+            try writeLine(DaemonResponse<RegisterSessionResult>(
+              id: id,
+              ok: false,
+              result: nil,
+              error: DaemonError(code: error.code, message: error.message)
+            ), to: output)
+            continue
+          }
+
+          do {
+            let result = try manager.registerOrRefreshSession(
+              storePath: registerParams.storePath,
+              graphDBPath: registerParams.graphDBPath,
+              ingestContext: registerParams.context,
+              sourceRoots: [],
+              targets: [],
+              dylibPath: nil
+            )
+            try writeLine(DaemonResponse(
+              id: id,
+              ok: true,
+              result: RegisterSessionResult(
+                sessionId: result.session.sessionId,
+                reused: result.reused,
+                graphDBPath: registerParams.graphDBPath
+              ),
+              error: Optional<DaemonError>.none
+            ), to: output)
+          } catch {
+            try writeLine(DaemonResponse<RegisterSessionResult>(
+              id: id,
+              ok: false,
+              result: nil,
+              error: DaemonError(code: "register_session_failed", message: String(describing: error))
+            ), to: output)
+          }
+          continue
+        }
+
         if method == "warm" {
           let params = requestObject["params"] as? [String: Any] ?? [:]
           let storePath = params["storePath"] as? String ?? ""
@@ -250,6 +295,57 @@ private struct RuntimeInfo {
   let executablePath: String
   let binarySize: UInt64
   let binaryMTimeNs: UInt64
+}
+
+struct RegisterSessionDecodeError: Error {
+  let code: String
+  let message: String
+}
+
+func decodeRegisterSessionParams(from object: [String: Any]) throws -> RegisterSessionParams {
+  let storePath = object["storePath"] as? String ?? ""
+  let graphDBPath = object["graphDBPath"] as? String ?? ""
+  let contextObject = object["context"] as? [String: Any] ?? [:]
+
+  if storePath.isEmpty {
+    throw RegisterSessionDecodeError(code: "missing_store_path", message: "storePath is required")
+  }
+
+  if graphDBPath.isEmpty {
+    throw RegisterSessionDecodeError(code: "missing_graph_db_path", message: "graphDBPath is required")
+  }
+
+  guard let context = decodeIngestContext(from: contextObject) else {
+    throw RegisterSessionDecodeError(code: "invalid_context", message: "context is required")
+  }
+
+  if context.indexStorePath != storePath {
+    throw RegisterSessionDecodeError(
+      code: "mismatched_store_path",
+      message: "context.indexStorePath must match storePath"
+    )
+  }
+
+  if context.graphDBPath != graphDBPath {
+    throw RegisterSessionDecodeError(
+      code: "mismatched_graph_db_path",
+      message: "context.graphDBPath must match graphDBPath"
+    )
+  }
+
+  return RegisterSessionParams(
+    storePath: storePath,
+    graphDBPath: graphDBPath,
+    context: context
+  )
+}
+
+func decodeIngestContext(from object: [String: Any]) -> IngestContext? {
+  guard JSONSerialization.isValidJSONObject(object),
+        let data = try? JSONSerialization.data(withJSONObject: object) else {
+    return nil
+  }
+  return try? JSONDecoder().decode(IngestContext.self, from: data)
 }
 
 private func parseSocketPath() -> String {
