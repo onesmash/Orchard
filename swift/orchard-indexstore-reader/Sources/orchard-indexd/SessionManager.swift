@@ -1,8 +1,13 @@
 import Foundation
 import CryptoKit
 
+private struct ManagedSession {
+  let session: IndexdSession
+  var lastActivityAt: Date
+}
+
 final class SessionManager {
-  private var sessions: [String: IndexdSession] = [:]
+  private var sessions: [String: ManagedSession] = [:]
   private var inFlightGraphDBs = Set<String>()
   private let lock = NSLock()
 
@@ -12,13 +17,15 @@ final class SessionManager {
     targets: [String],
     dylibPath: String?
   ) throws -> (session: IndexdSession, reused: Bool) {
-    let key = SHA256.hash(data: Data("v2:\(storePath)".utf8)).map { String(format: "%02x", $0) }.joined()
+    let key = storeSessionKey(storePath)
     lock.lock()
     defer { lock.unlock() }
 
-    if let existing = sessions[key] {
-      existing.update(sourceRoots: sourceRoots, targets: targets)
-      return (existing, true)
+    if var existing = sessions[key] {
+      existing.session.update(sourceRoots: sourceRoots, targets: targets)
+      existing.lastActivityAt = Date()
+      sessions[key] = existing
+      return (existing.session, true)
     }
 
     let session = try IndexdSession(
@@ -29,7 +36,7 @@ final class SessionManager {
       dylibPath: dylibPath,
       ingestContext: nil
     )
-    sessions[key] = session
+    sessions[key] = ManagedSession(session: session, lastActivityAt: Date())
     return (session, false)
   }
 
@@ -41,17 +48,19 @@ final class SessionManager {
     targets: [String],
     dylibPath: String?
   ) throws -> (session: IndexdSession, reused: Bool) {
-    let key = sessionKey(namespace: "register.v1", parts: [storePath, graphDBPath])
+    let key = storeSessionKey(storePath)
     lock.lock()
     defer { lock.unlock() }
 
-    if let existing = sessions[key] {
-      existing.refresh(
+    if var existing = sessions[key] {
+      existing.session.refresh(
         sourceRoots: sourceRoots,
         targets: targets,
         ingestContext: ingestContext
       )
-      return (existing, true)
+      existing.lastActivityAt = Date()
+      sessions[key] = existing
+      return (existing.session, true)
     }
 
     let session = try IndexdSession(
@@ -62,14 +71,41 @@ final class SessionManager {
       dylibPath: dylibPath,
       ingestContext: ingestContext
     )
-    sessions[key] = session
+    sessions[key] = ManagedSession(session: session, lastActivityAt: Date())
     return (session, false)
   }
 
   func session(id: String) -> IndexdSession? {
     lock.lock()
     defer { lock.unlock() }
-    return sessions[id]
+    guard var managedSession = sessions[id] else {
+      return nil
+    }
+    managedSession.lastActivityAt = Date()
+    sessions[id] = managedSession
+    return managedSession.session
+  }
+
+  func evictIdleSessions(idleForAtLeast seconds: TimeInterval, now: Date = Date()) -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+
+    let evictedKeys = sessions.compactMap { entry -> String? in
+      let (key, managedSession) = entry
+      guard now.timeIntervalSince(managedSession.lastActivityAt) >= seconds else {
+        return nil
+      }
+      let snapshot = managedSession.session.snapshot()
+      guard snapshot.seenGeneration == snapshot.ackedGeneration,
+            !snapshot.ingestRunning,
+            !snapshot.retryScheduled,
+            !snapshot.debounceScheduled else {
+        return nil
+      }
+      return key
+    }
+    evictedKeys.forEach { sessions.removeValue(forKey: $0) }
+    return evictedKeys.count
   }
 
   func beginGraphDBIngest(graphDBPath: String) -> Bool {
@@ -87,10 +123,9 @@ final class SessionManager {
   }
 }
 
-private func sessionKey(namespace: String, parts: [String]) -> String {
-  let normalizedParts = parts.map(canonicalSessionPath)
-  let keyMaterial = ([namespace] + normalizedParts).joined(separator: "|")
-  return SHA256.hash(data: Data(keyMaterial.utf8)).map { String(format: "%02x", $0) }.joined()
+private func storeSessionKey(_ storePath: String) -> String {
+  let normalizedStorePath = canonicalSessionPath(storePath)
+  return SHA256.hash(data: Data("v2:\(normalizedStorePath)".utf8)).map { String(format: "%02x", $0) }.joined()
 }
 
 private func canonicalSessionPath(_ path: String) -> String {

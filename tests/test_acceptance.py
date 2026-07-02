@@ -876,12 +876,22 @@ def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monke
         def close(self):
             return None
 
+    events: list[str] = []
+
     monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
     monkeypatch.setattr(
         "orchard.ingest.state.load_state",
         lambda _project_dir: {"last_ingest_ts": 123.0, "compiled_targets": ["T"], "index_store_path": "/fake/store"},
     )
     monkeypatch.setattr("orchard.ingest.indexstore._unit_dir_mtime", lambda _path: 120.0)
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.register_indexd_session",
+        lambda **kwargs: events.append("register") or {"sessionId": "session-fast-path"},
+    )
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.warm_indexd_session_async",
+        lambda *args, **kwargs: events.append("warm") or True,
+    )
     monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
 
     cmd_ingest([
@@ -898,7 +908,9 @@ def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monke
     assert "incremental: last_ingest_ts 123.0" in out
     assert "incremental: index-store /fake/store" in out
     assert "incremental: unit_ts 120.0" in out
+    assert "ingest: reading index store..." not in out
     assert "incremental: fast path hit" in out
+    assert events == ["register", "warm"]
 
 
 def test_cmd_ingest_replaces_state_with_latest_compiled_scope(tmp_path, monkeypatch):

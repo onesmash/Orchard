@@ -109,6 +109,77 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     XCTAssertTrue(second.reused)
   }
 
+  func testIndexdSessionManagerEvictsIdleSession() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let fixture = try buildMinimalSwiftIndex(tmp: tmp)
+    let manager = SessionManager()
+    let created = try manager.getOrCreateSession(
+      storePath: fixture.storePath.path,
+      sourceRoots: [tmp.path],
+      targets: ["Zoom"],
+      dylibPath: nil
+    )
+
+    XCTAssertNotNil(manager.session(id: created.session.sessionId))
+
+    let evicted = manager.evictIdleSessions(idleForAtLeast: 0)
+
+    XCTAssertEqual(evicted, 1)
+    XCTAssertNil(manager.session(id: created.session.sessionId))
+  }
+
+  func testIndexdSessionManagerDoesNotEvictSessionWithPendingWork() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let fixture = try buildMinimalSwiftIndex(tmp: tmp)
+    let manager = SessionManager()
+    let created = try manager.getOrCreateSession(
+      storePath: fixture.storePath.path,
+      sourceRoots: [tmp.path],
+      targets: ["Zoom"],
+      dylibPath: nil
+    )
+
+    created.session.recordWatchActivity()
+
+    let evicted = manager.evictIdleSessions(idleForAtLeast: 0)
+
+    XCTAssertEqual(evicted, 0)
+    XCTAssertNotNil(manager.session(id: created.session.sessionId))
+  }
+
+  func testIndexdSessionManagerRecreatesSessionAfterEviction() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let fixture = try buildMinimalSwiftIndex(tmp: tmp)
+    let manager = SessionManager()
+    let first = try manager.getOrCreateSession(
+      storePath: fixture.storePath.path,
+      sourceRoots: [tmp.path],
+      targets: ["Zoom"],
+      dylibPath: nil
+    )
+
+    XCTAssertEqual(manager.evictIdleSessions(idleForAtLeast: 0), 1)
+
+    let second = try manager.getOrCreateSession(
+      storePath: fixture.storePath.path,
+      sourceRoots: [tmp.path],
+      targets: ["Zoom"],
+      dylibPath: nil
+    )
+
+    XCTAssertFalse(second.reused)
+    XCTAssertTrue(first.session !== second.session)
+  }
+
   func testSourceRootsForTargetsGroupsFilesAcrossMultipleRoots() throws {
     let tmp = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
