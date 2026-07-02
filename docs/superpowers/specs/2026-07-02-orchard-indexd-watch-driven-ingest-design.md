@@ -131,6 +131,62 @@ Examples:
 
 All of them contend on the same lock. The daemon itself is lock-agnostic.
 
+### CLI file lock design
+
+The lock should be owned by the CLI ingest process and keyed by the graph database path that the process is about to update.
+
+Recommended design:
+
+- lock identity is derived from the absolute graph database path
+- lock file lives under `~/.orchard/locks/`
+- file name uses a stable hash of the graph database path
+- suggested pattern: `orchard-ingest-<hash>.lock`
+
+This makes the protected resource explicit:
+
+- one graph database path
+- one lock namespace
+
+It also guarantees that daemon-triggered and user-triggered ingests naturally contend on the same lock as long as they target the same graph database.
+
+### Lock acquisition semantics
+
+The CLI should attempt to acquire the lock immediately at startup using a non-blocking OS-level file lock.
+
+Preferred behavior:
+
+- open or create the lock file
+- acquire a non-blocking advisory file lock
+- if lock acquisition fails, exit with the dedicated `LOCK_BUSY` outcome
+
+The daemon should not wait inside the child process. Retry scheduling remains a daemon concern after the CLI reports `LOCK_BUSY`.
+
+### Lock scope
+
+The lock should cover the entire ingest lifecycle, not only the final graph write phase.
+
+That means the protected region includes:
+
+- incremental boundary calculation
+- changed-file and deletion cleanup planning
+- reader / daemon interaction needed for that ingest run
+- graph updates
+- ingest-state persistence
+
+This avoids two concurrent CLI processes independently computing incompatible incremental deltas against the same graph database and ingest-state files.
+
+### Lock implementation notes
+
+The design prefers a real OS-managed file lock over a "lock file exists" convention.
+
+Reasons:
+
+- stale lock files after crashes do not automatically imply stale OS locks
+- OS lock release semantics are tied to process lifetime
+- implementation is simpler and more trustworthy under abnormal exits
+
+`fcntl`-style locking is the preferred first implementation direction. Exact API choice remains an implementation detail as long as the CLI presents the same observable behavior.
+
 ## Change Detection Model
 
 ### Why watch is useful
