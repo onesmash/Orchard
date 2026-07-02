@@ -8,6 +8,7 @@ from orchard.ingest.indexstore import (
     _cli_path,
     _current_indexd_binary_info,
     _ensure_indexd_running,
+    _start_indexd_process,
     _indexd_pid_path,
     _indexd_path,
     _packaged_binary_path,
@@ -167,6 +168,9 @@ def test_daemon_matches_current_build_checks_protocol_and_binary(monkeypatch):
             "executable_path": "/bin/orchard-indexd",
             "binary_size": 123,
             "binary_mtime_ns": 456,
+            "orchard_cli_path": "/bin/orchard",
+            "orchard_cli_size": 789,
+            "orchard_cli_mtime_ns": 999,
         },
     )
 
@@ -175,12 +179,27 @@ def test_daemon_matches_current_build_checks_protocol_and_binary(monkeypatch):
         "executablePath": "/bin/orchard-indexd",
         "binarySize": 123,
         "binaryMTimeNs": 456,
+        "orchardCLIPath": "/bin/orchard",
+        "orchardCLISize": 789,
+        "orchardCLIMTimeNs": 999,
     }) is True
     assert _daemon_matches_current_build({
         "protocolVersion": 1,
         "executablePath": "/bin/orchard-indexd",
         "binarySize": 999,
         "binaryMTimeNs": 456,
+        "orchardCLIPath": "/bin/orchard",
+        "orchardCLISize": 789,
+        "orchardCLIMTimeNs": 999,
+    }) is False
+    assert _daemon_matches_current_build({
+        "protocolVersion": 1,
+        "executablePath": "/bin/orchard-indexd",
+        "binarySize": 123,
+        "binaryMTimeNs": 456,
+        "orchardCLIPath": "/bin/other-orchard",
+        "orchardCLISize": 789,
+        "orchardCLIMTimeNs": 999,
     }) is False
 
 
@@ -321,6 +340,31 @@ def test_ensure_indexd_running_starts_daemon_when_ping_fails(monkeypatch):
 
     assert _ensure_indexd_running("/tmp/indexd.sock") is True
     assert calls == ["ping", "ping"]
+
+
+def test_start_indexd_process_passes_orchard_cli_path(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            captured["argv"] = argv
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr("subprocess.Popen", FakePopen)
+    monkeypatch.setattr("orchard.ingest.indexstore._indexd_path", lambda: "/tmp/orchard-indexd")
+    monkeypatch.setattr("orchard.ingest.indexstore._orchard_cli_path", lambda: "/tmp/orchard")
+    monkeypatch.setattr("orchard.ingest.indexstore._indexd_log_path", lambda: str(tmp_path / "indexd.log"))
+    monkeypatch.setattr("orchard.ingest.indexstore._indexd_pid_path", lambda _socket: str(tmp_path / "indexd.pid"))
+    monkeypatch.setattr("orchard.ingest.indexstore._cleanup_stale_indexd_socket", lambda *_args, **_kwargs: None)
+
+    _start_indexd_process("/tmp/orchard-indexd.sock")
+
+    assert captured["argv"] == [
+        "/tmp/orchard-indexd",
+        "--socket", "/tmp/orchard-indexd.sock",
+        "--pid-file", str(tmp_path / "indexd.pid"),
+        "--orchard-cli", "/tmp/orchard",
+    ]
 
 
 def test_ensure_indexd_running_restarts_on_binary_mismatch(monkeypatch):

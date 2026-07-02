@@ -44,6 +44,9 @@ struct PingResult: Encodable {
   let executablePath: String
   let binarySize: UInt64
   let binaryMTimeNs: UInt64
+  let orchardCLIPath: String
+  let orchardCLISize: UInt64
+  let orchardCLIMTimeNs: UInt64
 }
 
 struct ScanParams {

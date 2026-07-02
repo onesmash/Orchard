@@ -78,6 +78,18 @@ def _cli_path() -> str:
     raise FileNotFoundError("orchard-indexstore-reader not found; build the Swift CLI first")
 
 
+def _orchard_cli_path() -> str:
+    argv0 = sys.argv[0].strip() if sys.argv else ""
+    if argv0:
+        candidate = Path(argv0).expanduser()
+        if candidate.name.startswith("orchard") and candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate.resolve())
+    on_path = shutil.which("orchard")
+    if on_path:
+        return on_path
+    raise FileNotFoundError("orchard CLI not found; invoke via the installed 'orchard' entrypoint")
+
+
 def _packaged_binary_path(binary_name: str) -> str | None:
     rel = _packaged_binary_relpath(binary_name)
     if rel is None:
@@ -228,12 +240,17 @@ _INDEXD_START_LOCK = threading.Lock()
 def _current_indexd_binary_info() -> dict[str, int | str]:
     binary_path = Path(_indexd_path()).resolve()
     stat = binary_path.stat()
+    orchard_cli_path = Path(_orchard_cli_path()).resolve()
+    orchard_cli_stat = orchard_cli_path.stat()
     return {
         "protocol_version": _INDEXD_PROTOCOL_VERSION,
         "orchard_version": ORCHARD_VERSION,
         "executable_path": str(binary_path),
         "binary_size": stat.st_size,
         "binary_mtime_ns": stat.st_mtime_ns,
+        "orchard_cli_path": str(orchard_cli_path),
+        "orchard_cli_size": orchard_cli_stat.st_size,
+        "orchard_cli_mtime_ns": orchard_cli_stat.st_mtime_ns,
     }
 
 
@@ -247,6 +264,9 @@ def _daemon_matches_current_build(info: dict) -> bool:
         and info.get("executablePath") == current["executable_path"]
         and info.get("binarySize") == current["binary_size"]
         and info.get("binaryMTimeNs") == current["binary_mtime_ns"]
+        and info.get("orchardCLIPath") == current["orchard_cli_path"]
+        and info.get("orchardCLISize") == current["orchard_cli_size"]
+        and info.get("orchardCLIMTimeNs") == current["orchard_cli_mtime_ns"]
     )
 
 
@@ -300,7 +320,12 @@ def _start_indexd_process(socket_path: str) -> subprocess.Popen[str]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = log_path.open("a", encoding="utf-8")
     return subprocess.Popen(
-        [_indexd_path(), "--socket", socket_path, "--pid-file", pid_path],
+        [
+            _indexd_path(),
+            "--socket", socket_path,
+            "--pid-file", pid_path,
+            "--orchard-cli", _orchard_cli_path(),
+        ],
         stdout=log_handle,
         stderr=log_handle,
         text=True,

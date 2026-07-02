@@ -3,6 +3,39 @@ import XCTest
 @testable import orchard_indexd
 
 final class IndexdWatchDrivenIngestTests: XCTestCase {
+  private final class SynchronizedCounter {
+    private let lock = NSLock()
+    private var storage = 0
+
+    @discardableResult
+    func increment() -> Int {
+      lock.lock()
+      defer { lock.unlock() }
+      storage += 1
+      return storage
+    }
+
+    var value: Int {
+      lock.lock()
+      defer { lock.unlock() }
+      return storage
+    }
+  }
+
+  private func waitUntil(
+    timeout: TimeInterval = 1.0,
+    pollInterval: TimeInterval = 0.01,
+    _ condition: @escaping () -> Bool
+  ) {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if condition() {
+        return
+      }
+      RunLoop.current.run(until: Date().addingTimeInterval(pollInterval))
+    }
+  }
+
   private func registerPayload(
     storePath: String = "/tmp/store",
     graphDBPath: String = "/tmp/graph.db",
@@ -54,6 +87,33 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     XCTAssertEqual(process.terminationStatus, 0)
 
     return storePath
+  }
+
+  private func makeTestSession() throws -> IndexdSession {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    addTeardownBlock {
+      try? FileManager.default.removeItem(at: tmp)
+    }
+
+    let storePath = try buildMinimalSwiftIndex(tmp: tmp)
+    let context = IngestContext(
+      projectDir: tmp.path,
+      indexStorePath: storePath.path,
+      graphDBPath: "/tmp/graph.db",
+      targetArgs: ["Zoom"],
+      entryTarget: "Zoom",
+      incremental: true
+    )
+
+    return try IndexdSession(
+      sessionId: UUID().uuidString,
+      storePath: storePath.path,
+      sourceRoots: [tmp.path],
+      targets: ["Zoom"],
+      dylibPath: nil,
+      ingestContext: context
+    )
   }
 
   func testRegisterOrRefreshSessionReusesSameSessionForSameStoreAndGraphPair() throws {
@@ -143,13 +203,13 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       dylibPath: nil
     )
 
-    XCTAssertEqual(refreshed.session.ingestContext, secondContext)
-    XCTAssertEqual(refreshed.session.sourceRoots, [tmp.path])
-    XCTAssertEqual(refreshed.session.targets, ["Zoom", "zPSApp"])
-    XCTAssertEqual(refreshed.session.seenGeneration, 0)
-    XCTAssertEqual(refreshed.session.ackedGeneration, 0)
-    XCTAssertFalse(refreshed.session.ingestRunning)
-    XCTAssertNil(refreshed.session.ingestTargetGeneration)
+    let snapshot = refreshed.session.snapshot()
+    XCTAssertEqual(snapshot.ingestContext, secondContext)
+    XCTAssertEqual(snapshot.sourceRoots, [tmp.path])
+    XCTAssertEqual(snapshot.targets, ["Zoom", "zPSApp"])
+    XCTAssertEqual(snapshot.seenGeneration, 0)
+    XCTAssertEqual(snapshot.ackedGeneration, 0)
+    XCTAssertFalse(snapshot.ingestRunning)
   }
 
   func testLatestRegistrationWinsForRememberedContextOnReusedSession() throws {
@@ -189,10 +249,11 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     )
 
     XCTAssertEqual(first.session.sessionId, refreshed.session.sessionId)
-    XCTAssertEqual(refreshed.session.ingestContext, secondContext)
-    XCTAssertEqual(refreshed.session.ingestContext?.targetArgs, ["Zoom", "zPSApp"])
-    XCTAssertEqual(refreshed.session.sourceRoots, ["/tmp/project/next"])
-    XCTAssertEqual(refreshed.session.targets, ["Zoom", "zPSApp"])
+    let snapshot = refreshed.session.snapshot()
+    XCTAssertEqual(snapshot.ingestContext, secondContext)
+    XCTAssertEqual(snapshot.ingestContext?.targetArgs, ["Zoom", "zPSApp"])
+    XCTAssertEqual(snapshot.sourceRoots, ["/tmp/project/next"])
+    XCTAssertEqual(snapshot.targets, ["Zoom", "zPSApp"])
   }
 
   func testSingleFlightIsScopedPerGraphDBPath() {
@@ -205,6 +266,87 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     manager.endGraphDBIngest(graphDBPath: "/tmp/a.db")
 
     XCTAssertTrue(manager.beginGraphDBIngest(graphDBPath: "/tmp/a.db"))
+  }
+
+  func testRegisterSessionBackfillsPendingWorkAfterBackgroundIngestConfiguration() throws {
+    let session = try makeTestSession()
+    let beginInFlightCalls = SynchronizedCounter()
+
+    waitUntil {
+      !session.snapshot().debounceScheduled
+    }
+    let baselineGeneration = session.snapshot().seenGeneration
+    session.recordWatchActivity()
+    var snapshot = session.snapshot()
+    XCTAssertEqual(snapshot.seenGeneration, baselineGeneration + 1)
+    XCTAssertFalse(snapshot.debounceScheduled)
+
+    session.maybeScheduleBackgroundIngest(
+      orchardCLIPath: "/definitely/missing/orchard",
+      beginInFlight: {
+        _ = beginInFlightCalls.increment()
+        return false
+      },
+      endInFlight: {}
+    )
+
+    waitUntil {
+      session.snapshot().hasIngestContext
+    }
+
+    snapshot = session.snapshot()
+    XCTAssertGreaterThanOrEqual(snapshot.seenGeneration, baselineGeneration + 1)
+    waitUntil {
+      beginInFlightCalls.value > 0
+    }
+
+    snapshot = session.snapshot()
+    XCTAssertGreaterThan(snapshot.seenGeneration, baselineGeneration)
+    XCTAssertGreaterThan(beginInFlightCalls.value, 0)
+    XCTAssertFalse(snapshot.ingestRunning)
+  }
+
+  func testGraphDBSingleFlightConflictPreservesPendingWorkAndRetries() throws {
+    let session = try makeTestSession()
+    let beginInFlightCalls = SynchronizedCounter()
+
+    session.recordWatchActivity()
+    session.maybeScheduleBackgroundIngest(
+      orchardCLIPath: "/definitely/missing/orchard",
+      beginInFlight: {
+        beginInFlightCalls.increment() > 1
+      },
+      endInFlight: {}
+    )
+
+    waitUntil(timeout: 2.5) {
+      beginInFlightCalls.value >= 2 && !session.snapshot().ingestRunning
+    }
+
+    let snapshot = session.snapshot()
+    XCTAssertGreaterThanOrEqual(beginInFlightCalls.value, 2)
+    XCTAssertGreaterThan(snapshot.seenGeneration, snapshot.ackedGeneration)
+    XCTAssertFalse(snapshot.ingestRunning)
+  }
+
+  func testLockBusySchedulesRetryButOtherFailuresDoNot() throws {
+    let session = try makeTestSession()
+
+    XCTAssertTrue(session.beginIngest(targetGeneration: 3))
+    session.handleIngestExit(code: 23)
+
+    var snapshot = session.snapshot()
+    XCTAssertTrue(snapshot.retryScheduled)
+    XCTAssertTrue(snapshot.retryScheduledForLastExit)
+    XCTAssertFalse(snapshot.ingestRunning)
+
+    XCTAssertTrue(session.beginIngest(targetGeneration: 4))
+    session.handleIngestExit(code: 1)
+
+    snapshot = session.snapshot()
+    XCTAssertFalse(snapshot.retryScheduled)
+    XCTAssertFalse(snapshot.retryScheduledForLastExit)
+    XCTAssertFalse(snapshot.ingestRunning)
   }
 
   func testDecodeRegisterSessionParamsRejectsMismatchedPaths() throws {

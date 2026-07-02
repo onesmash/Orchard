@@ -8,7 +8,8 @@ struct OrchardIndexdMain {
   static func main() throws {
     let socketPath = parseSocketPath()
     let pidFilePath = parsePIDFilePath(socketPath: socketPath)
-    let runtimeInfo = collectRuntimeInfo()
+    let orchardCLIPath = parseOrchardCLIPath()
+    let runtimeInfo = collectRuntimeInfo(orchardCLIPath: orchardCLIPath)
     try? FileManager.default.removeItem(atPath: socketPath)
 
     let serverFD = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -88,7 +89,10 @@ struct OrchardIndexdMain {
               pid: runtimeInfo.pid,
               executablePath: runtimeInfo.executablePath,
               binarySize: runtimeInfo.binarySize,
-              binaryMTimeNs: runtimeInfo.binaryMTimeNs
+              binaryMTimeNs: runtimeInfo.binaryMTimeNs,
+              orchardCLIPath: runtimeInfo.orchardCLIPath,
+              orchardCLISize: runtimeInfo.orchardCLISize,
+              orchardCLIMTimeNs: runtimeInfo.orchardCLIMTimeNs
             ),
             error: Optional<DaemonError>.none
           ), to: output)
@@ -118,6 +122,15 @@ struct OrchardIndexdMain {
               sourceRoots: [],
               targets: [],
               dylibPath: nil
+            )
+            result.session.maybeScheduleBackgroundIngest(
+              orchardCLIPath: orchardCLIPath,
+              beginInFlight: {
+                manager.beginGraphDBIngest(graphDBPath: registerParams.graphDBPath)
+              },
+              endInFlight: {
+                manager.endGraphDBIngest(graphDBPath: registerParams.graphDBPath)
+              }
             )
             try writeLine(DaemonResponse(
               id: id,
@@ -295,6 +308,9 @@ private struct RuntimeInfo {
   let executablePath: String
   let binarySize: UInt64
   let binaryMTimeNs: UInt64
+  let orchardCLIPath: String
+  let orchardCLISize: UInt64
+  let orchardCLIMTimeNs: UInt64
 }
 
 struct RegisterSessionDecodeError: Error {
@@ -368,7 +384,15 @@ private func parsePIDFilePath(socketPath: String) -> String? {
   return URL(fileURLWithPath: socketPath).deletingPathExtension().path + ".pid"
 }
 
-private func collectRuntimeInfo() -> RuntimeInfo {
+private func parseOrchardCLIPath() -> String {
+  let args = CommandLine.arguments
+  if let index = args.firstIndex(of: "--orchard-cli"), index + 1 < args.count {
+    return args[index + 1]
+  }
+  return "orchard"
+}
+
+private func collectRuntimeInfo(orchardCLIPath: String) -> RuntimeInfo {
   let rawPath = CommandLine.arguments.first ?? ProcessInfo.processInfo.arguments.first ?? ""
   let executablePath = URL(fileURLWithPath: rawPath).resolvingSymlinksInPath().path
   var fileInfo = stat()
@@ -383,11 +407,27 @@ private func collectRuntimeInfo() -> RuntimeInfo {
   } else {
     mtimeNs = 0
   }
+  let resolvedOrchardCLIPath = URL(fileURLWithPath: orchardCLIPath).resolvingSymlinksInPath().path
+  var orchardCLIFileInfo = stat()
+  let orchardCLIStatResult = resolvedOrchardCLIPath.withCString { pathPtr in
+    stat(pathPtr, &orchardCLIFileInfo)
+  }
+  let orchardCLISize = orchardCLIStatResult == 0 ? UInt64(orchardCLIFileInfo.st_size) : 0
+  let orchardCLIMTimeNs: UInt64
+  if orchardCLIStatResult == 0 {
+    orchardCLIMTimeNs = UInt64(orchardCLIFileInfo.st_mtimespec.tv_sec) * 1_000_000_000
+      + UInt64(orchardCLIFileInfo.st_mtimespec.tv_nsec)
+  } else {
+    orchardCLIMTimeNs = 0
+  }
   return RuntimeInfo(
     pid: getpid(),
     executablePath: executablePath,
     binarySize: size,
-    binaryMTimeNs: mtimeNs
+    binaryMTimeNs: mtimeNs,
+    orchardCLIPath: resolvedOrchardCLIPath,
+    orchardCLISize: orchardCLISize,
+    orchardCLIMTimeNs: orchardCLIMTimeNs
   )
 }
 

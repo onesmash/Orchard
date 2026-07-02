@@ -25,6 +25,40 @@ private struct DaemonCanonicalSlot {
   let priority: Int
 }
 
+private let ingestLockBusyExitCode: Int32 = 23
+private let ingestRetryDelay: DispatchTimeInterval = .seconds(1)
+private let ingestDebounceDelay: DispatchTimeInterval = .milliseconds(200)
+
+private final class IndexdSessionDelegate: IndexDelegate {
+  weak var session: IndexdSession?
+
+  init(session: IndexdSession?) {
+    self.session = session
+  }
+
+  func processingAddedPending(_ count: Int) {
+    guard count > 0 else {
+      return
+    }
+    session?.handleObservedUnitActivity()
+  }
+
+  func processingCompleted(_ count: Int) {}
+}
+
+struct IndexdSessionSnapshot {
+  let sourceRoots: [String]
+  let targets: [String]
+  let ingestContext: IngestContext?
+  let seenGeneration: UInt64
+  let ackedGeneration: UInt64
+  let ingestRunning: Bool
+  let retryScheduled: Bool
+  let retryScheduledForLastExit: Bool
+  let debounceScheduled: Bool
+  let hasIngestContext: Bool
+}
+
 final class IndexdSession {
   let sessionId: String
   let storePath: String
@@ -37,11 +71,20 @@ final class IndexdSession {
   private(set) var ackedGeneration: UInt64 = 0
   private(set) var ingestRunning = false
   private(set) var ingestTargetGeneration: UInt64?
+  private(set) var retryScheduled = false
+  private(set) var retryScheduledForLastExit = false
+  private(set) var debounceScheduled = false
   let library: IndexStoreLibrary
   let db: IndexStoreDB
   let dylibPath: String
   private let queue: DispatchQueue
+  private let delegate: IndexdSessionDelegate
   private var hasPolled = false
+  private var retryWorkItem: DispatchWorkItem?
+  private var debounceWorkItem: DispatchWorkItem?
+  private var orchardCLIPath: String?
+  private var beginGraphDBIngest: (() -> Bool)?
+  private var endGraphDBIngest: (() -> Void)?
 
   init(
     sessionId: String,
@@ -57,6 +100,7 @@ final class IndexdSession {
     self.targets = targets
     self.ingestContext = ingestContext
     self.queue = DispatchQueue(label: "orchard.indexd.\(sessionId)")
+    self.delegate = IndexdSessionDelegate(session: nil)
 
     let resolvedDylib = dylibPath ?? ProcessInfo.processInfo.environment["ORCHARD_LIBINDEXSTORE"] ?? "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/libIndexStore.dylib"
     self.dylibPath = resolvedDylib
@@ -73,9 +117,11 @@ final class IndexdSession {
       storePath: storePath,
       databasePath: dbPath,
       library: library,
+      delegate: delegate,
       waitUntilDoneInitializing: false,
-      listenToUnitEvents: false
+      listenToUnitEvents: true
     )
+    self.delegate.session = self
   }
 
   func update(sourceRoots: [String], targets: [String]) {
@@ -87,6 +133,64 @@ final class IndexdSession {
     self.sourceRoots = sourceRoots
     self.targets = targets
     self.ingestContext = ingestContext
+  }
+
+  func recordWatchActivity() {
+    queue.sync {
+      seenGeneration &+= 1
+    }
+  }
+
+  func handleObservedUnitActivity() {
+    queue.async {
+      self.seenGeneration &+= 1
+      if self.orchardCLIPath != nil, self.beginGraphDBIngest != nil, self.endGraphDBIngest != nil {
+        self.scheduleDebouncedIngestIfNeededLocked()
+      }
+    }
+  }
+
+  @discardableResult
+  func beginIngest(targetGeneration: UInt64) -> Bool {
+    queue.sync {
+      beginIngestLocked(targetGeneration: targetGeneration)
+    }
+  }
+
+  func handleIngestExit(code: Int32) {
+    queue.sync {
+      handleIngestExitLocked(code: code)
+    }
+  }
+
+  func maybeScheduleBackgroundIngest(
+    orchardCLIPath: String,
+    beginInFlight: @escaping () -> Bool,
+    endInFlight: @escaping () -> Void
+  ) {
+    queue.async {
+      self.orchardCLIPath = orchardCLIPath
+      self.beginGraphDBIngest = beginInFlight
+      self.endGraphDBIngest = endInFlight
+      self.scheduleDebouncedIngestIfNeededLocked()
+    }
+  }
+
+  func snapshot() -> IndexdSessionSnapshot {
+    queue.sync {
+      IndexdSessionSnapshot(
+        sourceRoots: sourceRoots,
+        targets: targets,
+        ingestContext: ingestContext,
+        seenGeneration: seenGeneration,
+        ackedGeneration: ackedGeneration,
+        ingestRunning: ingestRunning,
+        retryScheduled: retryScheduled,
+        retryScheduledForLastExit: retryScheduledForLastExit,
+        debounceScheduled: debounceScheduled,
+        hasIngestContext: ingestContext != nil
+      )
+    }
   }
 
   func poll() {
@@ -280,6 +384,139 @@ final class IndexdSession {
     } catch {
       return []
     }
+  }
+
+  private func beginIngestLocked(targetGeneration: UInt64) -> Bool {
+    guard !ingestRunning else {
+      return false
+    }
+    ingestRunning = true
+    ingestTargetGeneration = targetGeneration
+    retryScheduled = false
+    retryScheduledForLastExit = false
+    retryWorkItem?.cancel()
+    retryWorkItem = nil
+    debounceWorkItem?.cancel()
+    debounceWorkItem = nil
+    debounceScheduled = false
+    return true
+  }
+
+  private func handleIngestExitLocked(code: Int32) {
+    ingestRunning = false
+
+    if code == 0 {
+      if let targetGeneration = ingestTargetGeneration {
+        ackedGeneration = max(ackedGeneration, targetGeneration)
+      }
+      ingestTargetGeneration = nil
+      retryScheduled = false
+      retryScheduledForLastExit = false
+      scheduleDebouncedIngestIfNeededLocked()
+      return
+    }
+
+    ingestTargetGeneration = nil
+    if code == ingestLockBusyExitCode {
+      retryScheduledForLastExit = true
+      scheduleRetryLocked()
+      return
+    }
+
+    retryScheduled = false
+    retryScheduledForLastExit = false
+  }
+
+  private func maybeStartBackgroundIngestLocked() {
+    guard let context = ingestContext,
+          let orchardCLIPath,
+          let beginGraphDBIngest,
+          let endGraphDBIngest else {
+      return
+    }
+    guard ackedGeneration < seenGeneration else {
+      return
+    }
+    guard !ingestRunning else {
+      return
+    }
+
+    let targetGeneration = seenGeneration
+    guard beginGraphDBIngest() else {
+      scheduleRetryLocked()
+      return
+    }
+    guard beginIngestLocked(targetGeneration: targetGeneration) else {
+      endGraphDBIngest()
+      return
+    }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: orchardCLIPath)
+    process.arguments = makeIngestArguments(context: context)
+    process.terminationHandler = { [weak self] proc in
+      self?.queue.async {
+        endGraphDBIngest()
+        self?.handleIngestExitLocked(code: proc.terminationStatus)
+      }
+    }
+
+    do {
+      try process.run()
+    } catch {
+      endGraphDBIngest()
+      ingestRunning = false
+      ingestTargetGeneration = nil
+      retryScheduled = false
+      retryScheduledForLastExit = false
+      debounceScheduled = false
+    }
+  }
+
+  private func scheduleRetryLocked() {
+    retryWorkItem?.cancel()
+    retryScheduled = true
+    let workItem = DispatchWorkItem { [weak self] in
+      guard let self else {
+        return
+      }
+      self.retryWorkItem = nil
+      self.retryScheduled = false
+      self.maybeStartBackgroundIngestLocked()
+    }
+    retryWorkItem = workItem
+    queue.asyncAfter(deadline: .now() + ingestRetryDelay, execute: workItem)
+  }
+
+  private func scheduleDebouncedIngestIfNeededLocked() {
+    guard ackedGeneration < seenGeneration else {
+      debounceScheduled = false
+      return
+    }
+    debounceWorkItem?.cancel()
+    debounceScheduled = true
+    let workItem = DispatchWorkItem { [weak self] in
+      guard let self else {
+        return
+      }
+      self.debounceWorkItem = nil
+      self.debounceScheduled = false
+      self.maybeStartBackgroundIngestLocked()
+    }
+    debounceWorkItem = workItem
+    queue.asyncAfter(deadline: .now() + ingestDebounceDelay, execute: workItem)
+  }
+
+  private func makeIngestArguments(context: IngestContext) -> [String] {
+    var arguments = [
+      "ingest",
+      "--index-store", context.indexStorePath,
+      "--project-dir", context.projectDir,
+      "--target", context.targetArgs.joined(separator: ","),
+      "--db", context.graphDBPath,
+    ]
+    arguments.append(context.incremental ? "--incremental" : "--full")
+    return arguments
   }
 }
 
