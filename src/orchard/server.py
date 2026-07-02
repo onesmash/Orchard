@@ -18,11 +18,14 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 from contextlib import asynccontextmanager
+from contextlib import suppress
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+from watchfiles import awatch
 
 from orchard.query.annotations import annotate_symbol_source_scope
 from orchard.query.search_contract import SearchResponse, SearchStatus
@@ -44,6 +47,74 @@ _DB_PATH: str = ""
 
 _conn = None
 """Ladybug connection opened once at startup, reused for every tool call."""
+_startup_ingest_task: asyncio.Task | None = None
+"""Background startup ingest task, if one is currently running."""
+_ingest_state_watch_task: asyncio.Task | None = None
+"""Background ingest-state watcher task, if one is currently running."""
+
+
+def _reset_conn(reason: str) -> None:
+    """Close the cached DB connection so the next request reopens fresh state."""
+    global _conn
+    if _conn is None:
+        return
+    _conn.close()
+    _conn = None
+    sys.stderr.write(f"[orchard-mcp] DB connection reset after {reason}\n")
+    sys.stderr.flush()
+
+
+async def _watch_ingest_state(project_dir: str) -> None:
+    """Watch ingest-state.json and reset the cached DB connection on changes."""
+    state_path = (Path(project_dir) / ".orchard" / "ingest-state.json").resolve()
+
+    def _watch_filter(_change, changed_path: str) -> bool:
+        return Path(changed_path).resolve() == state_path
+
+    async for _changes in awatch(str(project_dir), watch_filter=_watch_filter):
+        sys.stderr.write(
+            f"[orchard-mcp] ingest-state changed path={state_path}\n"
+        )
+        sys.stderr.flush()
+        _reset_conn("ingest-state update")
+
+
+async def _run_startup_ingest() -> None:
+    """Best-effort ingest in the current project directory before serving MCP."""
+    from orchard.ingest.indexstore import _orchard_cli_path
+
+    project_dir = str(Path.cwd().resolve())
+    cli_path = _orchard_cli_path()
+    proc = await asyncio.create_subprocess_exec(
+        cli_path,
+        "ingest",
+        "--project-dir",
+        project_dir,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout_data, stderr_data = await proc.communicate()
+    stdout_text = stdout_data.decode("utf-8", errors="replace").strip()
+    stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
+    if proc.returncode == 0:
+        sys.stderr.write(
+            f"[orchard-mcp] startup ingest finished project_dir={project_dir}\n"
+        )
+        if stdout_text:
+            sys.stderr.write(stdout_text + "\n")
+        if stderr_text:
+            sys.stderr.write(stderr_text + "\n")
+        _reset_conn("startup ingest")
+        return
+
+    sys.stderr.write(
+        f"[orchard-mcp] startup ingest failed project_dir={project_dir} exit={proc.returncode}\n"
+    )
+    if stdout_text:
+        sys.stderr.write(stdout_text + "\n")
+    if stderr_text:
+        sys.stderr.write(stderr_text + "\n")
+    sys.stderr.flush()
 
 
 def _get_conn():
@@ -553,7 +624,19 @@ HANDLERS: dict[str, callable] = {
 
 @asynccontextmanager
 async def _lifespan(server: Server):
-    """Called once at startup.  We just trigger a connection warm-up."""
+    """Called once at startup. Run ingest once, then trigger DB warm-up."""
+    global _startup_ingest_task, _ingest_state_watch_task
+    project_dir = str(Path.cwd().resolve())
+    try:
+        if _startup_ingest_task is None or _startup_ingest_task.done():
+            _startup_ingest_task = asyncio.create_task(_run_startup_ingest())
+        if _ingest_state_watch_task is None or _ingest_state_watch_task.done():
+            _ingest_state_watch_task = asyncio.create_task(
+                _watch_ingest_state(project_dir)
+            )
+    except Exception as exc:
+        sys.stderr.write(f"[orchard-mcp] background task scheduling failed: {exc}\n")
+        sys.stderr.flush()
     try:
         _get_conn()
         sys.stderr.write("[orchard-mcp] DB connected\n")
@@ -565,9 +648,17 @@ async def _lifespan(server: Server):
         yield
     finally:
         global _conn
-        if _conn is not None:
-            _conn.close()
-            _conn = None
+        if _startup_ingest_task is not None and not _startup_ingest_task.done():
+            _startup_ingest_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _startup_ingest_task
+        _startup_ingest_task = None
+        if _ingest_state_watch_task is not None and not _ingest_state_watch_task.done():
+            _ingest_state_watch_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _ingest_state_watch_task
+        _ingest_state_watch_task = None
+        _reset_conn("shutdown")
 
 
 app = Server("orchard-mcp", version="0.2.0", lifespan=_lifespan)
