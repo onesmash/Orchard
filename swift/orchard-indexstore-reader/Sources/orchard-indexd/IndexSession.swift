@@ -28,9 +28,44 @@ private struct DaemonCanonicalSlot {
 private let ingestLockBusyExitCode: Int32 = 23
 private let ingestRetryDelay: DispatchTimeInterval = .seconds(1)
 private let ingestDebounceDelay: DispatchTimeInterval = .milliseconds(200)
+let indexdBootID = ISO8601DateFormatter().string(from: Date())
+
+func indexdTimestamp() -> String {
+  let formatter = DateFormatter()
+  formatter.locale = Locale(identifier: "en_US_POSIX")
+  formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS Z"
+  return formatter.string(from: Date())
+}
+
+func defaultIndexdLogSink(_ message: String) {
+  let pid = ProcessInfo.processInfo.processIdentifier
+  let line = "[orchard-indexd ts=\(indexdTimestamp()) pid=\(pid) boot=\(indexdBootID)] \(message)\n"
+  guard let data = line.data(using: .utf8) else {
+    return
+  }
+  FileHandle.standardError.write(data)
+}
+
+private func intervalDescription(_ interval: DispatchTimeInterval) -> String {
+  switch interval {
+  case .seconds(let value):
+    return "\(value)s"
+  case .milliseconds(let value):
+    return "\(value)ms"
+  case .microseconds(let value):
+    return "\(value)us"
+  case .nanoseconds(let value):
+    return "\(value)ns"
+  case .never:
+    return "never"
+  @unknown default:
+    return "unknown"
+  }
+}
 
 private final class IndexdSessionDelegate: IndexDelegate {
   weak var session: IndexdSession?
+  private var pendingUnitCount = 0
 
   init(session: IndexdSession?) {
     self.session = session
@@ -40,10 +75,33 @@ private final class IndexdSessionDelegate: IndexDelegate {
     guard count > 0 else {
       return
     }
-    session?.handleObservedUnitActivity()
+    let pendingBefore = pendingUnitCount
+    pendingUnitCount += count
+    session?.handleUnitEventPendingAdded(
+      count: count,
+      pendingBefore: pendingBefore,
+      pendingAfter: pendingUnitCount
+    )
   }
 
-  func processingCompleted(_ count: Int) {}
+  func processingCompleted(_ count: Int) {
+    guard count > 0 else {
+      return
+    }
+    let pendingBefore = pendingUnitCount
+    pendingUnitCount -= count
+    session?.handleUnitEventProcessingCompleted(
+      count: count,
+      pendingBefore: pendingBefore,
+      pendingAfter: pendingUnitCount
+    )
+    if pendingUnitCount == 0 {
+      session?.handleObservedUnitActivity()
+    } else if pendingUnitCount < 0 {
+      pendingUnitCount = 0
+      session?.handleObservedUnitActivity()
+    }
+  }
 }
 
 struct IndexdSessionSnapshot {
@@ -57,6 +115,7 @@ struct IndexdSessionSnapshot {
   let retryScheduledForLastExit: Bool
   let debounceScheduled: Bool
   let hasIngestContext: Bool
+  let hasPolled: Bool
 }
 
 final class IndexdSession {
@@ -85,6 +144,7 @@ final class IndexdSession {
   private var orchardCLIPath: String?
   private var beginGraphDBIngest: (() -> Bool)?
   private var endGraphDBIngest: (() -> Void)?
+  var logSink: (String) -> Void = defaultIndexdLogSink
 
   init(
     sessionId: String,
@@ -138,15 +198,37 @@ final class IndexdSession {
   func recordWatchActivity() {
     queue.sync {
       seenGeneration &+= 1
+      logSink(
+        "session=\(sessionId) watch-event received source=manual seen=\(seenGeneration) acked=\(ackedGeneration) running=\(ingestRunning)"
+      )
     }
   }
 
   func handleObservedUnitActivity() {
     queue.async {
       self.seenGeneration &+= 1
+      self.logSink(
+        "session=\(self.sessionId) observed unit activity seen=\(self.seenGeneration) acked=\(self.ackedGeneration) running=\(self.ingestRunning) pending=\(self.seenGeneration > self.ackedGeneration)"
+      )
       if self.orchardCLIPath != nil, self.beginGraphDBIngest != nil, self.endGraphDBIngest != nil {
         self.scheduleDebouncedIngestIfNeededLocked()
       }
+    }
+  }
+
+  func handleUnitEventPendingAdded(count: Int, pendingBefore: Int, pendingAfter: Int) {
+    queue.async {
+      self.logSink(
+        "session=\(self.sessionId) unit-event added count=\(count) pending_before=\(pendingBefore) pending_after=\(pendingAfter) seen=\(self.seenGeneration) acked=\(self.ackedGeneration)"
+      )
+    }
+  }
+
+  func handleUnitEventProcessingCompleted(count: Int, pendingBefore: Int, pendingAfter: Int) {
+    queue.async {
+      self.logSink(
+        "session=\(self.sessionId) unit-event completed count=\(count) pending_before=\(pendingBefore) pending_after=\(pendingAfter) seen=\(self.seenGeneration) acked=\(self.ackedGeneration)"
+      )
     }
   }
 
@@ -172,6 +254,13 @@ final class IndexdSession {
       self.orchardCLIPath = orchardCLIPath
       self.beginGraphDBIngest = beginInFlight
       self.endGraphDBIngest = endInFlight
+      let entryTarget = self.ingestContext?.entryTarget ?? ""
+      let targetArgs = self.ingestContext?.targetArgs.joined(separator: ",") ?? ""
+      let incremental = self.ingestContext?.incremental ?? false
+      self.logSink(
+        "session=\(self.sessionId) configured auto-ingest entry=\(entryTarget) targets=\(targetArgs) incremental=\(incremental)"
+      )
+      self.primeUnitEventMonitoringIfNeededLocked()
       self.scheduleDebouncedIngestIfNeededLocked()
     }
   }
@@ -188,15 +277,30 @@ final class IndexdSession {
         retryScheduled: retryScheduled,
         retryScheduledForLastExit: retryScheduledForLastExit,
         debounceScheduled: debounceScheduled,
-        hasIngestContext: ingestContext != nil
+        hasIngestContext: ingestContext != nil,
+        hasPolled: hasPolled
       )
     }
   }
 
+#if DEBUG
+  func simulateUnitEventBatchForTesting(added: Int, completed: Int) {
+    if added > 0 {
+      delegate.processingAddedPending(added)
+    }
+    if completed > 0 {
+      delegate.processingCompleted(completed)
+    }
+  }
+#endif
+
   func poll() {
     queue.sync {
+      let initialScan = !hasPolled
+      logSink("session=\(sessionId) polling indexstore-db initial_scan=\(initialScan)")
       db.pollForUnitChangesAndWait(isInitialScan: !hasPolled)
       hasPolled = true
+      logSink("session=\(sessionId) poll completed initial_scan=\(initialScan)")
     }
   }
 
@@ -364,6 +468,17 @@ final class IndexdSession {
     return Array(seen)
   }
 
+  private func primeUnitEventMonitoringIfNeededLocked() {
+    guard !hasPolled else {
+      logSink("session=\(sessionId) prime skipped; already polled")
+      return
+    }
+    logSink("session=\(sessionId) priming unit-event monitoring initial_scan=true")
+    db.pollForUnitChangesAndWait(isInitialScan: true)
+    hasPolled = true
+    logSink("session=\(sessionId) primed unit-event monitoring initial_scan=true")
+  }
+
   private func collectOutputPathMappings(filePaths: [String]) -> [[String: String]] {
     guard !filePaths.isEmpty else {
       return []
@@ -404,6 +519,10 @@ final class IndexdSession {
 
   private func handleIngestExitLocked(code: Int32) {
     ingestRunning = false
+    let targetGenerationDescription = ingestTargetGeneration.map(String.init) ?? "nil"
+    logSink(
+      "session=\(sessionId) auto-ingest exited code=\(code) seen=\(seenGeneration) acked=\(ackedGeneration) target_generation=\(targetGenerationDescription)"
+    )
 
     if code == 0 {
       if let targetGeneration = ingestTargetGeneration {
@@ -412,6 +531,9 @@ final class IndexdSession {
       ingestTargetGeneration = nil
       retryScheduled = false
       retryScheduledForLastExit = false
+      logSink(
+        "session=\(sessionId) auto-ingest succeeded acked=\(ackedGeneration) pending=\(seenGeneration > ackedGeneration)"
+      )
       scheduleDebouncedIngestIfNeededLocked()
       return
     }
@@ -419,12 +541,14 @@ final class IndexdSession {
     ingestTargetGeneration = nil
     if code == ingestLockBusyExitCode {
       retryScheduledForLastExit = true
+      logSink("session=\(sessionId) auto-ingest lock busy; scheduling retry")
       scheduleRetryLocked()
       return
     }
 
     retryScheduled = false
     retryScheduledForLastExit = false
+    logSink("session=\(sessionId) auto-ingest failed without retry")
   }
 
   private func maybeStartBackgroundIngestLocked() {
@@ -432,28 +556,38 @@ final class IndexdSession {
           let orchardCLIPath,
           let beginGraphDBIngest,
           let endGraphDBIngest else {
+      logSink("session=\(sessionId) auto-ingest skipped; reason=context_not_fully_configured seen=\(seenGeneration) acked=\(ackedGeneration)")
       return
     }
     guard ackedGeneration < seenGeneration else {
+      logSink("session=\(sessionId) auto-ingest skipped; reason=no_pending_work seen=\(seenGeneration) acked=\(ackedGeneration)")
       return
     }
     guard !ingestRunning else {
+      logSink("session=\(sessionId) auto-ingest skipped; reason=ingest_already_running seen=\(seenGeneration) acked=\(ackedGeneration)")
       return
     }
 
     let targetGeneration = seenGeneration
     guard beginGraphDBIngest() else {
+      logSink("session=\(sessionId) auto-ingest deferred; reason=graph_db_single_flight_busy generation=\(targetGeneration) seen=\(seenGeneration) acked=\(ackedGeneration)")
       scheduleRetryLocked()
       return
     }
     guard beginIngestLocked(targetGeneration: targetGeneration) else {
       endGraphDBIngest()
+      logSink("session=\(sessionId) auto-ingest aborted; reason=begin_ingest_rejected generation=\(targetGeneration) seen=\(seenGeneration) acked=\(ackedGeneration)")
       return
     }
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: orchardCLIPath)
     process.arguments = makeIngestArguments(context: context)
+    let mode = context.incremental ? "incremental" : "full"
+    let targetArgs = context.targetArgs.joined(separator: ",")
+    logSink(
+      "session=\(sessionId) launching auto-ingest generation=\(targetGeneration) mode=\(mode) entry=\(context.entryTarget) targets=\(targetArgs) db=\(context.graphDBPath)"
+    )
     process.terminationHandler = { [weak self] proc in
       self?.queue.async {
         endGraphDBIngest()
@@ -470,18 +604,24 @@ final class IndexdSession {
       retryScheduled = false
       retryScheduledForLastExit = false
       debounceScheduled = false
+      logSink("session=\(sessionId) failed to launch auto-ingest error=\(error) seen=\(seenGeneration) acked=\(ackedGeneration)")
     }
   }
 
   private func scheduleRetryLocked() {
+    let replacingExisting = retryWorkItem != nil
     retryWorkItem?.cancel()
     retryScheduled = true
+    logSink(
+      "session=\(sessionId) scheduled auto-ingest retry delay=\(intervalDescription(ingestRetryDelay)) replacing_existing=\(replacingExisting)"
+    )
     let workItem = DispatchWorkItem { [weak self] in
       guard let self else {
         return
       }
       self.retryWorkItem = nil
       self.retryScheduled = false
+      self.logSink("session=\(self.sessionId) retry timer fired")
       self.maybeStartBackgroundIngestLocked()
     }
     retryWorkItem = workItem
@@ -491,16 +631,22 @@ final class IndexdSession {
   private func scheduleDebouncedIngestIfNeededLocked() {
     guard ackedGeneration < seenGeneration else {
       debounceScheduled = false
+      logSink("session=\(sessionId) debounce cleared; no pending work")
       return
     }
+    let replacingExisting = debounceWorkItem != nil
     debounceWorkItem?.cancel()
     debounceScheduled = true
+    logSink(
+      "session=\(sessionId) scheduled auto-ingest debounce delay=\(intervalDescription(ingestDebounceDelay)) seen=\(seenGeneration) acked=\(ackedGeneration) replacing_existing=\(replacingExisting)"
+    )
     let workItem = DispatchWorkItem { [weak self] in
       guard let self else {
         return
       }
       self.debounceWorkItem = nil
       self.debounceScheduled = false
+      self.logSink("session=\(self.sessionId) debounce timer fired")
       self.maybeStartBackgroundIngestLocked()
     }
     debounceWorkItem = workItem

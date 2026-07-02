@@ -22,6 +22,23 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     }
   }
 
+  private final class SynchronizedLogBuffer {
+    private let lock = NSLock()
+    private var storage: [String] = []
+
+    func append(_ line: String) {
+      lock.lock()
+      defer { lock.unlock() }
+      storage.append(line)
+    }
+
+    var lines: [String] {
+      lock.lock()
+      defer { lock.unlock() }
+      return storage
+    }
+  }
+
   private func waitUntil(
     timeout: TimeInterval = 1.0,
     pollInterval: TimeInterval = 0.01,
@@ -256,6 +273,44 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     XCTAssertEqual(snapshot.targets, ["Zoom", "zPSApp"])
   }
 
+  func testWarmAndRegisterSessionReuseSameSessionForSameStorePath() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let storePath = try buildMinimalSwiftIndex(tmp: tmp)
+    let manager = SessionManager()
+    let context = IngestContext(
+      projectDir: tmp.path,
+      indexStorePath: storePath.path,
+      graphDBPath: "/tmp/graph.db",
+      targetArgs: ["Zoom", "zPSApp"],
+      entryTarget: "Zoom",
+      incremental: true
+    )
+
+    let warmed = try manager.getOrCreateSession(
+      storePath: storePath.path,
+      sourceRoots: [tmp.path],
+      targets: ["Zoom"],
+      dylibPath: nil
+    )
+    let registered = try manager.registerOrRefreshSession(
+      storePath: storePath.path,
+      graphDBPath: "/tmp/graph.db",
+      ingestContext: context,
+      sourceRoots: [tmp.path],
+      targets: ["Zoom", "zPSApp"],
+      dylibPath: nil
+    )
+
+    XCTAssertEqual(warmed.session.sessionId, registered.session.sessionId)
+    XCTAssertFalse(warmed.reused)
+    XCTAssertTrue(registered.reused)
+    XCTAssertEqual(registered.session.snapshot().ingestContext, context)
+    XCTAssertEqual(registered.session.snapshot().targets, ["Zoom", "zPSApp"])
+  }
+
   func testSingleFlightIsScopedPerGraphDBPath() {
     let manager = SessionManager()
 
@@ -306,9 +361,47 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     XCTAssertFalse(snapshot.ingestRunning)
   }
 
+  func testRegisterSessionPrimesUnitEventMonitoringWhenBackgroundIngestIsConfigured() throws {
+    let session = try makeTestSession()
+
+    XCTAssertFalse(session.snapshot().hasPolled)
+
+    session.maybeScheduleBackgroundIngest(
+      orchardCLIPath: "/definitely/missing/orchard",
+      beginInFlight: { false },
+      endInFlight: {}
+    )
+
+    waitUntil {
+      session.snapshot().hasPolled
+    }
+
+    XCTAssertTrue(session.snapshot().hasPolled)
+  }
+
+  func testUnitEventBatchOnlyAdvancesGenerationAfterProcessingCompletes() throws {
+    let session = try makeTestSession()
+    let baselineGeneration = session.snapshot().seenGeneration
+
+    session.simulateUnitEventBatchForTesting(added: 2, completed: 0)
+    XCTAssertEqual(session.snapshot().seenGeneration, baselineGeneration)
+
+    session.simulateUnitEventBatchForTesting(added: 0, completed: 1)
+    XCTAssertEqual(session.snapshot().seenGeneration, baselineGeneration)
+
+    session.simulateUnitEventBatchForTesting(added: 0, completed: 1)
+    waitUntil {
+      session.snapshot().seenGeneration == baselineGeneration + 1
+    }
+
+    XCTAssertEqual(session.snapshot().seenGeneration, baselineGeneration + 1)
+  }
+
   func testGraphDBSingleFlightConflictPreservesPendingWorkAndRetries() throws {
     let session = try makeTestSession()
     let beginInFlightCalls = SynchronizedCounter()
+    let logs = SynchronizedLogBuffer()
+    session.logSink = { logs.append($0) }
 
     session.recordWatchActivity()
     session.maybeScheduleBackgroundIngest(
@@ -327,10 +420,16 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(beginInFlightCalls.value, 2)
     XCTAssertGreaterThan(snapshot.seenGeneration, snapshot.ackedGeneration)
     XCTAssertFalse(snapshot.ingestRunning)
+    XCTAssertTrue(logs.lines.contains(where: { $0.contains("scheduled auto-ingest debounce") }))
+    XCTAssertTrue(logs.lines.contains(where: { $0.contains("auto-ingest deferred; reason=graph_db_single_flight_busy") }))
+    XCTAssertTrue(logs.lines.contains(where: { $0.contains("scheduled auto-ingest retry") }))
+    XCTAssertTrue(logs.lines.contains(where: { $0.contains("retry timer fired") }))
   }
 
   func testLockBusySchedulesRetryButOtherFailuresDoNot() throws {
     let session = try makeTestSession()
+    let logs = SynchronizedLogBuffer()
+    session.logSink = { logs.append($0) }
 
     XCTAssertTrue(session.beginIngest(targetGeneration: 3))
     session.handleIngestExit(code: 23)
@@ -347,6 +446,8 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     XCTAssertFalse(snapshot.retryScheduled)
     XCTAssertFalse(snapshot.retryScheduledForLastExit)
     XCTAssertFalse(snapshot.ingestRunning)
+    XCTAssertTrue(logs.lines.contains(where: { $0.contains("auto-ingest lock busy; scheduling retry") }))
+    XCTAssertTrue(logs.lines.contains(where: { $0.contains("auto-ingest failed without retry") }))
   }
 
   func testDecodeRegisterSessionParamsRejectsMismatchedPaths() throws {
