@@ -94,6 +94,8 @@ The daemon does **not**:
 - update graph rows
 - persist ingest state on behalf of the CLI
 
+The daemon process may host multiple independent ingest sessions at once. Scheduling state must therefore be tracked per session rather than globally for the whole daemon.
+
 ### `orchard ingest`
 
 The CLI remains responsible for:
@@ -119,6 +121,27 @@ This keeps background updates scoped to a known project/session rather than lett
 
 In v1, the daemon should only schedule background graph refresh for sessions that already have such a remembered ingest context.
 
+### Session isolation
+
+The daemon is a process host, not the isolation boundary.
+
+The isolation boundary is the ingest session. Each session represents one remembered Orchard ingest scope and owns its own:
+
+- watched IndexStore / database handle
+- remembered ingest arguments
+- `seenGeneration` / `ackedGeneration`
+- debounce timer
+- retry timer
+
+Typical session identity should be derived from the scope-defining ingest inputs, such as:
+
+- `index-store` path
+- `project-dir`
+- target set or entry target
+- any additional scope inputs that change which graph data is produced
+
+When a watch event arrives, the daemon should first identify the affected session, then schedule background ingest only for that session's remembered scope.
+
 ### Locking model
 
 All graph-mutating ingest runs, regardless of how they were started, must acquire the same cross-process lock.
@@ -130,6 +153,13 @@ Examples:
 - future automation launches `orchard ingest`
 
 All of them contend on the same lock. The daemon itself is lock-agnostic.
+
+This yields a two-level model:
+
+- watch, debounce, retry, and remembered ingest arguments are session-scoped
+- graph-write serialization is graph-database-scoped
+
+Those scopes are intentionally different. Multiple sessions may still contend on the same graph lock if they ultimately write the same graph database path.
 
 ### CLI file lock design
 
@@ -267,6 +297,10 @@ Recommended state:
 
 ```swift
 struct DaemonState {
+    var sessions: [SessionID: SessionState] = [:]
+}
+
+struct SessionState {
     var seenGeneration: UInt64 = 0
     var ackedGeneration: UInt64 = 0
 
@@ -275,17 +309,21 @@ struct DaemonState {
 
     var debounceTask: Task<Void, Never>? = nil
     var retryTask: Task<Void, Never>? = nil
+
+    var ingestContext: IngestContext
 }
 ```
 
 ### Semantics
 
-- `seenGeneration`
+- `SessionState.seenGeneration`
   - newest observed batch of IndexStore activity
-- `ackedGeneration`
+- `SessionState.ackedGeneration`
   - newest generation that the graph is known to have ingested successfully
-- `ingestTargetGeneration`
+- `SessionState.ingestTargetGeneration`
   - the generation the current in-flight ingest is trying to catch up to
+- `SessionState.ingestContext`
+  - the remembered normalized ingest arguments for that session
 
 Derived predicate:
 
