@@ -378,55 +378,6 @@ class _IndexdClient:
             "params": {},
         })
 
-
-def indexd_status(socket_path: str | None = None) -> dict[str, object]:
-    resolved_socket = socket_path or _indexd_socket_path()
-    pid_path = _indexd_pid_path(resolved_socket) if resolved_socket else ""
-    pid = _read_indexd_pid(pid_path) if pid_path else None
-    status: dict[str, object] = {
-        "socket_path": resolved_socket,
-        "pid_path": pid_path,
-        "socket_exists": bool(resolved_socket and Path(resolved_socket).exists()),
-        "pid_file_exists": bool(pid_path and Path(pid_path).exists()),
-        "pid": pid,
-        "pid_alive": bool(pid is not None and _is_process_alive(pid)),
-        "autostart_enabled": _indexd_autostart_enabled(),
-        "matches_current_build": False,
-        "running": False,
-        "ping": None,
-    }
-    if not resolved_socket:
-        return status
-    with suppress(Exception):
-        info = _IndexdClient(resolved_socket).ping()
-        if info:
-            status["running"] = True
-            status["ping"] = info
-            status["matches_current_build"] = _daemon_matches_current_build(info)
-    return status
-
-
-def shutdown_indexd(socket_path: str | None = None) -> dict[str, object]:
-    resolved_socket = socket_path or _indexd_socket_path()
-    pid_path = _indexd_pid_path(resolved_socket) if resolved_socket else ""
-    stopped = False
-    pid = _read_indexd_pid(pid_path) if pid_path else None
-    if resolved_socket:
-        with suppress(Exception):
-            _IndexdClient(resolved_socket).shutdown()
-            stopped = True
-    if pid is not None:
-        deadline = time.monotonic() + 1.0
-        while time.monotonic() < deadline and _is_process_alive(pid):
-            time.sleep(0.05)
-    _cleanup_stale_indexd_socket(resolved_socket, pid_path)
-    return {
-        "socket_path": resolved_socket,
-        "pid_path": pid_path,
-        "stopped": stopped,
-        "status": indexd_status(resolved_socket),
-    }
-
     def warm(
         self,
         index_store_path: str,
@@ -497,6 +448,55 @@ def shutdown_indexd(socket_path: str | None = None) -> dict[str, object]:
         if not responses or not responses[0].get("ok"):
             raise ConnectionError(f"indexd dump_unit_output_paths failed: {responses}")
         return responses[0]["result"]["output_path_mappings"]
+
+
+def indexd_status(socket_path: str | None = None) -> dict[str, object]:
+    resolved_socket = socket_path or _indexd_socket_path()
+    pid_path = _indexd_pid_path(resolved_socket) if resolved_socket else ""
+    pid = _read_indexd_pid(pid_path) if pid_path else None
+    status: dict[str, object] = {
+        "socket_path": resolved_socket,
+        "pid_path": pid_path,
+        "socket_exists": bool(resolved_socket and Path(resolved_socket).exists()),
+        "pid_file_exists": bool(pid_path and Path(pid_path).exists()),
+        "pid": pid,
+        "pid_alive": bool(pid is not None and _is_process_alive(pid)),
+        "autostart_enabled": _indexd_autostart_enabled(),
+        "matches_current_build": False,
+        "running": False,
+        "ping": None,
+    }
+    if not resolved_socket:
+        return status
+    with suppress(Exception):
+        info = _IndexdClient(resolved_socket).ping()
+        if info:
+            status["running"] = True
+            status["ping"] = info
+            status["matches_current_build"] = _daemon_matches_current_build(info)
+    return status
+
+
+def shutdown_indexd(socket_path: str | None = None) -> dict[str, object]:
+    resolved_socket = socket_path or _indexd_socket_path()
+    pid_path = _indexd_pid_path(resolved_socket) if resolved_socket else ""
+    stopped = False
+    pid = _read_indexd_pid(pid_path) if pid_path else None
+    if resolved_socket:
+        with suppress(Exception):
+            _IndexdClient(resolved_socket).shutdown()
+            stopped = True
+    if pid is not None:
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and _is_process_alive(pid):
+            time.sleep(0.05)
+    _cleanup_stale_indexd_socket(resolved_socket, pid_path)
+    return {
+        "socket_path": resolved_socket,
+        "pid_path": pid_path,
+        "stopped": stopped,
+        "status": indexd_status(resolved_socket),
+    }
 
 
 def _run_indexd(

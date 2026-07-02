@@ -362,6 +362,41 @@ def test_run_reader_falls_back_to_cli_when_indexd_cannot_start(monkeypatch):
     assert stderr == ""
 
 
+def test_run_indexd_uses_client_warm_and_scan(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, socket_path):
+            captured["socket_path"] = socket_path
+
+        def warm(self, index_store_path, source_roots, targets):
+            captured["warm"] = (index_store_path, source_roots, targets)
+            return "session-1"
+
+        def scan(self, session_id, incremental_since, emit_occurrences):
+            captured["scan"] = (session_id, incremental_since, emit_occurrences)
+            return ['{"kind":"symbol","usr":"u","name":"n","symbol_kind":"k","language":"swift","module":"m","file":"f"}'], '{"changed":[],"all":["f"]}'
+
+    monkeypatch.setenv("ORCHARD_INDEXD_SOCKET", "/tmp/indexd.sock")
+    monkeypatch.setattr("orchard.ingest.indexstore._IndexdClient", FakeClient)
+
+    from orchard.ingest.indexstore import _run_indexd
+
+    lines, stderr = _run_indexd(
+        "/fake/store",
+        source_roots=["/src"],
+        incremental_since=123.0,
+        targets=["Zoom"],
+        emit_occurrences=False,
+    )
+
+    assert captured["socket_path"] == "/tmp/indexd.sock"
+    assert captured["warm"] == ("/fake/store", ["/src"], ["Zoom"])
+    assert captured["scan"] == ("session-1", 123.0, False)
+    assert len(lines) == 1
+    assert '"all":["f"]' in stderr
+
+
 def test_indexd_status_reports_ping_and_build_match(monkeypatch):
     monkeypatch.setattr("orchard.ingest.indexstore._indexd_socket_path", lambda: "/tmp/indexd.sock")
     monkeypatch.setattr("orchard.ingest.indexstore._read_indexd_pid", lambda _pid_path: 123)
