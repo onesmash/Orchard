@@ -82,7 +82,7 @@ def _orchard_cli_path() -> str:
     argv0 = sys.argv[0].strip() if sys.argv else ""
     if argv0:
         candidate = Path(argv0).expanduser()
-        if candidate.name.startswith("orchard") and candidate.exists() and os.access(candidate, os.X_OK):
+        if candidate.name == "orchard" and candidate.exists() and os.access(candidate, os.X_OK):
             return str(candidate.resolve())
     on_path = shutil.which("orchard")
     if on_path:

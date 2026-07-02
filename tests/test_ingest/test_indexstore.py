@@ -1,4 +1,5 @@
 import json
+import sys
 import pytest
 from unittest.mock import patch
 from orchard.ingest.indexstore import (
@@ -366,6 +367,19 @@ def test_start_indexd_process_passes_orchard_cli_path(monkeypatch, tmp_path):
         "--pid-file", str(tmp_path / "indexd.pid"),
         "--orchard-cli", "/tmp/orchard",
     ]
+
+
+def test_orchard_cli_path_ignores_orchard_mcp_argv0(monkeypatch, tmp_path):
+    orchard_mcp = tmp_path / "orchard-mcp"
+    orchard_mcp.write_text("", encoding="utf-8")
+    orchard_mcp.chmod(0o755)
+
+    monkeypatch.setattr(sys, "argv", [str(orchard_mcp)])
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/orchard" if name == "orchard" else None)
+
+    from orchard.ingest.indexstore import _orchard_cli_path
+
+    assert _orchard_cli_path() == "/usr/local/bin/orchard"
 
 
 def test_ensure_indexd_running_restarts_on_binary_mismatch(monkeypatch):
