@@ -47,6 +47,31 @@ async def test_lifespan_starts_ingest_state_watch_without_triggering_ingest(monk
 
 
 @pytest.mark.asyncio
+async def test_lifespan_skips_watch_for_filesystem_root(monkeypatch):
+    import orchard.server as server_mod
+
+    events: list[str] = []
+    original_watch_task = server_mod._ingest_state_watch_task
+    original_conn = server_mod._conn
+
+    def fake_create_task(coro):
+        events.append(coro.cr_code.co_name)
+        coro.close()
+        raise AssertionError("create_task should not be called for filesystem root")
+
+    monkeypatch.chdir("/")
+    monkeypatch.setattr(server_mod.asyncio, "create_task", fake_create_task)
+    monkeypatch.setattr(server_mod, "_get_conn", lambda: events.append("get_conn"))
+
+    try:
+        async with server_mod._lifespan(server_mod.app):
+            assert events == ["get_conn"]
+    finally:
+        server_mod._ingest_state_watch_task = original_watch_task
+        server_mod._conn = original_conn
+
+
+@pytest.mark.asyncio
 async def test_call_tool_schedules_background_ingest_once_per_project(monkeypatch, tmp_path):
     import orchard.server as server_mod
 
@@ -89,6 +114,95 @@ async def test_call_tool_schedules_background_ingest_once_per_project(monkeypatc
     assert [item.text for item in first] == ['{"ok": true}']
     assert [item.text for item in second] == ['{"ok": true}']
     assert events == ["_run_startup_ingest"]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_prefers_mcp_root_for_background_ingest(monkeypatch, tmp_path):
+    import mcp.types as mcp_types
+    import orchard.server as server_mod
+
+    scheduled_projects: list[str] = []
+    original_task = server_mod._startup_ingest_task
+    original_watch_task = server_mod._ingest_state_watch_task
+    original_handler = server_mod.HANDLERS["orchard_search"]
+    original_projects = set(server_mod._tool_ingest_projects)
+
+    class FakeTask:
+        def done(self):
+            return True
+
+        def cancel(self):
+            return None
+
+    class FakeSession:
+        async def list_roots(self):
+            return mcp_types.ListRootsResult(
+                roots=[mcp_types.Root(uri=tmp_path.as_uri(), name="orchard2")]
+            )
+
+    def fake_create_task(coro):
+        scheduled_projects.append(coro.cr_frame.f_locals["project_dir"])
+        coro.close()
+        return FakeTask()
+
+    async def fake_to_thread(func, arguments):
+        return func(arguments)
+
+    fake_ctx = type("FakeCtx", (), {"session": FakeSession()})()
+
+    monkeypatch.chdir("/")
+    monkeypatch.setattr(server_mod.asyncio, "create_task", fake_create_task)
+    monkeypatch.setattr(server_mod.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(type(server_mod.app), "request_context", property(lambda _self: fake_ctx))
+    server_mod.HANDLERS["orchard_search"] = lambda _arguments: '{"ok": true}'
+
+    try:
+        payload = await server_mod.call_tool("orchard_search", {"name": "Foo"})
+    finally:
+        server_mod._startup_ingest_task = original_task
+        server_mod._ingest_state_watch_task = original_watch_task
+        server_mod.HANDLERS["orchard_search"] = original_handler
+        server_mod._tool_ingest_projects.clear()
+        server_mod._tool_ingest_projects.update(original_projects)
+
+    assert [item.text for item in payload] == ['{"ok": true}']
+    assert scheduled_projects == [str(tmp_path)]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_skips_background_ingest_for_filesystem_root(monkeypatch):
+    import orchard.server as server_mod
+
+    events: list[str] = []
+    original_task = server_mod._startup_ingest_task
+    original_watch_task = server_mod._ingest_state_watch_task
+    original_handler = server_mod.HANDLERS["orchard_search"]
+    original_projects = set(server_mod._tool_ingest_projects)
+
+    def fake_create_task(coro):
+        events.append(coro.cr_code.co_name)
+        coro.close()
+        raise AssertionError("background ingest should not be scheduled for filesystem root")
+
+    async def fake_to_thread(func, arguments):
+        return func(arguments)
+
+    monkeypatch.chdir("/")
+    monkeypatch.setattr(server_mod.asyncio, "create_task", fake_create_task)
+    monkeypatch.setattr(server_mod.asyncio, "to_thread", fake_to_thread)
+    server_mod.HANDLERS["orchard_search"] = lambda _arguments: '{"ok": true}'
+
+    try:
+        payload = await server_mod.call_tool("orchard_search", {"name": "Foo"})
+    finally:
+        server_mod._startup_ingest_task = original_task
+        server_mod._ingest_state_watch_task = original_watch_task
+        server_mod.HANDLERS["orchard_search"] = original_handler
+        server_mod._tool_ingest_projects.clear()
+        server_mod._tool_ingest_projects.update(original_projects)
+
+    assert [item.text for item in payload] == ['{"ok": true}']
+    assert events == []
 
 
 @pytest.mark.asyncio
@@ -219,7 +333,7 @@ async def test_run_startup_ingest_resets_connection_after_success(monkeypatch, t
     server_mod._conn = fake_conn
 
     try:
-        await server_mod._run_startup_ingest()
+        await server_mod._run_startup_ingest(str(tmp_path))
     finally:
         server_mod._conn = original_conn
 

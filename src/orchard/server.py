@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 from contextlib import suppress
+from urllib.parse import unquote, urlparse
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -76,6 +77,38 @@ def _translate_missing_read_only_db_error(exc: Exception) -> str | None:
     )
 
 
+def _background_project_dir() -> str | None:
+    """Return a safe project root for background ingest/watch tasks."""
+    configured = _DB_PATH or os.environ.get("ORCHARD_DB_PATH", "")
+    if configured:
+        path = Path(configured).expanduser().resolve()
+        if path.name == "graph.db" and path.parent.name == ".orchard":
+            return str(path.parent.parent)
+        if path.is_dir():
+            return str(path)
+
+    cwd = Path.cwd().resolve()
+    if cwd == cwd.parent:
+        return None
+    return str(cwd)
+
+
+async def _request_project_dir() -> str | None:
+    """Return the first MCP workspace root for the active request, if any."""
+    try:
+        roots = await app.request_context.session.list_roots()
+    except Exception:
+        return None
+
+    for root in roots.roots:
+        parsed = urlparse(str(root.uri))
+        if parsed.scheme != "file":
+            continue
+        path = Path(unquote(parsed.path)).resolve()
+        return str(path)
+    return None
+
+
 def _reset_conn(reason: str) -> None:
     """Close the cached DB connection so the next request reopens fresh state."""
     global _conn
@@ -98,11 +131,10 @@ async def _watch_ingest_state(project_dir: str) -> None:
         _reset_conn("ingest-state update")
 
 
-async def _run_startup_ingest() -> None:
+async def _run_startup_ingest(project_dir: str) -> None:
     """Best-effort background ingest in the current project directory."""
     from orchard.ingest.indexstore import _orchard_cli_path
 
-    project_dir = str(Path.cwd().resolve())
     cli_path = _orchard_cli_path()
     proc = await asyncio.create_subprocess_exec(
         cli_path,
@@ -139,14 +171,16 @@ async def _run_startup_ingest() -> None:
             _SERVER_LOGGER.error("%s", line)
 
 
-def _schedule_tool_ingest_if_needed(project_dir: str) -> None:
+def _schedule_tool_ingest_if_needed(project_dir: str | None) -> None:
     """Schedule one best-effort background ingest per project root."""
     global _startup_ingest_task
+    if not project_dir:
+        return
     if project_dir in _tool_ingest_projects:
         return
     _tool_ingest_projects.add(project_dir)
     try:
-        _startup_ingest_task = asyncio.create_task(_run_startup_ingest())
+        _startup_ingest_task = asyncio.create_task(_run_startup_ingest(project_dir))
     except Exception:
         _tool_ingest_projects.discard(project_dir)
         raise
@@ -661,9 +695,9 @@ HANDLERS: dict[str, callable] = {
 async def _lifespan(server: Server):
     """Called once at startup. Start watchers and trigger DB warm-up."""
     global _startup_ingest_task, _ingest_state_watch_task
-    project_dir = str(Path.cwd().resolve())
+    project_dir = _background_project_dir()
     try:
-        if _ingest_state_watch_task is None or _ingest_state_watch_task.done():
+        if project_dir and (_ingest_state_watch_task is None or _ingest_state_watch_task.done()):
             _ingest_state_watch_task = asyncio.create_task(
                 _watch_ingest_state(project_dir)
             )
@@ -710,7 +744,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if handler is None:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
     try:
-        _schedule_tool_ingest_if_needed(str(Path.cwd().resolve()))
+        _schedule_tool_ingest_if_needed(await _request_project_dir() or _background_project_dir())
     except Exception as exc:
         _SERVER_LOGGER.error("[orchard-mcp] background ingest scheduling failed: %s", exc)
     try:
