@@ -42,6 +42,16 @@ and C++ codebases via a CLI and MCP server.
 - Python >= 3.12
 - An Xcode project with a recent build (generates IndexStore data)
 
+### Install `uv`
+
+If you don't have `uv` installed yet, install it first:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+After installation, restart your shell or ensure `uv` is on your `PATH`.
+
 ### Install
 
 ```bash
