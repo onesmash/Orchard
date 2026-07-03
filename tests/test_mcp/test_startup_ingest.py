@@ -2,11 +2,10 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_lifespan_schedules_startup_ingest_without_blocking(monkeypatch):
+async def test_lifespan_starts_ingest_state_watch_without_triggering_ingest(monkeypatch):
     import orchard.server as server_mod
 
     events: list[str] = []
-    original_task = server_mod._startup_ingest_task
     original_watch_task = server_mod._ingest_state_watch_task
     original_conn = server_mod._conn
 
@@ -27,14 +26,11 @@ async def test_lifespan_schedules_startup_ingest_without_blocking(monkeypatch):
 
             return _done().__await__()
 
-    fake_startup_task = FakeTask()
     fake_watch_task = FakeTask()
 
     def fake_create_task(coro):
         events.append(coro.cr_code.co_name)
         coro.close()
-        if coro.cr_code.co_name == "_run_startup_ingest":
-            return fake_startup_task
         return fake_watch_task
 
     monkeypatch.setattr(server_mod.asyncio, "create_task", fake_create_task)
@@ -42,13 +38,153 @@ async def test_lifespan_schedules_startup_ingest_without_blocking(monkeypatch):
 
     try:
         async with server_mod._lifespan(server_mod.app):
-            assert events == ["_run_startup_ingest", "_watch_ingest_state", "get_conn"]
+            assert events == ["_watch_ingest_state", "get_conn"]
     finally:
-        server_mod._startup_ingest_task = original_task
         server_mod._ingest_state_watch_task = original_watch_task
         server_mod._conn = original_conn
 
     assert "cancel" in events
+
+
+@pytest.mark.asyncio
+async def test_call_tool_schedules_background_ingest_once_per_project(monkeypatch, tmp_path):
+    import orchard.server as server_mod
+
+    events: list[str] = []
+    original_task = server_mod._startup_ingest_task
+    original_watch_task = server_mod._ingest_state_watch_task
+    original_handler = server_mod.HANDLERS["orchard_search"]
+    original_projects = set(server_mod._tool_ingest_projects)
+
+    class FakeTask:
+        def done(self):
+            return True
+
+        def cancel(self):
+            return None
+
+    def fake_create_task(coro):
+        events.append(coro.cr_code.co_name)
+        coro.close()
+        return FakeTask()
+
+    async def fake_to_thread(func, arguments):
+        return func(arguments)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(server_mod.asyncio, "create_task", fake_create_task)
+    monkeypatch.setattr(server_mod.asyncio, "to_thread", fake_to_thread)
+    server_mod.HANDLERS["orchard_search"] = lambda _arguments: '{"ok": true}'
+
+    try:
+        first = await server_mod.call_tool("orchard_search", {"name": "Foo"})
+        second = await server_mod.call_tool("orchard_search", {"name": "Bar"})
+    finally:
+        server_mod._startup_ingest_task = original_task
+        server_mod._ingest_state_watch_task = original_watch_task
+        server_mod.HANDLERS["orchard_search"] = original_handler
+        server_mod._tool_ingest_projects.clear()
+        server_mod._tool_ingest_projects.update(original_projects)
+
+    assert [item.text for item in first] == ['{"ok": true}']
+    assert [item.text for item in second] == ['{"ok": true}']
+    assert events == ["_run_startup_ingest"]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_returns_helpful_missing_database_error(monkeypatch, tmp_path):
+    import json
+    import orchard.server as server_mod
+
+    original_task = server_mod._startup_ingest_task
+    original_watch_task = server_mod._ingest_state_watch_task
+    original_handler = server_mod.HANDLERS["orchard_search"]
+    original_projects = set(server_mod._tool_ingest_projects)
+
+    class FakeTask:
+        def done(self):
+            return True
+
+        def cancel(self):
+            return None
+
+    def fake_create_task(coro):
+        coro.close()
+        return FakeTask()
+
+    async def fake_to_thread(func, arguments):
+        return func(arguments)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(server_mod.asyncio, "create_task", fake_create_task)
+    monkeypatch.setattr(server_mod.asyncio, "to_thread", fake_to_thread)
+    server_mod.HANDLERS["orchard_search"] = (
+        lambda _arguments: (_ for _ in ()).throw(
+            RuntimeError("Cannot create an empty database under READ ONLY mode.")
+        )
+    )
+
+    try:
+        payload = await server_mod.call_tool("orchard_search", {"name": "Foo"})
+    finally:
+        server_mod._startup_ingest_task = original_task
+        server_mod._ingest_state_watch_task = original_watch_task
+        server_mod.HANDLERS["orchard_search"] = original_handler
+        server_mod._tool_ingest_projects.clear()
+        server_mod._tool_ingest_projects.update(original_projects)
+
+    body = json.loads(payload[0].text)
+    assert "database not found:" in body["error"]
+    assert "orchard ingest --project-dir ." in body["error"]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_schedules_background_ingest_for_each_project(monkeypatch, tmp_path):
+    import orchard.server as server_mod
+
+    events: list[str] = []
+    original_task = server_mod._startup_ingest_task
+    original_watch_task = server_mod._ingest_state_watch_task
+    original_handler = server_mod.HANDLERS["orchard_search"]
+    original_projects = set(server_mod._tool_ingest_projects)
+
+    class FakeTask:
+        def done(self):
+            return True
+
+        def cancel(self):
+            return None
+
+    def fake_create_task(coro):
+        events.append(coro.cr_code.co_name)
+        coro.close()
+        return FakeTask()
+
+    async def fake_to_thread(func, arguments):
+        return func(arguments)
+
+    project_a = tmp_path / "ProjectA"
+    project_b = tmp_path / "ProjectB"
+    project_a.mkdir()
+    project_b.mkdir()
+
+    monkeypatch.setattr(server_mod.asyncio, "create_task", fake_create_task)
+    monkeypatch.setattr(server_mod.asyncio, "to_thread", fake_to_thread)
+    server_mod.HANDLERS["orchard_search"] = lambda _arguments: '{"ok": true}'
+
+    try:
+        monkeypatch.chdir(project_a)
+        await server_mod.call_tool("orchard_search", {"name": "Foo"})
+        monkeypatch.chdir(project_b)
+        await server_mod.call_tool("orchard_search", {"name": "Bar"})
+    finally:
+        server_mod._startup_ingest_task = original_task
+        server_mod._ingest_state_watch_task = original_watch_task
+        server_mod.HANDLERS["orchard_search"] = original_handler
+        server_mod._tool_ingest_projects.clear()
+        server_mod._tool_ingest_projects.update(original_projects)
+
+    assert events == ["_run_startup_ingest", "_run_startup_ingest"]
 
 
 @pytest.mark.asyncio
@@ -89,6 +225,51 @@ async def test_run_startup_ingest_resets_connection_after_success(monkeypatch, t
 
     assert fake_conn.closed is True
     assert server_mod._conn is None
+
+
+@pytest.mark.asyncio
+async def test_lifespan_logs_helpful_missing_database_error(monkeypatch):
+    import orchard.server as server_mod
+
+    events: list[str] = []
+    original_watch_task = server_mod._ingest_state_watch_task
+    original_conn = server_mod._conn
+
+    class FakeTask:
+        def done(self):
+            return False
+
+        def cancel(self):
+            return None
+
+        def __await__(self):
+            async def _done():
+                return None
+
+            return _done().__await__()
+
+    def fake_create_task(coro):
+        coro.close()
+        return FakeTask()
+
+    monkeypatch.setattr(server_mod.asyncio, "create_task", fake_create_task)
+    monkeypatch.setattr(
+        server_mod,
+        "_get_conn",
+        lambda: (_ for _ in ()).throw(
+            RuntimeError("Cannot create an empty database under READ ONLY mode.")
+        ),
+    )
+    monkeypatch.setattr(server_mod._SERVER_LOGGER, "error", lambda msg, *args: events.append(msg % args))
+
+    try:
+        async with server_mod._lifespan(server_mod.app):
+            pass
+    finally:
+        server_mod._ingest_state_watch_task = original_watch_task
+        server_mod._conn = original_conn
+
+    assert any("database not found:" in event for event in events)
 
 
 @pytest.mark.asyncio

@@ -1325,6 +1325,31 @@ def test_cmd_stats_reports_parent_database_discovery(tmp_path, capsys, monkeypat
     assert f"Using database at {db_path} (found in parent directory)" in out
 
 
+def test_cmd_stats_exits_with_helpful_error_when_database_is_missing(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_stats([])
+
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "Database: " in captured.out
+    assert "error: database not found:" in captured.err
+    assert "orchard ingest --project-dir ." in captured.err
+
+
+def test_cmd_search_exits_with_helpful_error_when_database_is_missing(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_search(["--name", "Foo"])
+
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "error: database not found:" in captured.err
+    assert "orchard ingest --project-dir ." in captured.err
+
+
 def test_cmd_indexd_status_prints_json(monkeypatch, capsys):
     monkeypatch.setattr(
         "orchard.ingest.indexstore.indexd_status",

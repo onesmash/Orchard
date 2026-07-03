@@ -70,6 +70,14 @@ def _find_project_db_with_origin() -> tuple[str, bool] | None:
 
 def _conn(db_path: str = "", announce_parent: bool = False, read_only: bool = False):
     from orchard.graph.db import get_connection, init_schema
+    path = _resolve_read_only_db_path(db_path, announce_parent=announce_parent)
+    c = get_connection(path, read_only=read_only)
+    if not read_only:
+        init_schema(c)
+    return c
+
+
+def _resolve_read_only_db_path(db_path: str = "", announce_parent: bool = False) -> str:
     path = db_path or os.environ.get("ORCHARD_DB_PATH", "")
     if not path:
         discovered = _find_project_db_with_origin()
@@ -80,10 +88,13 @@ def _conn(db_path: str = "", announce_parent: bool = False, read_only: bool = Fa
                 print(f"Using database at {path} (found in parent directory)", file=stream)
     if not path:
         path = os.path.expanduser("~/.orchard/graph.db")
-    c = get_connection(path, read_only=read_only)
-    if not read_only:
-        init_schema(c)
-    return c
+    return path
+
+
+def _print_missing_read_only_db_error(path: str) -> None:
+    print(f"error: database not found: {path}", file=sys.stderr)
+    print("  Hint: Run `orchard ingest --project-dir .` first,", file=sys.stderr)
+    print("        or pass --db <path> / set ORCHARD_DB_PATH.", file=sys.stderr)
 
 
 def _reset_graph_db(db_path: str) -> None:
@@ -659,7 +670,12 @@ def cmd_search(args: list[str]):
     if not ns.name and not ns.class_name:
         ap.error("either --name or --class is required")
 
-    conn = _conn(ns.db, read_only=True)
+    resolved_db = _resolve_read_only_db_path(ns.db)
+    if not Path(resolved_db).exists():
+        _print_missing_read_only_db_error(resolved_db)
+        sys.exit(2)
+
+    conn = _conn(resolved_db, read_only=True)
 
     if ns.class_name:
         _cmd_search_class(conn, ns)
@@ -968,8 +984,12 @@ def _pipe_search_name(conn, args: dict):
 def cmd_stats(args: list[str]):
     from orchard.validation.freshness import freshness_for
     db = _parse_db(args)
-    conn = _conn(db, announce_parent=True, read_only=True)
-    print(f"Database: {db or os.environ.get('ORCHARD_DB_PATH', _find_project_db() or os.path.expanduser('~/.orchard/graph.db'))}")
+    resolved_db = _resolve_read_only_db_path(db, announce_parent=True)
+    print(f"Database: {resolved_db}")
+    if not Path(resolved_db).exists():
+        _print_missing_read_only_db_error(resolved_db)
+        sys.exit(2)
+    conn = _conn(resolved_db, read_only=True)
     snapshot = _latest_build_snapshot(conn)
     if snapshot:
         _, freshness = freshness_for(conn, snapshot["id"], {})

@@ -54,11 +54,26 @@ _DB_PATH: str = ""
 _conn = None
 """Ladybug connection opened once at startup, reused for every tool call."""
 _startup_ingest_task: asyncio.Task | None = None
-"""Background startup ingest task, if one is currently running."""
+"""Background ingest task, if one is currently running."""
 _ingest_state_watch_task: asyncio.Task | None = None
 """Background ingest-state watcher task, if one is currently running."""
+_tool_ingest_projects: set[str] = set()
+"""Project roots that have already scheduled a background ingest in this server process."""
 
 _SERVER_LOGGER = get_orchard_logger("server", console=True)
+
+
+def _translate_missing_read_only_db_error(exc: Exception) -> str | None:
+    if "Cannot create an empty database under READ ONLY mode." not in str(exc):
+        return None
+    from orchard.cli import _resolve_read_only_db_path
+
+    path = _resolve_read_only_db_path(_DB_PATH)
+    return (
+        f"database not found: {path}. "
+        "Run `orchard ingest --project-dir .` first, "
+        "or pass --db <path> / set ORCHARD_DB_PATH."
+    )
 
 
 def _reset_conn(reason: str) -> None:
@@ -84,7 +99,7 @@ async def _watch_ingest_state(project_dir: str) -> None:
 
 
 async def _run_startup_ingest() -> None:
-    """Best-effort ingest in the current project directory before serving MCP."""
+    """Best-effort background ingest in the current project directory."""
     from orchard.ingest.indexstore import _orchard_cli_path
 
     project_dir = str(Path.cwd().resolve())
@@ -122,6 +137,19 @@ async def _run_startup_ingest() -> None:
     if stderr_text:
         for line in stderr_text.splitlines():
             _SERVER_LOGGER.error("%s", line)
+
+
+def _schedule_tool_ingest_if_needed(project_dir: str) -> None:
+    """Schedule one best-effort background ingest per project root."""
+    global _startup_ingest_task
+    if project_dir in _tool_ingest_projects:
+        return
+    _tool_ingest_projects.add(project_dir)
+    try:
+        _startup_ingest_task = asyncio.create_task(_run_startup_ingest())
+    except Exception:
+        _tool_ingest_projects.discard(project_dir)
+        raise
 
 
 def _get_conn():
@@ -631,12 +659,10 @@ HANDLERS: dict[str, callable] = {
 
 @asynccontextmanager
 async def _lifespan(server: Server):
-    """Called once at startup. Run ingest once, then trigger DB warm-up."""
+    """Called once at startup. Start watchers and trigger DB warm-up."""
     global _startup_ingest_task, _ingest_state_watch_task
     project_dir = str(Path.cwd().resolve())
     try:
-        if _startup_ingest_task is None or _startup_ingest_task.done():
-            _startup_ingest_task = asyncio.create_task(_run_startup_ingest())
         if _ingest_state_watch_task is None or _ingest_state_watch_task.done():
             _ingest_state_watch_task = asyncio.create_task(
                 _watch_ingest_state(project_dir)
@@ -647,7 +673,11 @@ async def _lifespan(server: Server):
         _get_conn()
         _SERVER_LOGGER.info("[orchard-mcp] DB connected")
     except Exception as exc:
-        _SERVER_LOGGER.error("[orchard-mcp] DB connection failed: %s", exc)
+        translated = _translate_missing_read_only_db_error(exc)
+        _SERVER_LOGGER.error(
+            "[orchard-mcp] DB connection failed: %s",
+            translated or exc,
+        )
     try:
         yield
     finally:
@@ -662,6 +692,7 @@ async def _lifespan(server: Server):
             with suppress(asyncio.CancelledError):
                 await _ingest_state_watch_task
         _ingest_state_watch_task = None
+        _tool_ingest_projects.clear()
         _reset_conn("shutdown")
 
 
@@ -679,9 +710,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if handler is None:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
     try:
+        _schedule_tool_ingest_if_needed(str(Path.cwd().resolve()))
+    except Exception as exc:
+        _SERVER_LOGGER.error("[orchard-mcp] background ingest scheduling failed: %s", exc)
+    try:
         result = await asyncio.to_thread(handler, arguments)
     except Exception as exc:
-        return [TextContent(type="text", text=json.dumps({"error": str(exc)}, ensure_ascii=False))]
+        translated = _translate_missing_read_only_db_error(exc)
+        return [TextContent(
+            type="text",
+            text=json.dumps({"error": translated or str(exc)}, ensure_ascii=False),
+        )]
     return [TextContent(type="text", text=result)]
 
 
