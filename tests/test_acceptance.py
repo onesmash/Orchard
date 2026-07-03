@@ -893,6 +893,7 @@ def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monke
         lambda *args, **kwargs: events.append("warm") or True,
     )
     monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+    monkeypatch.setenv("ORCHARD_LOG_LEVEL", "debug")
 
     cmd_ingest([
         "--index-store", "/fake/store",
@@ -909,6 +910,54 @@ def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monke
     assert "incremental: index-store /fake/store" in out
     assert "incremental: unit_ts 120.0" in out
     assert "ingest: reading index store..." not in out
+    assert "incremental: fast path hit" in out
+    assert events == ["register", "warm"]
+
+
+def test_cmd_ingest_fast_path_hides_incremental_detail_logs_by_default(tmp_path, monkeypatch, capsys):
+    from orchard.cli import cmd_ingest
+
+    events: list[str] = []
+
+    class DummyConn:
+        def close(self):
+            return None
+
+    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
+    monkeypatch.setattr(
+        "orchard.ingest.state.load_state",
+        lambda _project_dir: {
+            "last_ingest_ts": 123.0,
+            "compiled_targets": ["T"],
+            "index_store_path": "/fake/store",
+        },
+    )
+    monkeypatch.setattr("orchard.ingest.indexstore._unit_dir_mtime", lambda _path: 120.0)
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.register_indexd_session",
+        lambda **kwargs: events.append("register") or {"sessionId": "session-fast-path"},
+    )
+    monkeypatch.setattr(
+        "orchard.ingest.indexstore.warm_indexd_session_async",
+        lambda *args, **kwargs: events.append("warm") or True,
+    )
+    monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
+    monkeypatch.delenv("ORCHARD_LOG_LEVEL", raising=False)
+
+    cmd_ingest([
+        "--index-store", "/fake/store",
+        "--project-dir", str(tmp_path),
+        "--target", "T",
+        "--db", str(tmp_path / "graph.db"),
+        "--incremental",
+    ])
+
+    out = capsys.readouterr().out
+    state_path = tmp_path / ".orchard" / "ingest-state.json"
+    assert f"incremental: state path {state_path}" not in out
+    assert "incremental: last_ingest_ts 123.0" not in out
+    assert "incremental: index-store /fake/store" not in out
+    assert "incremental: unit_ts 120.0" not in out
     assert "incremental: fast path hit" in out
     assert events == ["register", "warm"]
 

@@ -19,6 +19,31 @@ import sys
 import time
 from pathlib import Path
 
+_LOG_LEVEL_PRIORITY = {
+    "error": 0,
+    "warning": 1,
+    "info": 2,
+    "debug": 3,
+    "trace": 4,
+}
+
+
+def _orchard_log_level() -> str:
+    raw = os.environ.get("ORCHARD_LOG_LEVEL", "info").strip().lower()
+    return raw if raw in _LOG_LEVEL_PRIORITY else "info"
+
+
+def _should_log(level: str) -> bool:
+    current = _LOG_LEVEL_PRIORITY[_orchard_log_level()]
+    return _LOG_LEVEL_PRIORITY[level] <= current
+
+
+def _emit_log(message: str, *, level: str = "info", stream=None, flush: bool = False) -> None:
+    if not _should_log(level):
+        return
+    kwargs = {"file": stream} if stream is not None else {}
+    print(message, flush=flush, **kwargs)
+
 
 def _find_project_db() -> str | None:
     """Walk up from cwd to find ``.orchard/graph.db`` (GitNexus-style)."""
@@ -368,24 +393,26 @@ def cmd_ingest(args: list[str]):
         incremental_since: float | None = None
         old_state: dict | None = load_state(project_dir)
         if ns.incremental:
-            print(f"incremental: state path {state_path}")
+            _emit_log(f"incremental: state path {state_path}", level="debug")
             if old_state:
                 incremental_since = old_state.get("last_ingest_ts")
-                print(f"incremental: last_ingest_ts {incremental_since}")
+                _emit_log(f"incremental: last_ingest_ts {incremental_since}", level="debug")
                 prev_targets = old_state.get("compiled_targets", [])
                 if prev_targets:
-                    print(f"incremental: previously ingested targets: "
-                          f"{','.join(prev_targets)}")
+                    _emit_log(
+                        f"incremental: previously ingested targets: {','.join(prev_targets)}",
+                        level="debug",
+                    )
             else:
-                print("incremental: no previous state found, falling back to full ingest")
+                _emit_log("incremental: no previous state found, falling back to full ingest", level="debug")
 
         # L1: IndexStore-level fast path — if no unit files changed since last
         # ingest, skip the entire scan (~100ms vs ~90s).  The unit directory mtime
         # is shared across all targets in the same IndexStore.
         if ns.incremental and incremental_since is not None:
-            print(f"incremental: index-store {index_store}")
+            _emit_log(f"incremental: index-store {index_store}", level="debug")
             unit_ts = _unit_dir_mtime(index_store)
-            print(f"incremental: unit_ts {unit_ts}")
+            _emit_log(f"incremental: unit_ts {unit_ts}", level="debug")
             prev_targets = set(old_state.get("compiled_targets", []) if old_state else [])
             requested_targets = set(targets)
             if unit_ts <= incremental_since and requested_targets.issubset(prev_targets):
@@ -396,8 +423,9 @@ def cmd_ingest(args: list[str]):
                     graph_db_path=ns.db,
                     context=registration_context,
                 )
-                print(f"incremental: fast path hit (unit_ts {unit_ts} <= "
-                      f"last_ingest_ts {incremental_since})")
+                _emit_log(
+                    f"incremental: fast path hit (unit_ts {unit_ts} <= last_ingest_ts {incremental_since})"
+                )
                 conn.close()
                 return
 
@@ -479,8 +507,12 @@ def cmd_ingest(args: list[str]):
         t_uf = time.monotonic()
         fc = upsert_files(conn, syms)
         print(f"  files: {fc:,} ({time.monotonic()-t_uf:.1f}s)", flush=True)
-        print(f"  [trace] files printed, t={time.monotonic()-t0:.0f}s, sg={ns.symbolgraph!r}",
-              file=sys.stderr, flush=True)
+        _emit_log(
+            f"  [trace] files printed, t={time.monotonic()-t0:.0f}s, sg={ns.symbolgraph!r}",
+            level="trace",
+            stream=sys.stderr,
+            flush=True,
+        )
 
         # SymbolGraph ingest: parse JSON and upsert its symbols + relationships.
         if ns.symbolgraph:
@@ -495,8 +527,12 @@ def cmd_ingest(args: list[str]):
             print(f"  symbolgraph: {len(sg.symbols):,} syms, "
                   f"{len(sg.relationships):,} rels  ({time.monotonic()-t_sg:.1f}s)")
 
-        print(f"  [trace] before community import, t={time.monotonic()-t0:.0f}s",
-              file=sys.stderr, flush=True)
+        _emit_log(
+            f"  [trace] before community import, t={time.monotonic()-t0:.0f}s",
+            level="trace",
+            stream=sys.stderr,
+            flush=True,
+        )
         # Community detection via Leiden algorithm.
         try:
             t_import_start = time.monotonic()

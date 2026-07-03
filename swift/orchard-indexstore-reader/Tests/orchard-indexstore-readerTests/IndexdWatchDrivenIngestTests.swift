@@ -397,7 +397,25 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     XCTAssertEqual(session.snapshot().seenGeneration, baselineGeneration + 1)
   }
 
+  func testUnitEventBatchDoesNotEmitFineGrainedLogsAtDefaultLevel() throws {
+    unsetenv("ORCHARD_LOG_LEVEL")
+    let session = try makeTestSession()
+    let logs = SynchronizedLogBuffer()
+    session.logSink = { logs.append($0) }
+
+    session.simulateUnitEventBatchForTesting(added: 2, completed: 2)
+    waitUntil {
+      session.snapshot().seenGeneration > 0
+    }
+
+    XCTAssertFalse(logs.lines.contains(where: { $0.contains("unit-event added") }))
+    XCTAssertFalse(logs.lines.contains(where: { $0.contains("unit-event completed") }))
+    XCTAssertFalse(logs.lines.contains(where: { $0.contains("observed unit activity") }))
+  }
+
   func testGraphDBSingleFlightConflictPreservesPendingWorkAndRetries() throws {
+    setenv("ORCHARD_LOG_LEVEL", "trace", 1)
+    defer { unsetenv("ORCHARD_LOG_LEVEL") }
     let session = try makeTestSession()
     let beginInFlightCalls = SynchronizedCounter()
     let logs = SynchronizedLogBuffer()
@@ -424,6 +442,34 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     XCTAssertTrue(logs.lines.contains(where: { $0.contains("auto-ingest deferred; reason=graph_db_single_flight_busy") }))
     XCTAssertTrue(logs.lines.contains(where: { $0.contains("scheduled auto-ingest retry") }))
     XCTAssertTrue(logs.lines.contains(where: { $0.contains("retry timer fired") }))
+  }
+
+  func testGraphDBSingleFlightConflictHidesSchedulingNoiseAtDefaultLevel() throws {
+    unsetenv("ORCHARD_LOG_LEVEL")
+    defer { unsetenv("ORCHARD_LOG_LEVEL") }
+    let session = try makeTestSession()
+    let beginInFlightCalls = SynchronizedCounter()
+    let logs = SynchronizedLogBuffer()
+    session.logSink = { logs.append($0) }
+
+    session.recordWatchActivity()
+    session.maybeScheduleBackgroundIngest(
+      orchardCLIPath: "/definitely/missing/orchard",
+      beginInFlight: {
+        beginInFlightCalls.increment() > 1
+      },
+      endInFlight: {}
+    )
+
+    waitUntil(timeout: 2.5) {
+      beginInFlightCalls.value >= 2 && !session.snapshot().ingestRunning
+    }
+
+    XCTAssertTrue(logs.lines.contains(where: { $0.contains("auto-ingest deferred; reason=graph_db_single_flight_busy") }))
+    XCTAssertFalse(logs.lines.contains(where: { $0.contains("scheduled auto-ingest debounce") }))
+    XCTAssertFalse(logs.lines.contains(where: { $0.contains("scheduled auto-ingest retry") }))
+    XCTAssertFalse(logs.lines.contains(where: { $0.contains("retry timer fired") }))
+    XCTAssertFalse(logs.lines.contains(where: { $0.contains("debounce timer fired") }))
   }
 
   func testLockBusySchedulesRetryButOtherFailuresDoNot() throws {

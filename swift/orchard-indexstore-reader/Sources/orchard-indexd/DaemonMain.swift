@@ -5,7 +5,10 @@ private let daemonProtocolVersion = 1
 private let daemonSessionSweepIntervalMilliseconds: Int32 = 1_000
 private let defaultSessionIdleTimeoutSeconds: TimeInterval = 1800
 
-private func daemonLog(_ message: String) {
+private func daemonLog(_ message: String, level: IndexdLogLevel = .info) {
+  guard shouldEmitIndexdLog(level: level) else {
+    return
+  }
   defaultIndexdLogSink(message)
 }
 
@@ -98,7 +101,9 @@ struct OrchardIndexdMain {
           continue
         }
 
-        daemonLog("rpc received method=\(method) id=\(id)")
+        if method != "ping" {
+          daemonLog("rpc received method=\(method) id=\(id)", level: .debug)
+        }
 
         if method == "shutdown" {
           daemonLog("rpc shutdown requested id=\(id)")
