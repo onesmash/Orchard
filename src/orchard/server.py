@@ -19,6 +19,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from contextlib import suppress
 from urllib.parse import unquote, urlparse
@@ -54,6 +55,10 @@ _DB_PATH: str = ""
 
 _conn = None
 """Ladybug connection opened once at startup, reused for every tool call."""
+_conn_db_path: str = ""
+"""Resolved DB path for the currently cached connection."""
+_conn_by_db_path: dict[str, object] = {}
+"""Ladybug connections keyed by resolved DB path."""
 _startup_ingest_task: asyncio.Task | None = None
 """Background ingest task, if one is currently running."""
 _ingest_state_watch_task: asyncio.Task | None = None
@@ -62,6 +67,61 @@ _tool_ingest_projects: set[str] = set()
 """Project roots that have already scheduled a background ingest in this server process."""
 
 _SERVER_LOGGER = get_orchard_logger("server", console=True)
+
+
+@dataclass(frozen=True)
+class ResolvedTarget:
+    project_dir: str | None
+    db_path: str
+    source: str
+    watcher_eligible: bool
+
+
+def _resolve_target(project_dir: str | None) -> ResolvedTarget:
+    """Resolve the request target before any connection or watcher side effects."""
+    normalized_project_dir = str(Path(project_dir).expanduser().resolve()) if project_dir else None
+    if normalized_project_dir:
+        candidate = (Path(normalized_project_dir) / ".orchard" / "graph.db").resolve()
+        if candidate.exists():
+            return ResolvedTarget(
+                project_dir=normalized_project_dir,
+                db_path=str(candidate),
+                source="request_root",
+                watcher_eligible=True,
+            )
+
+    if _DB_PATH:
+        return ResolvedTarget(
+            project_dir=None,
+            db_path=str(Path(_DB_PATH).expanduser().resolve()),
+            source="cli_db",
+            watcher_eligible=False,
+        )
+
+    env_path = os.environ.get("ORCHARD_DB_PATH", "")
+    if env_path:
+        return ResolvedTarget(
+            project_dir=None,
+            db_path=str(Path(env_path).expanduser().resolve()),
+            source="env_db",
+            watcher_eligible=False,
+        )
+
+    raise RuntimeError(
+        "No Orchard graph database configured. "
+        "Provide a request workspace root with .orchard/graph.db, "
+        "or pass --db / set ORCHARD_DB_PATH."
+    )
+
+
+async def _resolve_request_target() -> ResolvedTarget:
+    """Resolve the active request target before any side effects."""
+    return _resolve_target(await _request_project_dir())
+
+
+def _resolve_db_path(project_dir: str | None) -> str:
+    """Resolve the graph DB path for the active project context."""
+    return _resolve_target(project_dir).db_path
 
 
 def _translate_missing_read_only_db_error(exc: Exception) -> str | None:
@@ -111,11 +171,16 @@ async def _request_project_dir() -> str | None:
 
 def _reset_conn(reason: str) -> None:
     """Close the cached DB connection so the next request reopens fresh state."""
-    global _conn
-    if _conn is None:
+    global _conn, _conn_db_path, _conn_by_db_path
+    if _conn is None and not _conn_by_db_path:
         return
-    _conn.close()
+    for conn in list(_conn_by_db_path.values()):
+        conn.close()
+    _conn_by_db_path.clear()
+    if _conn is not None:
+        _conn.close()
     _conn = None
+    _conn_db_path = ""
     _SERVER_LOGGER.info("[orchard-mcp] DB connection reset after %s", reason)
 
 
@@ -186,22 +251,31 @@ def _schedule_tool_ingest_if_needed(project_dir: str | None) -> None:
         raise
 
 
-def _get_conn():
+def _get_conn(project_dir: str | None = None):
     """Return the session-scoped connection, opening it on first access.
 
     Opens the database in read-only mode so multiple MCP server instances
     (e.g. from different editor windows) can share the same database.
     """
-    global _conn
-    if _conn is None:
+    global _conn, _conn_db_path, _conn_by_db_path
+    if project_dir is None and _conn is not None:
+        return _conn
+    if project_dir is None and len(_conn_by_db_path) == 1:
+        path, conn = next(iter(_conn_by_db_path.items()))
+        _conn = conn
+        _conn_db_path = path
+        return _conn
+    path = _resolve_db_path(project_dir)
+    if path in _conn_by_db_path:
+        _conn = _conn_by_db_path[path]
+        _conn_db_path = path
+        return _conn
+    if _conn is None or _conn_db_path != path:
         from orchard.graph.db import get_connection
-        from orchard.cli import _find_project_db
-        path = _DB_PATH or os.environ.get("ORCHARD_DB_PATH", "")
-        if not path:
-            path = _find_project_db() or ""
-        if not path:
-            path = os.path.expanduser("~/.orchard/graph.db")
-        _conn = get_connection(path, read_only=True)
+        conn = get_connection(path, read_only=True)
+        _conn_by_db_path[path] = conn
+        _conn = conn
+        _conn_db_path = path
     return _conn
 
 
@@ -693,25 +767,8 @@ HANDLERS: dict[str, callable] = {
 
 @asynccontextmanager
 async def _lifespan(server: Server):
-    """Called once at startup. Start watchers and trigger DB warm-up."""
+    """Called once at startup. Runtime side effects are request-driven."""
     global _startup_ingest_task, _ingest_state_watch_task
-    project_dir = _background_project_dir()
-    try:
-        if project_dir and (_ingest_state_watch_task is None or _ingest_state_watch_task.done()):
-            _ingest_state_watch_task = asyncio.create_task(
-                _watch_ingest_state(project_dir)
-            )
-    except Exception as exc:
-        _SERVER_LOGGER.error("[orchard-mcp] background task scheduling failed: %s", exc)
-    try:
-        _get_conn()
-        _SERVER_LOGGER.info("[orchard-mcp] DB connected")
-    except Exception as exc:
-        translated = _translate_missing_read_only_db_error(exc)
-        _SERVER_LOGGER.error(
-            "[orchard-mcp] DB connection failed: %s",
-            translated or exc,
-        )
     try:
         yield
     finally:
@@ -743,11 +800,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handler = HANDLERS.get(name)
     if handler is None:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
+    target = None
     try:
-        _schedule_tool_ingest_if_needed(await _request_project_dir() or _background_project_dir())
+        target = await _resolve_request_target()
+        if target.watcher_eligible:
+            _schedule_tool_ingest_if_needed(target.project_dir)
     except Exception as exc:
         _SERVER_LOGGER.error("[orchard-mcp] background ingest scheduling failed: %s", exc)
     try:
+        _get_conn(target.project_dir if target else None)
         result = await asyncio.to_thread(handler, arguments)
     except Exception as exc:
         translated = _translate_missing_read_only_db_error(exc)
