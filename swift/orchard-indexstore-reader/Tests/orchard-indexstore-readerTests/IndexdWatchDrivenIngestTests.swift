@@ -496,6 +496,54 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     XCTAssertTrue(logs.lines.contains(where: { $0.contains("auto-ingest failed without retry") }))
   }
 
+  func testDefaultIndexdLogSinkWritesToConfiguredLogFile() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    addTeardownBlock {
+      unsetenv("ORCHARD_INDEXD_LOG_PATH")
+      try? FileManager.default.removeItem(at: tmp)
+    }
+
+    let logPath = tmp.appendingPathComponent("orchard-indexd.log").path
+    setenv("ORCHARD_INDEXD_LOG_PATH", logPath, 1)
+
+    defaultIndexdLogSink("hello from test")
+
+    let contents = try String(contentsOfFile: logPath, encoding: .utf8)
+    XCTAssertTrue(contents.contains("hello from test"))
+  }
+
+  func testDefaultIndexdLogSinkRollsConfiguredLogFileWhenDayChanges() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    addTeardownBlock {
+      unsetenv("ORCHARD_INDEXD_LOG_PATH")
+      unsetenv("ORCHARD_INDEXD_LOG_MAX_FILES")
+      try? FileManager.default.removeItem(at: tmp)
+    }
+
+    let logPath = tmp.appendingPathComponent("orchard-indexd.log").path
+    setenv("ORCHARD_INDEXD_LOG_PATH", logPath, 1)
+    setenv("ORCHARD_INDEXD_LOG_MAX_FILES", "2", 1)
+
+    defaultIndexdLogSink("yesterday message")
+    let yesterday = Date().addingTimeInterval(-25 * 60 * 60)
+    try FileManager.default.setAttributes(
+      [.modificationDate: yesterday],
+      ofItemAtPath: logPath
+    )
+
+    defaultIndexdLogSink("today message")
+
+    let currentContents = try String(contentsOfFile: logPath, encoding: .utf8)
+    let rolledContents = try String(contentsOfFile: "\(logPath).1", encoding: .utf8)
+
+    XCTAssertTrue(currentContents.contains("today message"))
+    XCTAssertTrue(rolledContents.contains("yesterday message"))
+  }
+
   func testDecodeRegisterSessionParamsRejectsMismatchedPaths() throws {
     let payload = registerPayload(
       contextOverrides: [

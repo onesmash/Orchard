@@ -76,10 +76,106 @@ func shouldEmitIndexdLog(level: IndexdLogLevel) -> Bool {
   level.rawValue <= currentIndexdLogLevel().rawValue
 }
 
+private let indexdLogWriteLock = NSLock()
+
+private func configuredIndexdLogPath() -> String? {
+  guard let raw = ProcessInfo.processInfo.environment["ORCHARD_INDEXD_LOG_PATH"]?
+    .trimmingCharacters(in: .whitespacesAndNewlines),
+    !raw.isEmpty
+  else {
+    return nil
+  }
+  return raw
+}
+
+private func configuredIndexdLogMaxFiles() -> Int {
+  guard let raw = ProcessInfo.processInfo.environment["ORCHARD_INDEXD_LOG_MAX_FILES"]?
+    .trimmingCharacters(in: .whitespacesAndNewlines),
+    let value = Int(raw),
+    value > 0
+  else {
+    return 7
+  }
+  return value
+}
+
+private func shouldRotateIndexdLogByTime(path: String, now: Date = Date()) -> Bool {
+  guard
+    let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+    let modifiedAt = attrs[.modificationDate] as? Date
+  else {
+    return false
+  }
+  return !Calendar.current.isDate(modifiedAt, inSameDayAs: now)
+}
+
+private func rotateIndexdLogFiles(path: String, maxFiles: Int) {
+  guard maxFiles > 0 else {
+    try? FileManager.default.removeItem(atPath: path)
+    FileManager.default.createFile(atPath: path, contents: nil)
+    return
+  }
+
+  let fileManager = FileManager.default
+  let oldestPath = "\(path).\(maxFiles)"
+  if fileManager.fileExists(atPath: oldestPath) {
+    try? fileManager.removeItem(atPath: oldestPath)
+  }
+
+  if maxFiles > 1 {
+    for index in stride(from: maxFiles - 1, through: 1, by: -1) {
+      let source = "\(path).\(index)"
+      let destination = "\(path).\(index + 1)"
+      if fileManager.fileExists(atPath: source) {
+        try? fileManager.removeItem(atPath: destination)
+        try? fileManager.moveItem(atPath: source, toPath: destination)
+      }
+    }
+  }
+
+  if fileManager.fileExists(atPath: path) {
+    try? fileManager.removeItem(atPath: "\(path).1")
+    try? fileManager.moveItem(atPath: path, toPath: "\(path).1")
+  }
+  fileManager.createFile(atPath: path, contents: nil)
+}
+
+private func appendIndexdLogData(_ data: Data, to path: String) {
+  let url = URL(fileURLWithPath: path)
+  let directoryURL = url.deletingLastPathComponent()
+  try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+  if !FileManager.default.fileExists(atPath: path) {
+    FileManager.default.createFile(atPath: path, contents: nil)
+  }
+  let maxFiles = configuredIndexdLogMaxFiles()
+  if shouldRotateIndexdLogByTime(path: path) {
+    rotateIndexdLogFiles(path: path, maxFiles: maxFiles)
+  }
+  guard let handle = try? FileHandle(forWritingTo: url) else {
+    FileHandle.standardError.write(data)
+    return
+  }
+  defer {
+    try? handle.close()
+  }
+  do {
+    try handle.seekToEnd()
+    try handle.write(contentsOf: data)
+  } catch {
+    FileHandle.standardError.write(data)
+  }
+}
+
 func defaultIndexdLogSink(_ message: String) {
   let pid = ProcessInfo.processInfo.processIdentifier
   let line = "[orchard-indexd ts=\(indexdTimestamp()) pid=\(pid) boot=\(indexdBootID)] \(message)\n"
   guard let data = line.data(using: .utf8) else {
+    return
+  }
+  indexdLogWriteLock.lock()
+  defer { indexdLogWriteLock.unlock() }
+  if let path = configuredIndexdLogPath() {
+    appendIndexdLogData(data, to: path)
     return
   }
   FileHandle.standardError.write(data)

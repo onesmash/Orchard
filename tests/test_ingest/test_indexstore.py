@@ -369,6 +369,29 @@ def test_start_indexd_process_passes_orchard_cli_path(monkeypatch, tmp_path):
     ]
 
 
+def test_start_indexd_process_passes_log_path_via_environment(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            captured["argv"] = argv
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr("subprocess.Popen", FakePopen)
+    monkeypatch.setattr("orchard.ingest.indexstore._indexd_path", lambda: "/tmp/orchard-indexd")
+    monkeypatch.setattr("orchard.ingest.indexstore._orchard_cli_path", lambda: "/tmp/orchard")
+    monkeypatch.setattr("orchard.ingest.indexstore._indexd_log_path", lambda: str(tmp_path / "indexd.log"))
+    monkeypatch.setattr("orchard.ingest.indexstore._indexd_pid_path", lambda _socket: str(tmp_path / "indexd.pid"))
+    monkeypatch.setattr("orchard.ingest.indexstore._cleanup_stale_indexd_socket", lambda *_args, **_kwargs: None)
+
+    _start_indexd_process("/tmp/orchard-indexd.sock")
+
+    kwargs = captured["kwargs"]
+    assert "stdout" not in kwargs
+    assert "stderr" not in kwargs
+    assert kwargs["env"]["ORCHARD_INDEXD_LOG_PATH"] == str(tmp_path / "indexd.log")
+
+
 def test_orchard_cli_path_ignores_orchard_mcp_argv0(monkeypatch, tmp_path):
     orchard_mcp = tmp_path / "orchard-mcp"
     orchard_mcp.write_text("", encoding="utf-8")

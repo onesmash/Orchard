@@ -318,7 +318,8 @@ def _start_indexd_process(socket_path: str) -> subprocess.Popen[str]:
 
     log_path = Path(_indexd_log_path())
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_handle = log_path.open("a", encoding="utf-8")
+    env = os.environ.copy()
+    env["ORCHARD_INDEXD_LOG_PATH"] = str(log_path)
     return subprocess.Popen(
         [
             _indexd_path(),
@@ -326,8 +327,7 @@ def _start_indexd_process(socket_path: str) -> subprocess.Popen[str]:
             "--pid-file", pid_path,
             "--orchard-cli", _orchard_cli_path(),
         ],
-        stdout=log_handle,
-        stderr=log_handle,
+        env=env,
         text=True,
         start_new_session=True,
     )

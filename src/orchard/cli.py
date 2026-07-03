@@ -19,6 +19,8 @@ import sys
 import time
 from pathlib import Path
 
+from orchard.logging import get_orchard_logger
+
 _LOG_LEVEL_PRIORITY = {
     "error": 0,
     "warning": 1,
@@ -26,6 +28,8 @@ _LOG_LEVEL_PRIORITY = {
     "debug": 3,
     "trace": 4,
 }
+
+_CLI_LOGGER = get_orchard_logger("cli")
 
 
 def _orchard_log_level() -> str:
@@ -43,6 +47,8 @@ def _emit_log(message: str, *, level: str = "info", stream=None, flush: bool = F
         return
     kwargs = {"file": stream} if stream is not None else {}
     print(message, flush=flush, **kwargs)
+    logger_level = "warning" if level == "warning" else "debug" if level == "trace" else level
+    getattr(_CLI_LOGGER, logger_level)(message)
 
 
 def _find_project_db() -> str | None:

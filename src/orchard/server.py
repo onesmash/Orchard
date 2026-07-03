@@ -25,8 +25,14 @@ from contextlib import suppress
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
-from watchfiles import awatch
+try:
+    from watchfiles import awatch
+except ModuleNotFoundError:  # pragma: no cover - exercised in constrained test envs
+    async def awatch(*_args, **_kwargs):
+        if False:
+            yield set()
 
+from orchard.logging import get_orchard_logger
 from orchard.query.annotations import annotate_symbol_source_scope
 from orchard.query.search_contract import SearchResponse, SearchStatus
 from orchard.query.frame_lookup import lookup_frame
@@ -52,6 +58,8 @@ _startup_ingest_task: asyncio.Task | None = None
 _ingest_state_watch_task: asyncio.Task | None = None
 """Background ingest-state watcher task, if one is currently running."""
 
+_SERVER_LOGGER = get_orchard_logger("server", console=True)
+
 
 def _reset_conn(reason: str) -> None:
     """Close the cached DB connection so the next request reopens fresh state."""
@@ -60,8 +68,7 @@ def _reset_conn(reason: str) -> None:
         return
     _conn.close()
     _conn = None
-    sys.stderr.write(f"[orchard-mcp] DB connection reset after {reason}\n")
-    sys.stderr.flush()
+    _SERVER_LOGGER.info("[orchard-mcp] DB connection reset after %s", reason)
 
 
 async def _watch_ingest_state(project_dir: str) -> None:
@@ -72,10 +79,7 @@ async def _watch_ingest_state(project_dir: str) -> None:
         return Path(changed_path).resolve() == state_path
 
     async for _changes in awatch(str(project_dir), watch_filter=_watch_filter):
-        sys.stderr.write(
-            f"[orchard-mcp] ingest-state changed path={state_path}\n"
-        )
-        sys.stderr.flush()
+        _SERVER_LOGGER.info("[orchard-mcp] ingest-state changed path=%s", state_path)
         _reset_conn("ingest-state update")
 
 
@@ -97,24 +101,27 @@ async def _run_startup_ingest() -> None:
     stdout_text = stdout_data.decode("utf-8", errors="replace").strip()
     stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
     if proc.returncode == 0:
-        sys.stderr.write(
-            f"[orchard-mcp] startup ingest finished project_dir={project_dir}\n"
-        )
+        _SERVER_LOGGER.info("[orchard-mcp] startup ingest finished project_dir=%s", project_dir)
         if stdout_text:
-            sys.stderr.write(stdout_text + "\n")
+            for line in stdout_text.splitlines():
+                _SERVER_LOGGER.info("%s", line)
         if stderr_text:
-            sys.stderr.write(stderr_text + "\n")
+            for line in stderr_text.splitlines():
+                _SERVER_LOGGER.info("%s", line)
         _reset_conn("startup ingest")
         return
 
-    sys.stderr.write(
-        f"[orchard-mcp] startup ingest failed project_dir={project_dir} exit={proc.returncode}\n"
+    _SERVER_LOGGER.error(
+        "[orchard-mcp] startup ingest failed project_dir=%s exit=%s",
+        project_dir,
+        proc.returncode,
     )
     if stdout_text:
-        sys.stderr.write(stdout_text + "\n")
+        for line in stdout_text.splitlines():
+            _SERVER_LOGGER.error("%s", line)
     if stderr_text:
-        sys.stderr.write(stderr_text + "\n")
-    sys.stderr.flush()
+        for line in stderr_text.splitlines():
+            _SERVER_LOGGER.error("%s", line)
 
 
 def _get_conn():
@@ -635,15 +642,12 @@ async def _lifespan(server: Server):
                 _watch_ingest_state(project_dir)
             )
     except Exception as exc:
-        sys.stderr.write(f"[orchard-mcp] background task scheduling failed: {exc}\n")
-        sys.stderr.flush()
+        _SERVER_LOGGER.error("[orchard-mcp] background task scheduling failed: %s", exc)
     try:
         _get_conn()
-        sys.stderr.write("[orchard-mcp] DB connected\n")
-        sys.stderr.flush()
+        _SERVER_LOGGER.info("[orchard-mcp] DB connected")
     except Exception as exc:
-        sys.stderr.write(f"[orchard-mcp] DB connection failed: {exc}\n")
-        sys.stderr.flush()
+        _SERVER_LOGGER.error("[orchard-mcp] DB connection failed: %s", exc)
     try:
         yield
     finally:
