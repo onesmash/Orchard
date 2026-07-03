@@ -80,6 +80,8 @@ def cmd_setup(args: list[str]) -> None:
     if errors:
         sys.exit(1)
 
+    print("Next: run `orchard ingest` in your project root to build the first graph.")
+
 
 # ---------------------------------------------------------------------------
 # MCP

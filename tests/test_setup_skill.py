@@ -37,3 +37,16 @@ def test_setup_skill_installs_all_bundled_skills(tmp_path, monkeypatch):
             installed = root / skill_name / "SKILL.md"
             assert installed.exists()
             assert installed.read_text(encoding="utf-8") == content
+
+
+def test_cmd_setup_prints_ingest_next_step(monkeypatch, capsys):
+    monkeypatch.setattr(setup_mod, "_setup_mcp", lambda: (True, "MCP ok"))
+    monkeypatch.setattr(setup_mod, "_setup_codex_mcp", lambda: (True, "Codex MCP ok"))
+    monkeypatch.setattr(setup_mod, "_setup_skill", lambda: (True, "Skill ok"))
+    monkeypatch.setattr(setup_mod, "_setup_model", lambda: (True, "Model ok"))
+    monkeypatch.setattr(setup_mod, "_setup_claude_md", lambda _project_dir: (True, "CLAUDE ok"))
+
+    setup_mod.cmd_setup([])
+
+    out = capsys.readouterr().out
+    assert "Next: run `orchard ingest` in your project root" in out
