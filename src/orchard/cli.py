@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -1003,6 +1004,36 @@ def cmd_indexd(args: list[str]):
 
 
 # ---------------------------------------------------------------------------
+# Update command
+# ---------------------------------------------------------------------------
+
+
+def cmd_update(args: list[str]):
+    """Update the globally installed Orchard CLI via ``uv tool upgrade``."""
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="orchard update")
+    ap.add_argument(
+        "--setup",
+        action="store_true",
+        help="Run `orchard setup` after a successful upgrade",
+    )
+    ns = ap.parse_args(args)
+
+    uv_path = shutil.which("uv")
+    if not uv_path:
+        print("error: `uv` is not installed or not on PATH", file=sys.stderr)
+        sys.exit(1)
+
+    result = subprocess.run([uv_path, "tool", "upgrade", "orchard"], text=True)
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+    if ns.setup:
+        cmd_setup([])
+
+
+# ---------------------------------------------------------------------------
 # Audit command
 # ---------------------------------------------------------------------------
 
@@ -1491,6 +1522,7 @@ COMMANDS: dict[str, tuple] = {
     "find_references": (cmd_find_references, "Find incoming and outgoing references for a symbol"),
     "hierarchy":     (cmd_hierarchy,     "Show type hierarchy (supertypes/subtypes)"),
     "ingest":        (cmd_ingest,        "Build the graph from Xcode IndexStore data"),
+    "update":        (cmd_update,        "Upgrade the installed Orchard CLI via uv"),
     "indexd":        (cmd_indexd,        "Manage local orchard-indexd daemon state"),
     "stats":         (cmd_stats,         "Database overview and freshness check"),
     "audit":         (cmd_audit,         "Module coverage report with Xcode target gap detection"),

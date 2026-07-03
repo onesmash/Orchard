@@ -95,6 +95,19 @@ This configures everything Claude Code needs:
 Use `--mcp`, `--skill`, `--model`, or `--claude-md` to install individual components.
 `orchard setup --skill` installs the full Orchard skill bundle.
 
+### Update Orchard
+
+```bash
+orchard update
+```
+
+This upgrades the installed Orchard CLI via `uv tool upgrade orchard`.
+Add `--setup` if you want to refresh the local MCP / skill integration too:
+
+```bash
+orchard update --setup
+```
+
 ## Usage
 
 ### CLI

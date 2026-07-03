@@ -21,7 +21,15 @@ from orchard.build.context import BuildContext, make_build_id
 from orchard.handlers.symbol_context import get_symbol_context, SymbolContextRequest
 from orchard.handlers.callers import find_callers, CallerRequest
 from orchard.validation.freshness import freshness_for
-from orchard.cli import cmd_find_callers, cmd_find_callees, cmd_find_references, cmd_indexd, cmd_search, cmd_stats
+from orchard.cli import (
+    cmd_find_callers,
+    cmd_find_callees,
+    cmd_find_references,
+    cmd_indexd,
+    cmd_search,
+    cmd_stats,
+    cmd_update,
+)
 
 
 @pytest.fixture
@@ -1348,6 +1356,40 @@ def test_cmd_indexd_shutdown_prints_json(monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["stopped"] is True
     assert payload["status"]["running"] is False
+
+
+def test_cmd_update_invokes_uv_tool_upgrade(monkeypatch):
+    import subprocess
+
+    calls = []
+
+    def fake_run(cmd, text=False):
+        calls.append((cmd, text))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr("orchard.cli.shutil.which", lambda name: "/opt/homebrew/bin/uv" if name == "uv" else None)
+    monkeypatch.setattr("orchard.cli.subprocess.run", fake_run)
+
+    cmd_update([])
+
+    assert calls == [(["/opt/homebrew/bin/uv", "tool", "upgrade", "orchard"], True)]
+
+
+def test_cmd_update_runs_setup_after_success(monkeypatch):
+    import subprocess
+
+    setup_calls = []
+
+    monkeypatch.setattr("orchard.cli.shutil.which", lambda _name: "uv")
+    monkeypatch.setattr(
+        "orchard.cli.subprocess.run",
+        lambda cmd, text=False: subprocess.CompletedProcess(cmd, 0),
+    )
+    monkeypatch.setattr("orchard.cli.cmd_setup", lambda args: setup_calls.append(args))
+
+    cmd_update(["--setup"])
+
+    assert setup_calls == [[]]
 
 
 def test_cli_json_output_not_polluted_by_parent_db_notice(tmp_path, capsys, monkeypatch):
