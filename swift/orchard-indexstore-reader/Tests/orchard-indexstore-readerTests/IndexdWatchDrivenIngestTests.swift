@@ -363,6 +363,8 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
 
   func testRegisterSessionPrimesUnitEventMonitoringWhenBackgroundIngestIsConfigured() throws {
     let session = try makeTestSession()
+    let logs = SynchronizedLogBuffer()
+    session.logSink = { logs.append($0) }
 
     XCTAssertFalse(session.snapshot().hasPolled)
 
@@ -377,6 +379,7 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     }
 
     XCTAssertTrue(session.snapshot().hasPolled)
+    XCTAssertTrue(logs.lines.contains(where: { $0.contains("background warm ready") }))
   }
 
   func testUnitEventBatchOnlyAdvancesGenerationAfterProcessingCompletes() throws {

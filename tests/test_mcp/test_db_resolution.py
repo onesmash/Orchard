@@ -10,8 +10,8 @@ def reset_server_state(monkeypatch):
     monkeypatch.setattr(server_mod, "_conn_db_path", "")
     monkeypatch.setattr(server_mod, "_conn_by_db_path", {})
     monkeypatch.setattr(server_mod, "_startup_ingest_task", None)
+    monkeypatch.setattr(server_mod, "_startup_ingest_tasks", {})
     monkeypatch.setattr(server_mod, "_ingest_state_watch_task", None)
-    monkeypatch.setattr(server_mod, "_tool_ingest_projects", set())
     monkeypatch.delenv("ORCHARD_DB_PATH", raising=False)
 
 
@@ -31,6 +31,22 @@ def test_resolve_target_prefers_request_root_graph_db(monkeypatch, tmp_path):
     assert target.project_dir == str(repo_root.resolve())
     assert target.db_path == str(db_path.resolve())
     assert target.source == "request_root"
+    assert target.watcher_eligible is True
+
+
+def test_resolve_target_uses_tool_project_dir_source_when_requested(monkeypatch, tmp_path):
+    import orchard.server as server_mod
+
+    repo_root = tmp_path / "repo"
+    db_path = repo_root / ".orchard" / "graph.db"
+    db_path.parent.mkdir(parents=True)
+    db_path.touch()
+
+    target = server_mod._resolve_target(str(repo_root), source_hint="tool_project_dir")
+
+    assert target.project_dir == str(repo_root.resolve())
+    assert target.db_path == str(db_path.resolve())
+    assert target.source == "tool_project_dir"
     assert target.watcher_eligible is True
 
 
@@ -101,10 +117,10 @@ async def test_call_tool_only_schedules_ingest_for_watcher_eligible_target(monke
         lambda project_dir=None: get_conn_args.append(project_dir) or object(),
     )
 
-    async def resolve_watcher_target():
+    async def resolve_watcher_target(_project_dir=None):
         return watcher_target
 
-    async def resolve_explicit_target():
+    async def resolve_explicit_target(_project_dir=None):
         return explicit_target
 
     monkeypatch.setattr(server_mod, "_resolve_request_target", resolve_watcher_target)

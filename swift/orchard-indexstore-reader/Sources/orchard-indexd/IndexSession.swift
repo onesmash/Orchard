@@ -279,6 +279,7 @@ final class IndexdSession {
   private var orchardCLIPath: String?
   private var beginGraphDBIngest: (() -> Bool)?
   private var endGraphDBIngest: (() -> Void)?
+  private var backgroundWarmCompleted = false
   var logSink: (String) -> Void = defaultIndexdLogSink
 
   private func emitLog(_ message: String, level: IndexdLogLevel = .info) {
@@ -402,6 +403,7 @@ final class IndexdSession {
       self.logSink(
         "session=\(self.sessionId) configured auto-ingest entry=\(entryTarget) targets=\(targetArgs) incremental=\(incremental)"
       )
+      self.performBackgroundWarmIfNeededLocked()
       self.primeUnitEventMonitoringIfNeededLocked()
       self.scheduleDebouncedIngestIfNeededLocked()
     }
@@ -619,6 +621,24 @@ final class IndexdSession {
     db.pollForUnitChangesAndWait(isInitialScan: true)
     hasPolled = true
     emitLog("session=\(sessionId) primed unit-event monitoring initial_scan=true", level: .debug)
+  }
+
+  private func performBackgroundWarmIfNeededLocked() {
+    guard !backgroundWarmCompleted else {
+      emitLog("session=\(sessionId) background warm skipped; already complete", level: .debug)
+      return
+    }
+    emitLog(
+      "session=\(sessionId) background warm start source_roots=\(sourceRoots.count) targets=\(targets.count)",
+      level: .debug
+    )
+    if !hasPolled {
+      db.pollForUnitChangesAndWait(isInitialScan: true)
+      hasPolled = true
+    }
+    let symbolCount = db.allSymbolNames().count
+    backgroundWarmCompleted = true
+    logSink("session=\(sessionId) background warm ready symbols=\(symbolCount)")
   }
 
   private func collectOutputPathMappings(filePaths: [String]) -> [[String: String]] {

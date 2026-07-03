@@ -892,13 +892,20 @@ def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monke
         lambda _project_dir: {"last_ingest_ts": 123.0, "compiled_targets": ["T"], "index_store_path": "/fake/store"},
     )
     monkeypatch.setattr("orchard.ingest.indexstore._unit_dir_mtime", lambda _path: 120.0)
+    register_results = iter([None, {"sessionId": "session-fast-path"}])
+
+    def fake_register(**kwargs):
+        events.append(("register", kwargs.get("source_roots"), kwargs.get("target_args")))
+        return next(register_results)
+
+    monkeypatch.setattr("orchard.ingest.indexstore.register_indexd_session", fake_register)
     monkeypatch.setattr(
-        "orchard.ingest.indexstore.register_indexd_session",
-        lambda **kwargs: events.append("register") or {"sessionId": "session-fast-path"},
+        "orchard.ingest.indexstore._indexd_socket_path",
+        lambda: "/tmp/indexd.sock",
     )
     monkeypatch.setattr(
-        "orchard.ingest.indexstore.warm_indexd_session_async",
-        lambda *args, **kwargs: events.append("warm") or True,
+        "orchard.ingest.indexstore._ensure_indexd_running",
+        lambda socket_path: events.append(f"ensure:{socket_path}") or True,
     )
     monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
     monkeypatch.setenv("ORCHARD_LOG_LEVEL", "debug")
@@ -919,7 +926,11 @@ def test_cmd_ingest_incremental_prints_diagnostics_and_fast_path(tmp_path, monke
     assert "incremental: unit_ts 120.0" in out
     assert "ingest: reading index store..." not in out
     assert "incremental: fast path hit" in out
-    assert events == ["register", "warm"]
+    assert events == [
+        ("register", [], ["T"]),
+        "ensure:/tmp/indexd.sock",
+        ("register", [], ["T"]),
+    ]
 
 
 def test_cmd_ingest_fast_path_hides_incremental_detail_logs_by_default(tmp_path, monkeypatch, capsys):
@@ -941,13 +952,20 @@ def test_cmd_ingest_fast_path_hides_incremental_detail_logs_by_default(tmp_path,
         },
     )
     monkeypatch.setattr("orchard.ingest.indexstore._unit_dir_mtime", lambda _path: 120.0)
+    register_results = iter([None, {"sessionId": "session-fast-path"}])
+
+    def fake_register(**kwargs):
+        events.append(("register", kwargs.get("source_roots"), kwargs.get("target_args")))
+        return next(register_results)
+
+    monkeypatch.setattr("orchard.ingest.indexstore.register_indexd_session", fake_register)
     monkeypatch.setattr(
-        "orchard.ingest.indexstore.register_indexd_session",
-        lambda **kwargs: events.append("register") or {"sessionId": "session-fast-path"},
+        "orchard.ingest.indexstore._indexd_socket_path",
+        lambda: "/tmp/indexd.sock",
     )
     monkeypatch.setattr(
-        "orchard.ingest.indexstore.warm_indexd_session_async",
-        lambda *args, **kwargs: events.append("warm") or True,
+        "orchard.ingest.indexstore._ensure_indexd_running",
+        lambda socket_path: events.append(f"ensure:{socket_path}") or True,
     )
     monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
     monkeypatch.delenv("ORCHARD_LOG_LEVEL", raising=False)
@@ -967,7 +985,11 @@ def test_cmd_ingest_fast_path_hides_incremental_detail_logs_by_default(tmp_path,
     assert "incremental: index-store /fake/store" not in out
     assert "incremental: unit_ts 120.0" not in out
     assert "incremental: fast path hit" in out
-    assert events == ["register", "warm"]
+    assert events == [
+        ("register", [], ["T"]),
+        "ensure:/tmp/indexd.sock",
+        ("register", [], ["T"]),
+    ]
 
 
 def test_cmd_ingest_replaces_state_with_latest_compiled_scope(tmp_path, monkeypatch):
@@ -1108,6 +1130,7 @@ def test_cmd_ingest_registers_indexd_session_with_normalized_context(tmp_path, m
         "target_args": ["Zoom", "zPSApp"],
         "entry_target": "Zoom",
         "incremental": True,
+        "source_roots": ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
     }
 
 
@@ -1275,6 +1298,7 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
         source_roots=None,
         incremental_since=None,
         targets=None,
+        registration_context=None,
     ):
         captured["scope_id"] = scope_id
         captured["incremental_since"] = incremental_since

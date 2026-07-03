@@ -259,12 +259,13 @@ def cmd_ingest(args: list[str]):
                     help="Path to a SymbolGraph JSON file to ingest alongside IndexStore data")
     ns = ap.parse_args(args)
     from orchard.ingest.indexstore import (
+        _ensure_indexd_running,
+        _indexd_socket_path,
         _make_ingest_context,
         _unit_dir_mtime,
         list_source_files,
         read_index_store,
         register_indexd_session,
-        warm_indexd_session_async,
     )
     from orchard.build.context import BuildContext, make_build_id
     from orchard.normalize.identity import (
@@ -367,13 +368,14 @@ def cmd_ingest(args: list[str]):
             )
             sys.exit(2)
 
-        register_indexd_session(
+        registration_result = register_indexd_session(
             project_dir=str(Path(ns.project_dir).resolve()),
             index_store_path=index_store,
             graph_db_path=ns.db,
             target_args=targets,
             entry_target=entry_target,
             incremental=ns.incremental,
+            source_roots=source_roots,
         )
         registration_context = _make_ingest_context(
             project_dir=str(Path(ns.project_dir).resolve()),
@@ -434,13 +436,18 @@ def cmd_ingest(args: list[str]):
             prev_targets = set(old_state.get("compiled_targets", []) if old_state else [])
             requested_targets = set(targets)
             if unit_ts <= incremental_since and requested_targets.issubset(prev_targets):
-                warm_indexd_session_async(
-                    index_store,
-                    source_roots=source_roots,
-                    targets=targets,
-                    graph_db_path=ns.db,
-                    context=registration_context,
-                )
+                socket_path = _indexd_socket_path()
+                if socket_path:
+                    if _ensure_indexd_running(socket_path) and registration_result is None:
+                        register_indexd_session(
+                            project_dir=str(Path(ns.project_dir).resolve()),
+                            index_store_path=index_store,
+                            graph_db_path=ns.db,
+                            target_args=targets,
+                            entry_target=entry_target,
+                            incremental=ns.incremental,
+                            source_roots=source_roots,
+                        )
                 _emit_log(
                     f"incremental: fast path hit (unit_ts {unit_ts} <= last_ingest_ts {incremental_since})"
                 )

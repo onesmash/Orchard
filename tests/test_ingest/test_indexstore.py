@@ -22,6 +22,7 @@ from orchard.ingest.indexstore import (
     list_source_files,
     read_index_store,
     register_indexd_session,
+    warm_indexd_session,
     warm_indexd_session_async,
     OccurrenceRecord,
     RelationRecord,
@@ -429,6 +430,29 @@ def test_ensure_indexd_running_restarts_on_binary_mismatch(monkeypatch):
     assert actions[:2] == ["ping", "shutdown"]
 
 
+def test_ensure_indexd_running_logs_autostart_success(monkeypatch):
+    events: list[tuple[str, str]] = []
+
+    class FakeClient:
+        def __init__(self, _socket_path):
+            pass
+
+        def ping(self):
+            raise ConnectionError("down")
+
+    monkeypatch.setattr("orchard.ingest.indexstore._IndexdClient", FakeClient)
+    monkeypatch.setattr("orchard.ingest.indexstore._start_indexd_process", lambda _socket_path: object())
+    monkeypatch.setattr("orchard.ingest.indexstore._wait_for_indexd", lambda _socket_path: True)
+    monkeypatch.setattr("orchard.ingest.indexstore._cleanup_stale_indexd_socket", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("orchard.ingest.indexstore._INDEXD_LOGGER.info", lambda msg, *args: events.append(("info", msg % args)))
+
+    assert _ensure_indexd_running("/tmp/indexd.sock") is True
+    assert events == [
+        ("info", "indexd autostart requested socket=/tmp/indexd.sock"),
+        ("info", "indexd autostart ready socket=/tmp/indexd.sock"),
+    ]
+
+
 def test_run_reader_falls_back_to_cli_when_indexd_cannot_start(monkeypatch):
     monkeypatch.delenv("ORCHARD_INDEXD_SOCKET", raising=False)
     monkeypatch.setenv("ORCHARD_INDEXD_AUTOSTART", "1")
@@ -537,6 +561,8 @@ def test_indexd_client_register_session_sends_expected_payload(monkeypatch, tmp_
     result = client.register_session(
         store_path=str(tmp_path / ".." / "IndexStore"),
         graph_db_path=str(tmp_path / ".." / "graph.db"),
+        source_roots=["/repo/ios-client"],
+        targets=["Zoom", "zPSApp"],
         context={
             "projectDir": str(tmp_path / ".." / "project"),
             "indexStorePath": str(tmp_path / ".." / "IndexStore"),
@@ -554,6 +580,8 @@ def test_indexd_client_register_session_sends_expected_payload(monkeypatch, tmp_
         "params": {
             "storePath": str((tmp_path / ".." / "IndexStore").resolve()),
             "graphDBPath": str((tmp_path / ".." / "graph.db").resolve()),
+            "sourceRoots": ["/repo/ios-client"],
+            "targets": ["Zoom", "zPSApp"],
             "context": {
                 "projectDir": str((tmp_path / ".." / "project").resolve()),
                 "indexStorePath": str((tmp_path / ".." / "IndexStore").resolve()),
@@ -731,6 +759,81 @@ def test_warm_indexd_session_async_passes_registration_context(monkeypatch):
         "/repo/.orchard/graph.db",
         context,
     )
+
+
+def test_warm_indexd_session_runs_synchronously(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, socket_path):
+            captured["socket_path"] = socket_path
+
+        def warm(self, index_store_path, source_roots, targets, graph_db_path=None, context=None):
+            captured["warm"] = (index_store_path, source_roots, targets, graph_db_path, context)
+            return "session-1"
+
+    monkeypatch.setenv("ORCHARD_INDEXD_SOCKET", "/tmp/indexd.sock")
+    monkeypatch.setenv("ORCHARD_INDEXD_AUTOSTART", "1")
+    monkeypatch.setattr("orchard.ingest.indexstore._ensure_indexd_running", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("orchard.ingest.indexstore._IndexdClient", FakeClient)
+
+    context = {
+        "projectDir": "/repo",
+        "indexStorePath": "/fake/store",
+        "graphDBPath": "/repo/.orchard/graph.db",
+        "targetArgs": ["Zoom"],
+        "entryTarget": "Zoom",
+        "incremental": True,
+    }
+    assert warm_indexd_session(
+        "/fake/store",
+        ["/src"],
+        ["Zoom"],
+        graph_db_path="/repo/.orchard/graph.db",
+        context=context,
+    ) is True
+
+    assert captured["socket_path"] == "/tmp/indexd.sock"
+    assert captured["warm"] == (
+        "/fake/store",
+        ["/src"],
+        ["Zoom"],
+        "/repo/.orchard/graph.db",
+        context,
+    )
+
+
+def test_warm_indexd_session_async_logs_warm_success(monkeypatch):
+    events: list[tuple[str, str]] = []
+
+    class FakeClient:
+        def __init__(self, socket_path):
+            assert socket_path == "/tmp/indexd.sock"
+
+        def warm(self, index_store_path, source_roots, targets, graph_db_path=None, context=None):
+            assert index_store_path == "/fake/store"
+            assert source_roots == ["/src"]
+            assert targets == ["Zoom", "zPSApp"]
+            return "session-1"
+
+    class InlineThread:
+        def __init__(self, target=None, name=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setenv("ORCHARD_INDEXD_SOCKET", "/tmp/indexd.sock")
+    monkeypatch.setenv("ORCHARD_INDEXD_AUTOSTART", "1")
+    monkeypatch.setattr("orchard.ingest.indexstore.threading.Thread", InlineThread)
+    monkeypatch.setattr("orchard.ingest.indexstore._ensure_indexd_running", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("orchard.ingest.indexstore._IndexdClient", FakeClient)
+    monkeypatch.setattr("orchard.ingest.indexstore._INDEXD_LOGGER.info", lambda msg, *args: events.append(("info", msg % args)))
+
+    assert warm_indexd_session_async("/fake/store", ["/src"], ["Zoom", "zPSApp"]) is True
+    assert events == [
+        ("info", "indexd warm ready store=/fake/store socket=/tmp/indexd.sock session_id=session-1 targets=Zoom,zPSApp"),
+    ]
 
 
 def test_indexd_status_reports_ping_and_build_match(monkeypatch):

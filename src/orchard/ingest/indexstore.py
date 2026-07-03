@@ -13,9 +13,11 @@ from importlib import import_module
 from pathlib import Path
 
 from orchard import __version__ as ORCHARD_VERSION
+from orchard.logging import get_orchard_logger
 
 
 _INDEXD_PROTOCOL_VERSION = 1
+_INDEXD_LOGGER = get_orchard_logger("indexd")
 
 
 @dataclass
@@ -335,31 +337,40 @@ def _start_indexd_process(socket_path: str) -> subprocess.Popen[str]:
 
 def _ensure_indexd_running(socket_path: str) -> bool:
     if not socket_path:
+        _INDEXD_LOGGER.debug("indexd autostart skipped: empty socket path")
         return False
     pid_path = _indexd_pid_path(socket_path)
     _cleanup_stale_indexd_socket(socket_path, pid_path)
     with suppress(Exception):
         info = _IndexdClient(socket_path).ping()
         if info and _daemon_matches_current_build(info):
+            _INDEXD_LOGGER.debug("indexd already running socket=%s", socket_path)
             return True
         if info:
+            _INDEXD_LOGGER.info("indexd build mismatch socket=%s; restarting daemon", socket_path)
             _IndexdClient(socket_path).shutdown()
 
     if not _indexd_autostart_enabled():
+        _INDEXD_LOGGER.info("indexd autostart disabled socket=%s", socket_path)
         return False
 
+    _INDEXD_LOGGER.info("indexd autostart requested socket=%s", socket_path)
     with _INDEXD_START_LOCK:
         _cleanup_stale_indexd_socket(socket_path, pid_path)
         with suppress(Exception):
             info = _IndexdClient(socket_path).ping()
             if info and _daemon_matches_current_build(info):
+                _INDEXD_LOGGER.debug("indexd became ready before spawn socket=%s", socket_path)
                 return True
             if info:
+                _INDEXD_LOGGER.info("indexd build mismatch after lock socket=%s; restarting daemon", socket_path)
                 _IndexdClient(socket_path).shutdown()
 
         proc = _start_indexd_process(socket_path)
         if _wait_for_indexd(socket_path):
+            _INDEXD_LOGGER.info("indexd autostart ready socket=%s", socket_path)
             return True
+        _INDEXD_LOGGER.warning("indexd autostart timed out socket=%s", socket_path)
         with suppress(Exception):
             proc.terminate()
         _cleanup_stale_indexd_socket(socket_path, pid_path)
@@ -408,6 +419,8 @@ class _IndexdClient:
         store_path: str,
         graph_db_path: str,
         context: dict,
+        source_roots: list[str] | None = None,
+        targets: list[str] | None = None,
     ) -> dict:
         def _canonicalize_path(value: str) -> str:
             return str(Path(value).expanduser().resolve()) if value else ""
@@ -422,6 +435,8 @@ class _IndexdClient:
             "params": {
                 "storePath": _canonicalize_path(store_path),
                 "graphDBPath": _canonicalize_path(graph_db_path),
+                "sourceRoots": source_roots or [],
+                "targets": targets or [],
                 "context": normalized_context,
             },
         })
@@ -570,6 +585,7 @@ def register_indexd_session(
     target_args: list[str] | None,
     entry_target: str,
     incremental: bool,
+    source_roots: list[str] | None = None,
 ) -> dict | None:
     socket_path = _indexd_socket_path()
     if not socket_path:
@@ -584,7 +600,13 @@ def register_indexd_session(
     )
     try:
         client = _IndexdClient(socket_path)
-        return client.register_session(index_store_path, graph_db_path, context)
+        return client.register_session(
+            index_store_path,
+            graph_db_path,
+            context,
+            source_roots=source_roots,
+            targets=target_args,
+        )
     except Exception:
         return None
 
@@ -607,6 +629,56 @@ def _make_ingest_context(
     }
 
 
+def warm_indexd_session(
+    index_store_path: str,
+    source_roots: list[str] | None = None,
+    targets: list[str] | None = None,
+    graph_db_path: str | None = None,
+    context: dict | None = None,
+) -> bool:
+    socket_path = _indexd_socket_path()
+    if not socket_path or not _indexd_autostart_enabled():
+        _INDEXD_LOGGER.debug(
+            "indexd warm skipped socket=%s autostart_enabled=%s",
+            socket_path,
+            _indexd_autostart_enabled(),
+        )
+        return False
+
+    try:
+        if not _ensure_indexd_running(socket_path):
+            _INDEXD_LOGGER.warning(
+                "indexd warm aborted store=%s socket=%s reason=daemon_unavailable",
+                index_store_path,
+                socket_path,
+            )
+            return False
+        client = _IndexdClient(socket_path)
+        session_id = client.warm(
+            index_store_path,
+            source_roots,
+            targets,
+            graph_db_path=graph_db_path,
+            context=context,
+        )
+        _INDEXD_LOGGER.info(
+            "indexd warm ready store=%s socket=%s session_id=%s targets=%s",
+            index_store_path,
+            socket_path,
+            session_id,
+            ",".join(targets or []),
+        )
+        return True
+    except Exception as exc:
+        _INDEXD_LOGGER.warning(
+            "indexd warm failed store=%s socket=%s error=%s",
+            index_store_path,
+            socket_path,
+            exc,
+        )
+        return False
+
+
 def warm_indexd_session_async(
     index_store_path: str,
     source_roots: list[str] | None = None,
@@ -619,19 +691,13 @@ def warm_indexd_session_async(
         return False
 
     def _warm() -> None:
-        try:
-            if not _ensure_indexd_running(socket_path):
-                return
-            client = _IndexdClient(socket_path)
-            client.warm(
-                index_store_path,
-                source_roots,
-                targets,
-                graph_db_path=graph_db_path,
-                context=context,
-            )
-        except Exception:
-            return
+        warm_indexd_session(
+            index_store_path,
+            source_roots=source_roots,
+            targets=targets,
+            graph_db_path=graph_db_path,
+            context=context,
+        )
 
     thread = threading.Thread(target=_warm, name="orchard-indexd-warm", daemon=True)
     thread.start()

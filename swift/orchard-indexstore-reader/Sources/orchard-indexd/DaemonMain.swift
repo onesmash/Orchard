@@ -154,8 +154,8 @@ struct OrchardIndexdMain {
               storePath: registerParams.storePath,
               graphDBPath: registerParams.graphDBPath,
               ingestContext: registerParams.context,
-              sourceRoots: [],
-              targets: [],
+              sourceRoots: registerParams.sourceRoots,
+              targets: registerParams.targets,
               dylibPath: nil
             )
             result.session.maybeScheduleBackgroundIngest(
@@ -418,6 +418,8 @@ struct RegisterSessionDecodeError: Error {
 func decodeRegisterSessionParams(from object: [String: Any]) throws -> RegisterSessionParams {
   let storePath = object["storePath"] as? String ?? ""
   let graphDBPath = object["graphDBPath"] as? String ?? ""
+  let sourceRoots = object["sourceRoots"] as? [String] ?? []
+  let targets = object["targets"] as? [String] ?? []
   let contextObject = object["context"] as? [String: Any] ?? [:]
 
   if storePath.isEmpty {
@@ -449,6 +451,8 @@ func decodeRegisterSessionParams(from object: [String: Any]) throws -> RegisterS
   return RegisterSessionParams(
     storePath: storePath,
     graphDBPath: graphDBPath,
+    sourceRoots: sourceRoots,
+    targets: targets,
     context: context
   )
 }

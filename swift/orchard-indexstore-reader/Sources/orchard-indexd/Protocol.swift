@@ -30,6 +30,8 @@ struct WarmResult: Encodable {
 struct RegisterSessionParams {
   let storePath: String
   let graphDBPath: String
+  let sourceRoots: [String]
+  let targets: [String]
   let context: IngestContext
 }
 

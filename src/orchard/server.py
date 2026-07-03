@@ -60,11 +60,11 @@ _conn_db_path: str = ""
 _conn_by_db_path: dict[str, object] = {}
 """Ladybug connections keyed by resolved DB path."""
 _startup_ingest_task: asyncio.Task | None = None
-"""Background ingest task, if one is currently running."""
+"""Most recently scheduled background bootstrap task."""
+_startup_ingest_tasks: dict[str, asyncio.Task] = {}
+"""Background bootstrap tasks keyed by project root."""
 _ingest_state_watch_task: asyncio.Task | None = None
 """Background ingest-state watcher task, if one is currently running."""
-_tool_ingest_projects: set[str] = set()
-"""Project roots that have already scheduled a background ingest in this server process."""
 
 _SERVER_LOGGER = get_orchard_logger("server", console=True)
 
@@ -77,7 +77,7 @@ class ResolvedTarget:
     watcher_eligible: bool
 
 
-def _resolve_target(project_dir: str | None) -> ResolvedTarget:
+def _resolve_target(project_dir: str | None, source_hint: str = "request_root") -> ResolvedTarget:
     """Resolve the request target before any connection or watcher side effects."""
     normalized_project_dir = str(Path(project_dir).expanduser().resolve()) if project_dir else None
     if normalized_project_dir:
@@ -86,7 +86,7 @@ def _resolve_target(project_dir: str | None) -> ResolvedTarget:
             return ResolvedTarget(
                 project_dir=normalized_project_dir,
                 db_path=str(candidate),
-                source="request_root",
+                source=source_hint,
                 watcher_eligible=True,
             )
 
@@ -114,8 +114,10 @@ def _resolve_target(project_dir: str | None) -> ResolvedTarget:
     )
 
 
-async def _resolve_request_target() -> ResolvedTarget:
+async def _resolve_request_target(project_dir: str | None = None) -> ResolvedTarget:
     """Resolve the active request target before any side effects."""
+    if project_dir:
+        return _resolve_target(project_dir, source_hint="tool_project_dir")
     return _resolve_target(await _request_project_dir())
 
 
@@ -157,15 +159,20 @@ async def _request_project_dir() -> str | None:
     """Return the first MCP workspace root for the active request, if any."""
     try:
         roots = await app.request_context.session.list_roots()
-    except Exception:
+    except Exception as exc:
+        _SERVER_LOGGER.warning("[orchard-mcp] list_roots failed: %s", exc)
         return None
 
+    root_uris = [str(root.uri) for root in roots.roots]
+    _SERVER_LOGGER.info("[orchard-mcp] request roots=%s", root_uris)
     for root in roots.roots:
         parsed = urlparse(str(root.uri))
         if parsed.scheme != "file":
             continue
         path = Path(unquote(parsed.path)).resolve()
+        _SERVER_LOGGER.info("[orchard-mcp] selected request root=%s", path)
         return str(path)
+    _SERVER_LOGGER.warning("[orchard-mcp] no file:// roots available in request")
     return None
 
 
@@ -236,19 +243,50 @@ async def _run_startup_ingest(project_dir: str) -> None:
             _SERVER_LOGGER.error("%s", line)
 
 
-def _schedule_tool_ingest_if_needed(project_dir: str | None) -> None:
-    """Schedule one best-effort background ingest per project root."""
+async def _bootstrap_project_ingest(project_dir: str) -> None:
+    """Ensure indexd is running for a project before falling back to ingest."""
+    from orchard.ingest.indexstore import indexd_status
+
+    try:
+        status = await asyncio.to_thread(indexd_status)
+    except Exception as exc:
+        _SERVER_LOGGER.warning(
+            "[orchard-mcp] indexd status probe failed project_dir=%s error=%s",
+            project_dir,
+            exc,
+        )
+        status = {"running": False}
+
+    if status.get("running"):
+        _SERVER_LOGGER.info("[orchard-mcp] indexd already running project_dir=%s", project_dir)
+        return
+
+    await _run_startup_ingest(project_dir)
+
+
+def _track_startup_ingest_task(project_dir: str, task: asyncio.Task) -> None:
+    """Remember one bootstrap task per project and clean up on completion."""
     global _startup_ingest_task
+    _startup_ingest_task = task
+    _startup_ingest_tasks[project_dir] = task
+
+    def _cleanup(done_task: asyncio.Task) -> None:
+        current = _startup_ingest_tasks.get(project_dir)
+        if current is done_task:
+            _startup_ingest_tasks.pop(project_dir, None)
+
+    task.add_done_callback(_cleanup)
+
+
+def _schedule_tool_ingest_if_needed(project_dir: str | None) -> None:
+    """Schedule one non-blocking bootstrap task per project root."""
     if not project_dir:
         return
-    if project_dir in _tool_ingest_projects:
+    existing = _startup_ingest_tasks.get(project_dir)
+    if existing is not None and not existing.done():
         return
-    _tool_ingest_projects.add(project_dir)
-    try:
-        _startup_ingest_task = asyncio.create_task(_run_startup_ingest(project_dir))
-    except Exception:
-        _tool_ingest_projects.discard(project_dir)
-        raise
+    task = asyncio.create_task(_bootstrap_project_ingest(project_dir))
+    _track_startup_ingest_task(project_dir, task)
 
 
 def _get_conn(project_dir: str | None = None):
@@ -313,6 +351,12 @@ def _workspace_root_safe(conn, build_id: str | None = None) -> str:
     return os.getcwd()
 
 
+def _conn_for_args(args: dict | None = None):
+    """Resolve a connection using explicit tool context when provided."""
+    project_dir = (args or {}).get("project_dir")
+    return _get_conn(project_dir if project_dir else None)
+
+
 # ---------------------------------------------------------------------------
 # Tool catalogue
 # ---------------------------------------------------------------------------
@@ -331,6 +375,7 @@ TOOLS = [
                 "language": {"type": "string", "description": "Filter by language (swift, objc, c)"},
                 "file": {"type": "string", "description": "Filter by file path (substring match)"},
                 "limit": {"type": "integer", "description": "Max results (default 20)"},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
         },
     ),
@@ -341,6 +386,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol"},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
             "required": ["usr"],
         },
@@ -356,6 +402,7 @@ TOOLS = [
                 "relation_types": {"type": "string", "description": "Comma-separated edge types to traverse (default: Calls). Example: 'Calls,Inherits,Implements'"},
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
                 "include_inferred": {"type": "boolean", "description": "When true, include compiler-inferred edges (reason=indexstore_relation_only). Default false: only source-level call evidence."},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
             "required": ["usr"],
         },
@@ -372,6 +419,7 @@ TOOLS = [
                 "include_noise": {"type": "boolean", "description": "When false (default), filter out C++ operator overloads, logging macros, and stream helpers"},
                 "include_inferred": {"type": "boolean", "description": "When true, include compiler-inferred edges (reason=indexstore_relation_only). Default false: only source-level call evidence."},
                 "include_notification_bridges": {"type": "boolean", "description": "When true, annotate notification_observer callees with notification_bridges: notification_name, selector, and callback symbol. Default false."},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
             "required": ["usr"],
         },
@@ -384,6 +432,7 @@ TOOLS = [
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol to analyze"},
                 "max_depth": {"type": "integer", "description": "Max traversal depth (default 5)"},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
             "required": ["usr"],
         },
@@ -395,6 +444,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol"},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
             "required": ["usr"],
         },
@@ -406,6 +456,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "usr": {"type": "string", "description": "USR of the symbol"},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
             "required": ["usr"],
         },
@@ -418,6 +469,7 @@ TOOLS = [
             "properties": {
                 "notification_name": {"type": "string", "description": "Filter by notification name (substring match). Omit to return all notifications."},
                 "group_by": {"type": "string", "description": "Grouping mode: 'notification' (default) or 'observer' — pivots by observer USR showing each observer's registrations."},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
         },
     ),
@@ -431,6 +483,7 @@ TOOLS = [
                 "callback_usr": {"type": "string", "description": "Filter by callback USR."},
                 "file": {"type": "string", "description": "Filter by registrar file path substring."},
                 "group_by": {"type": "string", "description": "Grouping mode: 'callback' (default) or 'registrar'."},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
         },
     ),
@@ -443,6 +496,7 @@ TOOLS = [
                 "frame": {"type": "string", "description": "A single stack frame or crash-frame-like string."},
                 "target": {"type": "string", "description": "Optional module/target filter."},
                 "language": {"type": "string", "description": "Optional language filter."},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
             "required": ["frame"],
         },
@@ -504,7 +558,7 @@ def _do_search_name(args: dict) -> str:
         params["file_pattern"] = f".*{args['file']}.*"
         where.append("s.file_path =~ $file_pattern")
 
-    conn = _get_conn()
+    conn = _conn_for_args(args)
     build_id = args.get("build_id") or _default_build_id_safe(conn, target or "")
     workspace_root = _workspace_root_safe(conn, build_id)
     rows = conn.execute(
@@ -574,7 +628,7 @@ def _do_search_class(args: dict) -> str:
     kind_filter = args.get("kind", "")
     limit = args.get("limit", 20)
 
-    conn = _get_conn()
+    conn = _conn_for_args(args)
     gl = GraphLookup(conn)
 
     where = [
@@ -617,7 +671,7 @@ def _do_search_class(args: dict) -> str:
 
 def _do_lookup_frame(args: dict) -> str:
     """Lookup a crash frame or frame-like string."""
-    conn = _get_conn()
+    conn = _conn_for_args(args)
     freshness = _search_freshness_for_args(conn, args)
     result = lookup_frame(
         conn,
@@ -644,7 +698,7 @@ def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, 
     mod = importlib.import_module(f"orchard.handlers.{module_name}")
     fn = getattr(mod, attr)
     cls = getattr(mod, request_cls_name)
-    conn = _get_conn()
+    conn = _conn_for_args(args)
     # Auto-resolve build_id so freshness is accurate by default.
     build_id = args.get("build_id") or _default_build_id_safe(conn, "")
     req = cls(
@@ -667,8 +721,8 @@ def _do_handler(module_name: str, attr: str, request_cls_name: str, args: dict, 
     return json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=str)
 
 
-def _do_stats(_args: dict) -> str:
-    conn = _get_conn()
+def _do_stats(args: dict) -> str:
+    conn = _conn_for_args(args)
     lines = []
     for e in ["Symbol", "Calls", "Contains", "Inherits", "Implements", "Extends"]:
         n = conn.execute(
@@ -684,7 +738,7 @@ def _do_audit(args: dict) -> str:
     from orchard.query.lookup import GraphLookup
     from orchard.cli import _discover_xcode_targets, _detect_gaps, _format_audit_table, ANOMALY_THRESHOLD
 
-    conn = _get_conn()
+    conn = _conn_for_args(args)
     gl = GraphLookup(conn)
     stats = gl.module_stats()
 
@@ -717,7 +771,7 @@ def _do_notification_graph(args: dict) -> str:
     mod = importlib.import_module("orchard.handlers.notification_graph")
     cls = getattr(mod, "NotificationGraphRequest")
     fn = getattr(mod, "get_notification_graph")
-    conn = _get_conn()
+    conn = _conn_for_args(args)
     build_id = args.get("build_id") or _default_build_id_safe(conn, "")
     req = cls(
         notification_name=args.get("notification_name", ""),
@@ -773,6 +827,12 @@ async def _lifespan(server: Server):
         yield
     finally:
         global _conn
+        for task in list(_startup_ingest_tasks.values()):
+            if task is not None and not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+        _startup_ingest_tasks.clear()
         if _startup_ingest_task is not None and not _startup_ingest_task.done():
             _startup_ingest_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -783,7 +843,6 @@ async def _lifespan(server: Server):
             with suppress(asyncio.CancelledError):
                 await _ingest_state_watch_task
         _ingest_state_watch_task = None
-        _tool_ingest_projects.clear()
         _reset_conn("shutdown")
 
 
@@ -802,7 +861,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
     target = None
     try:
-        target = await _resolve_request_target()
+        project_dir = arguments.get("project_dir") if isinstance(arguments, dict) else None
+        target = await _resolve_request_target(project_dir)
+        _SERVER_LOGGER.info(
+            "[orchard-mcp] tool=%s target_source=%s project_dir=%s db_path=%s",
+            name,
+            target.source,
+            target.project_dir,
+            target.db_path,
+        )
         if target.watcher_eligible:
             _schedule_tool_ingest_if_needed(target.project_dir)
     except Exception as exc:
