@@ -7,10 +7,12 @@ dist/
 /build/
 .venv/
 .gitnexus
+superpowers/
 
 # Project-level config and tooling (not part of orchard package)
 .claude/
 .codex/
+.agents/
 .durable-workflow-runtime/
 .superpowers/
 AGENTS.md
