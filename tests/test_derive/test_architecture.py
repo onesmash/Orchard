@@ -133,9 +133,9 @@ def test_architecture_derivation_reads_whole_compiled_scope(tmp_db_path):
     conn = get_connection(tmp_db_path)
     init_schema(conn)
 
-    _seed_sym(conn, "s:ZoomA", "s:ZoomA", "zoomA", "ZoomMod", scope_id="Zoom")
-    _seed_sym(conn, "s:ZPSB", "s:ZPSB", "zpsB", "ZPSMod", scope_id="zPSApp")
-    _seed_calls(conn, "s:ZoomA", "s:ZPSB")
+    _seed_sym(conn, "s:MyAppA", "s:MyAppA", "myappA", "MyAppMod", scope_id="MyApp")
+    _seed_sym(conn, "s:MyPSB", "s:MyPSB", "zpsB", "MyPSMod", scope_id="MyPSApp")
+    _seed_calls(conn, "s:MyAppA", "s:MyPSB")
 
     stats = run_architecture_derivation(conn, "compiled-scope", build_id="b1")
     assert stats["module_deps"] == 1
@@ -143,5 +143,5 @@ def test_architecture_derivation_reads_whole_compiled_scope(tmp_db_path):
     rows = conn.execute(
         "MATCH (src:Module)-[:DependsOn]->(tgt:Module) RETURN src.name, tgt.name"
     ).get_all()
-    assert rows == [["ZoomMod", "ZPSMod"]]
+    assert rows == [["MyAppMod", "MyPSMod"]]
     conn.close()

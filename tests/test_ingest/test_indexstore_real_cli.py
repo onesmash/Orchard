@@ -34,11 +34,11 @@ public func caller() -> Int { return callee() }
 public struct Thing { public func method() {} }
 """
 
-REAL_ZOOM_STORE = Path(
-    "/Users/hui.xu/Work/SourceCode/Xcode/Zoom-aenxrzlrezagxyceipvtgcusrnlu/Index.noindex/DataStore"
+REAL_STORE = Path(
+    "/path/to/DerivedData/YourProject-abc/Index.noindex/DataStore"
 )
-REAL_EXTENSION_SIRI_ROOT = Path(
-    "/Users/hui.xu/Work/SourceCode/Zoom_Client/ios-client/Zoom/ExtensionSiri"
+REAL_EXTENSION_ROOT = Path(
+    "/path/to/your-project/ExtensionSiri"
 )
 
 
@@ -234,14 +234,14 @@ def test_installed_wheel_cli_can_ingest_minimal_index(tmp_path):
 
 
 @pytest.mark.skipif(
-    not REAL_ZOOM_STORE.exists() or not REAL_EXTENSION_SIRI_ROOT.exists(),
-    reason="requires local Zoom DerivedData store and ExtensionSiri sources",
+    not REAL_STORE.exists() or not REAL_EXTENSION_ROOT.exists(),
+    reason="requires local DerivedData store and Extension sources",
 )
-def test_real_zoom_extension_siri_preserves_objc_sdk_symbols():
+def test_real_extension_preserves_objc_sdk_symbols():
     result, _, _ = read_index_store(
-        str(REAL_ZOOM_STORE),
+        str(REAL_STORE),
         scope_id="T",
-        source_root=str(REAL_EXTENSION_SIRI_ROOT),
+        source_root=str(REAL_EXTENSION_ROOT),
     )
 
     intent_handler_symbols = {
@@ -252,4 +252,3 @@ def test_real_zoom_extension_siri_preserves_objc_sdk_symbols():
 
     assert "stringByAppendingString:" in intent_handler_symbols
     assert "INPersonHandleTypePhoneNumber" in intent_handler_symbols
-    assert "ZMSiriCallIdentifierPrefix" in intent_handler_symbols

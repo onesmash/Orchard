@@ -28,7 +28,7 @@
   - Limit: expand top-50 methods (by name ordering) for classes with many methods
   - Update MCP server `orchard_find_callees` handler
 
-**Verification**: `orchard find_callers --usr "c:objc(cs)ZPJoinConfHelper" --target Zoom` → 8+ callers grouped by method
+**Verification**: `orchard find_callers --usr "c:objc(cs)ExampleHelper" --target MyApp` → 8+ callers grouped by method
 
 ---
 
@@ -44,9 +44,9 @@
 
 2.2 Add `orchard_search` MCP tool parameter `class_name` in `server.py`
 
-2.3 Pipe mode support: handle `{"cmd": "search", "args": {"class": "ZPJoinConfHelper"}}`
+2.3 Pipe mode support: handle `{"cmd": "search", "args": {"class": "ExampleHelper"}}`
 
-**Verification**: `orchard search --class ZPJoinConfHelper --target Zoom` → 15 methods listed
+**Verification**: `orchard search --class ExampleHelper --target MyApp` → 15 methods listed
 
 ---
 
@@ -68,7 +68,7 @@
 
 3.4 MCP server: add `include_noise` boolean to `orchard_find_callees` tool schema
 
-**Verification**: `orchard find_callees --usr "c:objc(cs)ZMPTViewControllerHelper(im)tryAutoLoginWhenAppLaunched" --target Zoom` → ~9 callees (was 89)
+**Verification**: `orchard find_callees --usr "c:objc(cs)ExampleViewController(im)tryAutoLogin" --target MyApp` → ~9 callees (was 89)
 
 ---
 
@@ -83,7 +83,7 @@
 4.2 Modify `callers_of()` return: when `data == []` and `is_framework_callback(name)`:
   - Add `open_gaps: ["No callers found — likely called by system framework (UIKit/AppKit). Use reverse tracing via find_callees."]`
 
-**Verification**: `orchard find_callers --usr "c:objc(cs)ZPAppDelegate(im)application:didFinishLaunchingWithOptions:" --target Zoom` → `open_gaps` annotation present
+**Verification**: `orchard find_callers --usr "c:objc(cs)ExampleAppDelegate(im)application:didFinishLaunchingWithOptions:" --target MyApp` → `open_gaps` annotation present
 
 ---
 
@@ -116,12 +116,12 @@
   - For each scheme: find/build IndexStore, run ingest, merge into same graph.db
   - Skip already-ingested targets (dedup by build_id or target_id)
 
-6.2 Alternative: `orchard ingest --target iOSLogin --index-store <path>` for manual multi-target:
-  - Allow multiple `--target` values: `orchard ingest --target Zoom,iOSLogin,iOSServiceManager`
+6.2 Alternative: `orchard ingest --target MyLogin --index-store <path>` for manual multi-target:
+  - Allow multiple `--target` values: `orchard ingest --target MyApp,MyLogin,MyServiceManager`
 
 6.3 Update `ingest-state.json` to record multi-target state
 
-**Verification**: After re-ingest with iOSLogin target, `orchard search --name "ZMAppLoginHelper"` → 1+ results
+**Verification**: After re-ingest with MyLogin target, `orchard search --name "ExampleLoginHelper"` → 1+ results
 
 ---
 
@@ -148,4 +148,4 @@ Task 1 (auto-expand) ──┬──> Task 2 (search --class) ──> Task 3 (no
 - Unit tests: `tests/test_lookup.py` for `methods_of()`, `is_noise()`, `is_framework_callback()`
 - Integration: test CLI commands end-to-end with test graph fixtures
 - Regression: existing `find_callers`/`find_callees` tests must pass unchanged (method-level USR queries unaffected)
-- Manual verification: use Zoom ios-client graph for real-world testing of all 6 solutions
+- Manual verification: use example project graph for real-world testing of all 6 solutions

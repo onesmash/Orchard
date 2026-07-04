@@ -212,7 +212,7 @@ def match_derived_data(project_path: str) -> list[tuple[str, str, str]]:
     tuples sorted by *last_accessed* descending.
     """
     project_paths = _project_paths_from(project_path)
-    project_name = Path(project_path).stem  # "Zoom" from "Zoom.xcodeproj"
+    project_name = Path(project_path).stem  # e.g. "MyApp" from "MyApp.xcodeproj"
     dd_root = Path(get_derived_data_path())
     if not dd_root.is_dir():
         return []

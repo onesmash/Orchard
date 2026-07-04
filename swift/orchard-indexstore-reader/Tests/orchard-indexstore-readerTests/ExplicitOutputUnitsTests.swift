@@ -94,13 +94,13 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     let first = try manager.getOrCreateSession(
       storePath: fixture.storePath.path,
       sourceRoots: [tmp.path],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: dylibPath
     )
     let second = try manager.getOrCreateSession(
       storePath: fixture.storePath.path,
       sourceRoots: [tmp.path],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: dylibPath
     )
 
@@ -119,7 +119,7 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     let created = try manager.getOrCreateSession(
       storePath: fixture.storePath.path,
       sourceRoots: [tmp.path],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: nil
     )
 
@@ -141,7 +141,7 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     let created = try manager.getOrCreateSession(
       storePath: fixture.storePath.path,
       sourceRoots: [tmp.path],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: nil
     )
 
@@ -163,7 +163,7 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     let first = try manager.getOrCreateSession(
       storePath: fixture.storePath.path,
       sourceRoots: [tmp.path],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: nil
     )
 
@@ -172,7 +172,7 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     let second = try manager.getOrCreateSession(
       storePath: fixture.storePath.path,
       sourceRoots: [tmp.path],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: nil
     )
 
@@ -198,14 +198,14 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     let outputA = intermediates
       .appendingPathComponent("Zoom.build", isDirectory: true)
       .appendingPathComponent("Debug-iphonesimulator", isDirectory: true)
-      .appendingPathComponent("iZipow.build", isDirectory: true)
+      .appendingPathComponent("MyProduct.build", isDirectory: true)
       .appendingPathComponent("Objects-normal", isDirectory: true)
       .appendingPathComponent("arm64", isDirectory: true)
       .appendingPathComponent("Alpha.o")
     let outputB = intermediates
       .appendingPathComponent("Zoom.build", isDirectory: true)
       .appendingPathComponent("Debug-iphonesimulator", isDirectory: true)
-      .appendingPathComponent("iZipow.build", isDirectory: true)
+      .appendingPathComponent("MyProduct.build", isDirectory: true)
       .appendingPathComponent("Objects-normal", isDirectory: true)
       .appendingPathComponent("arm64", isDirectory: true)
       .appendingPathComponent("Beta.o")
@@ -213,13 +213,13 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     try FileManager.default.createDirectory(at: buildDB.deletingLastPathComponent(), withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: storePath, withIntermediateDirectories: true)
 
-    let sourceA = "/repo/ios-client/Zoom/Classes/Foo/Alpha.mm"
+    let sourceA = "/repo/myapp/MyApp/Classes/Foo/Alpha.mm"
     let sourceB = "/repo/client-app-common/Shared/Beta.cpp"
     let sql = """
     CREATE TABLE key_names (id INTEGER PRIMARY KEY, key STRING UNIQUE);
     INSERT INTO key_names (id, key) VALUES
-      (1, 'CP1:target-iZipow-123-iphonesimulator-iphonesimulator:Debug:CompileC \(outputA.path) \(sourceA) normal arm64 objective-c++ com.apple.compilers.llvm.clang.1_0.compiler'),
-      (2, 'CP1:target-iZipow-123-iphonesimulator-iphonesimulator:Debug:CompileC \(outputB.path) \(sourceB) normal arm64 c++ com.apple.compilers.llvm.clang.1_0.compiler');
+      (1, 'CP1:target-MyProduct-123-iphonesimulator-iphonesimulator:Debug:CompileC \(outputA.path) \(sourceA) normal arm64 objective-c++ com.apple.compilers.llvm.clang.1_0.compiler'),
+      (2, 'CP1:target-MyProduct-123-iphonesimulator-iphonesimulator:Debug:CompileC \(outputB.path) \(sourceB) normal arm64 c++ com.apple.compilers.llvm.clang.1_0.compiler');
     """
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
@@ -228,13 +228,13 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     process.waitUntilExit()
     XCTAssertEqual(process.terminationStatus, 0)
 
-    let roots = try sourceRootsForTargets(indexStorePath: storePath.path, targets: ["Zoom"])
+    let roots = try sourceRootsForTargets(indexStorePath: storePath.path, targets: ["MyApp"])
 
     XCTAssertEqual(
       Set(roots),
       Set([
         "/repo/client-app-common/Shared",
-        "/repo/ios-client/Zoom/Classes/Foo",
+        "/repo/myapp/MyApp/Classes/Foo",
       ])
     )
   }
@@ -257,21 +257,21 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     let outputFileMap = intermediates
       .appendingPathComponent("Zoom.build", isDirectory: true)
       .appendingPathComponent("Debug-iphonesimulator", isDirectory: true)
-      .appendingPathComponent("iZipow.build", isDirectory: true)
+      .appendingPathComponent("MyProduct.build", isDirectory: true)
       .appendingPathComponent("Objects-normal", isDirectory: true)
       .appendingPathComponent("arm64", isDirectory: true)
-      .appendingPathComponent("iZipow-OutputFileMap.json")
+      .appendingPathComponent("MyProduct-OutputFileMap.json")
 
     try FileManager.default.createDirectory(at: outputFileMap.deletingLastPathComponent(), withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: buildDB.deletingLastPathComponent(), withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: storePath, withIntermediateDirectories: true)
     try """
     {
-      "/repo/ios-client/Zoom/Classes/App/Foo.swift": {
-        "index-unit-output-path": "/Zoom.build/Debug-iphonesimulator/iZipow.build/Objects-normal/arm64/Foo.o"
+      "/repo/myapp/MyApp/Classes/App/Foo.swift": {
+        "index-unit-output-path": "/Zoom.build/Debug-iphonesimulator/MyProduct.build/Objects-normal/arm64/Foo.o"
       },
       "/repo/client-app-common/Shared/Bar.swift": {
-        "index-unit-output-path": "/Zoom.build/Debug-iphonesimulator/iZipow.build/Objects-normal/arm64/Bar.o"
+        "index-unit-output-path": "/Zoom.build/Debug-iphonesimulator/MyProduct.build/Objects-normal/arm64/Bar.o"
       }
     }
     """.write(to: outputFileMap, atomically: true, encoding: .utf8)
@@ -280,7 +280,7 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     CREATE TABLE key_names (id INTEGER PRIMARY KEY, key STRING UNIQUE);
     INSERT INTO key_names (id, key) VALUES (
       1,
-      'CP2:target-iZipow-123-iphonesimulator-iphonesimulator:Debug:WriteAuxiliaryFile \(outputFileMap.path)'
+      'CP2:target-MyProduct-123-iphonesimulator-iphonesimulator:Debug:WriteAuxiliaryFile \(outputFileMap.path)'
     );
     """
     let process = Process()
@@ -290,13 +290,13 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     process.waitUntilExit()
     XCTAssertEqual(process.terminationStatus, 0)
 
-    let roots = try sourceRootsForTargets(indexStorePath: storePath.path, targets: ["Zoom"])
+    let roots = try sourceRootsForTargets(indexStorePath: storePath.path, targets: ["MyApp"])
 
     XCTAssertEqual(
       Set(roots),
       Set([
         "/repo/client-app-common/Shared",
-        "/repo/ios-client/Zoom/Classes/App",
+        "/repo/myapp/MyApp/Classes/App",
       ])
     )
   }
@@ -315,10 +315,10 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     let outputFileMap = intermediates
       .appendingPathComponent("Zoom.build", isDirectory: true)
       .appendingPathComponent("Debug-iphonesimulator", isDirectory: true)
-      .appendingPathComponent("iZipow.build", isDirectory: true)
+      .appendingPathComponent("MyProduct.build", isDirectory: true)
       .appendingPathComponent("Objects-normal", isDirectory: true)
       .appendingPathComponent("arm64", isDirectory: true)
-      .appendingPathComponent("iZipow-OutputFileMap.json")
+      .appendingPathComponent("MyProduct-OutputFileMap.json")
     let buildDB = intermediates
       .appendingPathComponent("XCBuildData", isDirectory: true)
       .appendingPathComponent("build.db")
@@ -329,10 +329,10 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     try """
     {
       "/tmp/Foo.swift": {
-        "index-unit-output-path": "/Zoom.build/Debug-iphonesimulator/iZipow.build/Objects-normal/arm64/Foo.o"
+        "index-unit-output-path": "/Zoom.build/Debug-iphonesimulator/MyProduct.build/Objects-normal/arm64/Foo.o"
       },
       "/tmp/Bar.swift": {
-        "index-unit-output-path": "/Zoom.build/Debug-iphonesimulator/iZipow.build/Objects-normal/arm64/Bar.o"
+        "index-unit-output-path": "/Zoom.build/Debug-iphonesimulator/MyProduct.build/Objects-normal/arm64/Bar.o"
       }
     }
     """.write(to: outputFileMap, atomically: true, encoding: .utf8)
@@ -340,7 +340,7 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
     process.arguments = [
       buildDB.path,
-      "CREATE TABLE key_names (id INTEGER PRIMARY KEY, key STRING UNIQUE); INSERT INTO key_names (id, key) VALUES (1, 'CP2:target-iZipow-123-:Debug:WriteAuxiliaryFile \(outputFileMap.path)');",
+      "CREATE TABLE key_names (id INTEGER PRIMARY KEY, key STRING UNIQUE); INSERT INTO key_names (id, key) VALUES (1, 'CP2:target-MyProduct-123-:Debug:WriteAuxiliaryFile \(outputFileMap.path)');",
     ]
     try process.run()
     process.waitUntilExit()
@@ -351,8 +351,8 @@ final class ExplicitOutputUnitsTests: XCTestCase {
     XCTAssertEqual(
       paths,
       [
-        "/Zoom.build/Debug-iphonesimulator/iZipow.build/Objects-normal/arm64/Bar.o",
-        "/Zoom.build/Debug-iphonesimulator/iZipow.build/Objects-normal/arm64/Foo.o",
+        "/Zoom.build/Debug-iphonesimulator/MyProduct.build/Objects-normal/arm64/Bar.o",
+        "/Zoom.build/Debug-iphonesimulator/MyProduct.build/Objects-normal/arm64/Foo.o",
       ]
     )
   }

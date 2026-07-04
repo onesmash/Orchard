@@ -21,7 +21,7 @@ class TestCrossLanguageName:
 
     def test_swift_definition(self):
         cn = CrossLanguageName(
-            clang_name="-[Zoom.PTEntranceViewController handleMoreSelectedWithTag:withParams:]",
+            clang_name="--[MyApp.PTEntranceViewController handleMoreSelectedWithTag:withParams:]",
             swift_name="PTEntranceViewController.handleMoreSelected(_:_:)",
             definition_language="swift",
         )

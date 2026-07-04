@@ -33,7 +33,7 @@ public extension String : MyCustomProtocol {
 
 
 def test_parse_enum_conformances():
-    results = parse_interface_text(SAMPLE, "iOSLogin")
+    results = parse_interface_text(SAMPLE, "MyLogin")
     # enum BusinessEntranceTag : UInt, Sendable
     # UInt is not a protocol → filtered out
     # Sendable is a protocol
@@ -41,18 +41,18 @@ def test_parse_enum_conformances():
     assert len(conforms) == 1
     assert conforms[0].protocol_name == "Sendable"
     assert conforms[0].type_kind == "enum"
-    assert conforms[0].module == "iOSLogin"
+    assert conforms[0].module == "MyLogin"
 
 
 def test_parse_struct_multiple_conformances():
-    results = parse_interface_text(SAMPLE, "iOSLogin")
+    results = parse_interface_text(SAMPLE, "MyLogin")
     conforms = [r for r in results if r.type_name == "LoginViewModel"]
     protos = {r.protocol_name for r in conforms}
     assert protos == {"ObservableObject", "Identifiable"}
 
 
 def test_parse_class_with_superclass_and_protocol():
-    results = parse_interface_text(SAMPLE, "iOSLogin")
+    results = parse_interface_text(SAMPLE, "MyLogin")
     conforms = [r for r in results if r.type_name == "BaseController"]
     protos = {r.protocol_name for r in conforms}
     # UIViewController is superclass → filtered out
@@ -61,13 +61,13 @@ def test_parse_class_with_superclass_and_protocol():
 
 
 def test_parse_protocol_no_conformances():
-    results = parse_interface_text(SAMPLE, "iOSLogin")
+    results = parse_interface_text(SAMPLE, "MyLogin")
     conforms = [r for r in results if r.type_name == "LoginServiceProtocol"]
     assert len(conforms) == 0  # protocol doesn't inherit from anything here
 
 
 def test_parse_extension_conformance():
-    results = parse_interface_text(SAMPLE, "iOSLogin")
+    results = parse_interface_text(SAMPLE, "MyLogin")
     conforms = [r for r in results if r.type_name == "String"]
     assert len(conforms) == 1
     assert conforms[0].protocol_name == "MyCustomProtocol"

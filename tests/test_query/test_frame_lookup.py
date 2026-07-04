@@ -12,7 +12,7 @@ def test_parse_frame_text_extracts_owner_and_symbol():
 
 
 def test_parse_frame_text_extracts_objc_owner_and_selector():
-    parsed = parse_frame_text("0 Zoom -[AudioRouteController handleRouteChange:] + 32")
+    parsed = parse_frame_text("0 MyApp -[AudioRouteController handleRouteChange:] + 32")
     assert parsed == {
         "qualified_name": "-[AudioRouteController handleRouteChange:]",
         "owner": "AudioRouteController",
@@ -23,9 +23,9 @@ def test_parse_frame_text_extracts_objc_owner_and_selector():
 
 
 def test_parse_frame_text_extracts_swift_owner_and_symbol():
-    parsed = parse_frame_text("0 Zoom Zoom.AudioRouteController.startCall() + 12")
+    parsed = parse_frame_text("0 MyApp MyApp.AudioRouteController.startCall() + 12")
     assert parsed == {
-        "qualified_name": "Zoom.AudioRouteController.startCall()",
+        "qualified_name": "MyApp.AudioRouteController.startCall()",
         "owner": "AudioRouteController",
         "symbol": "startCall()",
         "signature": "",
@@ -36,8 +36,8 @@ def test_parse_frame_text_extracts_swift_owner_and_symbol():
 def test_parse_frame_text_rejects_multi_line_input():
     raw = (
         "Thread 41 Crashed:\n"
-        "0 Zoom ns::Owner::crashHere() + 0\n"
-        "1 Zoom ssb::thread_wrapper_t::process_msg(unsigned int)"
+        "0 MyApp ns::Owner::crashHere() + 0\n"
+        "1 MyApp ssb::thread_wrapper_t::process_msg(unsigned int)"
     )
 
     assert parse_frame_text(raw) is None
@@ -51,7 +51,7 @@ def test_lookup_frame_rejects_multi_line_input(tmp_db_path):
 
     result = lookup_frame(
         conn,
-        "Thread 41 Crashed:\n0 Zoom ns::Owner::crashHere() + 0",
+        "Thread 41 Crashed:\n0 MyApp ns::Owner::crashHere() + 0",
     )
 
     assert result["status"]["outcome"] == "parse_failed"
@@ -101,15 +101,15 @@ def test_lookup_frame_prefers_objc_owner_when_method_only_matches_are_ambiguous(
     ]:
         conn.execute(
             f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', precise_id: '', name: 'handleRouteChange:', "
-            f"language: 'objc', kind: 'method', module: 'Zoom', file_path: '{file_path}', "
+            f"language: 'objc', kind: 'method', module: 'MyApp', file_path: '{file_path}', "
             f"signature: '', container_usr: '{container}', access_level: 'internal', "
             f"origin: 'derived', is_generated: false}})"
         )
 
     result = lookup_frame(
         conn,
-        "0 Zoom -[AudioRouteController handleRouteChange:] + 32",
-        target="Zoom",
+        "0 MyApp -[AudioRouteController handleRouteChange:] + 32",
+        target="MyApp",
         language="objc",
     )
 
@@ -127,32 +127,32 @@ def test_lookup_frame_prefers_swift_owner_when_method_only_matches_are_ambiguous
     for sid, usr, container, file_path in [
         (
             "share_method",
-            "s:Zoom.ShareRouteController.startCall",
-            "s:Zoom.ShareRouteController",
+            "s:MyApp.ShareRouteController.startCall",
+            "s:MyApp.ShareRouteController",
             "/src/share/ShareRouteController.swift",
         ),
         (
             "audio_method",
-            "s:Zoom.AudioRouteController.startCall",
-            "s:Zoom.AudioRouteController",
+            "s:MyApp.AudioRouteController.startCall",
+            "s:MyApp.AudioRouteController",
             "/src/audio/AudioRouteController.swift",
         ),
     ]:
         conn.execute(
             f"CREATE (:Symbol {{id: '{sid}', usr: '{usr}', precise_id: '', name: 'startCall()', "
-            f"language: 'swift', kind: 'method', module: 'Zoom', file_path: '{file_path}', "
+            f"language: 'swift', kind: 'method', module: 'MyApp', file_path: '{file_path}', "
             f"signature: '', container_usr: '{container}', access_level: 'internal', "
             f"origin: 'derived', is_generated: false}})"
         )
 
     result = lookup_frame(
         conn,
-        "0 Zoom Zoom.AudioRouteController.startCall() + 12",
-        target="Zoom",
+        "0 MyApp MyApp.AudioRouteController.startCall() + 12",
+        target="MyApp",
         language="swift",
     )
 
-    expected_usr = "s:Zoom.AudioRouteController.startCall"
+    expected_usr = "s:MyApp.AudioRouteController.startCall"
     assert result["resolution"]["method"]["usr"] == expected_usr
     assert result["next"][0]["args"]["usr"] == expected_usr
     conn.close()

@@ -87,20 +87,20 @@ class TestChunkSymbols:
 
         conn.execute(
             "CREATE (:Symbol {"
-            "id: 's:ZoomOnly', usr: 's:ZoomOnly', name: 'ZoomOnly', kind: 'function',"
-            "signature: 'func ZoomOnly()'"
+            "id: 's:MyAppOnly', usr: 's:MyAppOnly', name: 'MyAppOnly', kind: 'function',"
+            "signature: 'func MyAppOnly()'"
             "})",
         )
         conn.execute(
             "CREATE (:Symbol {"
-            "id: 's:ZPSOnly', usr: 's:ZPSOnly', name: 'ZPSOnly', kind: 'function',"
-            "signature: 'func ZPSOnly()'"
+            "id: 's:MyPSOnly', usr: 's:MyPSOnly', name: 'MyPSOnly', kind: 'function',"
+            "signature: 'func MyPSOnly()'"
             "})",
         )
 
         chunks = chunk_symbols(conn, "compiled-scope")
 
-        assert {c.owner_usr for c in chunks} == {"s:ZoomOnly", "s:ZPSOnly"}
+        assert {c.owner_usr for c in chunks} == {"s:MyAppOnly", "s:MyPSOnly"}
         assert all(c.chunk_id.startswith("compiled-scope:") for c in chunks)
 
         conn.close()

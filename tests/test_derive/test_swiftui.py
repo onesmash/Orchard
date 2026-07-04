@@ -106,13 +106,13 @@ def test_viewtree_reads_whole_compiled_scope(tmp_db_path):
 
     conn.execute(
         "CREATE (:Symbol {id: 's:Root', usr: 's:Root', precise_id: '', "
-        "name: 'RootView', language: 'swift', kind: 'struct', module: 'Zoom', "
+        "name: 'RootView', language: 'swift', kind: 'struct', module: 'MyApp', "
         "file_path: '', signature: '', container_usr: '', "
         "access_level: 'public', origin: 'symbolgraph', is_generated: false})"
     )
     conn.execute(
         "CREATE (:Symbol {id: 's:Child', usr: 's:Child', precise_id: '', "
-        "name: 'ChildView', language: 'swift', kind: 'struct', module: 'zPSApp', "
+        "name: 'ChildView', language: 'swift', kind: 'struct', module: 'MyPSApp', "
         "file_path: '', signature: '', container_usr: '', "
         "access_level: 'public', origin: 'symbolgraph', is_generated: false})"
     )
@@ -124,7 +124,7 @@ def test_viewtree_reads_whole_compiled_scope(tmp_db_path):
     )
     conn.execute(
         "CREATE (:Symbol {id: 's:Root:body', usr: 's:Root:body', precise_id: '', "
-        "name: 'body', language: 'swift', kind: 'instanceProperty', module: 'Zoom', "
+        "name: 'body', language: 'swift', kind: 'instanceProperty', module: 'MyApp', "
         "file_path: '', signature: '', container_usr: '', "
         "access_level: 'public', origin: 'symbolgraph', is_generated: false})"
     )

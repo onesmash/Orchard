@@ -95,7 +95,7 @@ def test_cmd_ingest_returns_lock_busy_when_lock_held(monkeypatch, tmp_path):
         cli_mod.cmd_ingest([
             "--index-store", "/tmp/IndexStore",
             "--project-dir", str(tmp_path),
-            "--target", "Zoom",
+            "--target", "MyApp",
             "--db", str(graph_db),
         ])
     except SystemExit as exc:
@@ -224,7 +224,7 @@ def test_indexd_client_register_session_sends_context(monkeypatch):
             "projectDir": "/tmp/project",
             "indexStorePath": "/tmp/DataStore",
             "graphDBPath": "/tmp/graph.db",
-            "targetArgs": ["Zoom", "zPSApp"],
+            "targetArgs": ["MyApp", "MyPSApp"],
         },
     )
 
@@ -263,7 +263,7 @@ def test_cmd_ingest_registers_session_after_scope_resolution(monkeypatch, tmp_pa
 
     assert registered["store_path"] == "/tmp/DataStore"
     assert registered["graph_db_path"] == str(graph_db)
-    assert registered["ingest_context"]["targetArgs"] == ["Zoom", "zPSApp"]
+    assert registered["ingest_context"]["targetArgs"] == ["MyApp", "MyPSApp"]
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -371,8 +371,8 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       projectDir: "/tmp/project",
       indexStorePath: "/tmp/store",
       graphDBPath: "/tmp/graph.db",
-      targetArgs: ["Zoom"],
-      entryTarget: "Zoom",
+      targetArgs: ["MyApp"],
+      entryTarget: "MyApp",
       incremental: true
     )
 
@@ -381,7 +381,7 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       graphDBPath: "/tmp/graph.db",
       ingestContext: context,
       sourceRoots: ["/tmp/project"],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: nil
     )
     let second = try manager.registerOrRefreshSession(
@@ -389,7 +389,7 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       graphDBPath: "/tmp/graph.db",
       ingestContext: context,
       sourceRoots: ["/tmp/project"],
-      targets: ["Zoom", "zPSApp"],
+      targets: ["MyApp", "MyPSApp"],
       dylibPath: nil
     )
 
@@ -519,16 +519,16 @@ func testLatestRegistrationWinsForRememberedContext() throws {
     projectDir: "/tmp/project",
     indexStorePath: "/tmp/store",
     graphDBPath: "/tmp/graph.db",
-    targetArgs: ["Zoom"],
-    entryTarget: "Zoom",
+    targetArgs: ["MyApp"],
+    entryTarget: "MyApp",
     incremental: true
   )
   let second = IngestContext(
     projectDir: "/tmp/project",
     indexStorePath: "/tmp/store",
     graphDBPath: "/tmp/graph.db",
-    targetArgs: ["Zoom", "zPSApp"],
-    entryTarget: "Zoom",
+    targetArgs: ["MyApp", "MyPSApp"],
+    entryTarget: "MyApp",
     incremental: true
   )
 
@@ -537,7 +537,7 @@ func testLatestRegistrationWinsForRememberedContext() throws {
     graphDBPath: "/tmp/graph.db",
     ingestContext: first,
     sourceRoots: ["/tmp/project"],
-    targets: ["Zoom"],
+    targets: ["MyApp"],
     dylibPath: nil
   )
   let refreshed = try manager.registerOrRefreshSession(
@@ -545,11 +545,11 @@ func testLatestRegistrationWinsForRememberedContext() throws {
     graphDBPath: "/tmp/graph.db",
     ingestContext: second,
     sourceRoots: ["/tmp/project"],
-    targets: ["Zoom", "zPSApp"],
+    targets: ["MyApp", "MyPSApp"],
     dylibPath: nil
   )
 
-  XCTAssertEqual(refreshed.session.ingestContext.targetArgs, ["Zoom", "zPSApp"])
+  XCTAssertEqual(refreshed.session.ingestContext.targetArgs, ["MyApp", "MyPSApp"])
 }
 ```
 
@@ -791,7 +791,7 @@ def test_register_session_returns_none_when_indexd_unavailable(monkeypatch):
     monkeypatch.setattr("orchard.ingest.indexstore._indexd_socket_path", lambda: "/tmp/indexd.sock")
     monkeypatch.setattr("orchard.ingest.indexstore._ensure_indexd_running", lambda _socket: False)
     from orchard.ingest.indexstore import register_indexd_session
-    assert register_indexd_session("/tmp/store", "/tmp/graph.db", {"targetArgs": ["Zoom"]}) is None
+    assert register_indexd_session("/tmp/store", "/tmp/graph.db", {"targetArgs": ["MyApp"]}) is None
 ```
 
 ```python
@@ -803,7 +803,7 @@ def test_cmd_ingest_emits_lock_busy_marker(monkeypatch, capsys, tmp_path):
     graph_db.write_text("", encoding="utf-8")
     monkeypatch.setattr("orchard.ingest.lock.try_acquire_graph_db_lock", lambda _path: None)
     try:
-      cli_mod.cmd_ingest(["--index-store", "/tmp/store", "--project-dir", str(tmp_path), "--target", "Zoom", "--db", str(graph_db)])
+      cli_mod.cmd_ingest(["--index-store", "/tmp/store", "--project-dir", str(tmp_path), "--target", "MyApp", "--db", str(graph_db)])
     except SystemExit:
       pass
     assert "INGEST_LOCK_BUSY" in capsys.readouterr().err

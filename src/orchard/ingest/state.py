@@ -6,7 +6,7 @@ unchanged files.
 State format::
 
     {
-        "compiled_targets": ["Zoom", "iOSLogin"],
+        "compiled_targets": ["MyApp", "MyLogin"],
         "last_ingest_ts": 1719400000.123,
         "index_store_path": "/path/to/IndexStore"
     }

@@ -37,13 +37,13 @@ def test_discover_symbolgraph_paths_empty_when_none(tmp_path):
 def test_match_derived_data_prefers_larger_datastore_when_access_times_tie(tmp_path, monkeypatch):
     dd_root = tmp_path / "DerivedData"
     dd_root.mkdir()
-    project = tmp_path / "Zoom.xcodeproj"
+    project = tmp_path / "MyApp.xcodeproj"
     project.mkdir()
 
     monkeypatch.setattr("orchard.build.xcode_settings.get_derived_data_path", lambda: str(dd_root))
 
-    small = dd_root / "Zoom-small"
-    big = dd_root / "Zoom-big"
+    small = dd_root / "MyApp-small"
+    big = dd_root / "MyApp-big"
     for entry, size in ((small, 8), (big, 64)):
         datastore = entry / "Index.noindex" / "DataStore"
         datastore.mkdir(parents=True)
@@ -65,16 +65,16 @@ def test_match_derived_data_prefers_larger_datastore_when_access_times_tie(tmp_p
 def test_match_derived_data_accepts_nested_xcodeproj_for_workspace(tmp_path, monkeypatch):
     dd_root = tmp_path / "DerivedData"
     dd_root.mkdir()
-    workspace = tmp_path / "ios-client" / "Zoom.xcworkspace"
+    workspace = tmp_path / "myapp" / "MyApp.xcworkspace"
     workspace.parent.mkdir(parents=True)
     workspace.mkdir()
-    nested_project = workspace.parent / "Zoom" / "Zoom.xcodeproj"
+    nested_project = workspace.parent / "MyApp" / "MyApp.xcodeproj"
     nested_project.parent.mkdir()
     nested_project.mkdir()
 
     monkeypatch.setattr("orchard.build.xcode_settings.get_derived_data_path", lambda: str(dd_root))
 
-    entry = dd_root / "Zoom-aenx"
+    entry = dd_root / "MyApp-aenx"
     datastore = entry / "Index.noindex" / "DataStore"
     datastore.mkdir(parents=True)
     (entry / "info.plist").write_bytes(
@@ -230,53 +230,53 @@ def test_compiled_discovery_uses_top_level_build_dirs_even_with_child_targets(tm
 
 
 def test_resolve_source_roots_for_targets_reads_matching_xcodeproj_from_neighbor_repo(tmp_path):
-    ios_client = tmp_path / "ios-client"
-    workspace = ios_client / "Zoom.xcworkspace"
+    myapp_dir = tmp_path / "myapp"
+    workspace = myapp_dir / "MyApp.xcworkspace"
     workspace.parent.mkdir(parents=True)
     workspace.mkdir()
 
-    zpsapp = tmp_path / "client-app-video" / "zPSApp" / "auto_ios" / "zPSApp.xcodeproj"
-    zpsapp.mkdir(parents=True)
-    (zpsapp / "project.pbxproj").write_text(
+    mypsapp = tmp_path / "client-app-video" / "MyPSApp" / "auto_ios" / "MyPSApp.xcodeproj"
+    mypsapp.mkdir(parents=True)
+    (mypsapp / "project.pbxproj").write_text(
         """
 /* Begin PBXNativeTarget section */
-    111111111111111111111111 /* zPSApp */ = {
+    111111111111111111111111 /* MyPSApp */ = {
         isa = PBXNativeTarget;
-        name = zPSApp;
+        name = MyPSApp;
         buildPhases = (
-            ZPS_PHASE /* Sources */,
+            MYPS_PHASE /* Sources */,
         );
     };
 /* End PBXNativeTarget section */
 
 /* Begin PBXSourcesBuildPhase section */
-    ZPS_PHASE /* Sources */ = {
+    MYPS_PHASE /* Sources */ = {
         isa = PBXSourcesBuildPhase;
         files = (
-            ZPS_CPP_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */,
-            ZPS_H_BUILD_FILE /* CPSAudioDeviceRunCtx.h in Sources */,
+            MYPS_CPP_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */,
+            MYPS_H_BUILD_FILE /* CPSAudioDeviceRunCtx.h in Sources */,
         );
     };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXBuildFile section */
-    ZPS_CPP_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */ = {
+    MYPS_CPP_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */ = {
         isa = PBXBuildFile;
-        fileRef = ZPS_CPP_FILE /* CPSAudioDeviceRunCtx.cpp */;
+        fileRef = MYPS_CPP_FILE /* CPSAudioDeviceRunCtx.cpp */;
     };
-    ZPS_H_BUILD_FILE /* CPSAudioDeviceRunCtx.h in Sources */ = {
+    MYPS_H_BUILD_FILE /* CPSAudioDeviceRunCtx.h in Sources */ = {
         isa = PBXBuildFile;
-        fileRef = ZPS_H_FILE /* CPSAudioDeviceRunCtx.h */;
+        fileRef = MYPS_H_FILE /* CPSAudioDeviceRunCtx.h */;
     };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-    ZPS_CPP_FILE /* CPSAudioDeviceRunCtx.cpp */ = {
+    MYPS_CPP_FILE /* CPSAudioDeviceRunCtx.cpp */ = {
         isa = PBXFileReference;
         path = src/Media/Audio/Device/CPSAudioDeviceRunCtx.cpp;
         sourceTree = SOURCE_ROOT;
     };
-    ZPS_H_FILE /* CPSAudioDeviceRunCtx.h */ = {
+    MYPS_H_FILE /* CPSAudioDeviceRunCtx.h */ = {
         isa = PBXFileReference;
         path = src/Media/Audio/Device/CPSAudioDeviceRunCtx.h;
         sourceTree = SOURCE_ROOT;
@@ -286,7 +286,7 @@ def test_resolve_source_roots_for_targets_reads_matching_xcodeproj_from_neighbor
         encoding="utf-8",
     )
 
-    unrelated = ios_client / "Other.xcodeproj"
+    unrelated = myapp_dir / "Other.xcodeproj"
     unrelated.mkdir()
     (unrelated / "project.pbxproj").write_text(
         """
@@ -308,66 +308,66 @@ def test_resolve_source_roots_for_targets_reads_matching_xcodeproj_from_neighbor
         encoding="utf-8",
     )
 
-    roots = resolve_source_roots_for_targets(str(workspace), ["zPSApp"])
+    roots = resolve_source_roots_for_targets(str(workspace), ["MyPSApp"])
 
-    assert roots == [str(zpsapp.parent.parent / "src")]
+    assert roots == [str(mypsapp.parent.parent / "src")]
 
 
 def test_resolve_source_roots_for_targets_filters_to_requested_target_sources(tmp_path):
-    project = tmp_path / "Zoom.xcodeproj"
+    project = tmp_path / "MyApp.xcodeproj"
     project.mkdir()
     (project / "project.pbxproj").write_text(
         """
 /* Begin PBXNativeTarget section */
-    AAA /* Zoom */ = {
+    AAA /* MyApp */ = {
         isa = PBXNativeTarget;
-        name = Zoom;
+        name = MyApp;
         buildPhases = (
-            ZOOM_PHASE /* Sources */,
+            MYAPP_PHASE /* Sources */,
         );
     };
-    BBB /* zPSApp */ = {
+    BBB /* MyPSApp */ = {
         isa = PBXNativeTarget;
-        name = zPSApp;
+        name = MyPSApp;
         buildPhases = (
-            ZPS_PHASE /* Sources */,
+            MYPS_PHASE /* Sources */,
         );
     };
 /* End PBXNativeTarget section */
 
 /* Begin PBXSourcesBuildPhase section */
-    ZOOM_PHASE /* Sources */ = {
+    MYAPP_PHASE /* Sources */ = {
         isa = PBXSourcesBuildPhase;
         files = (
-            ZOOM_BUILD_FILE /* AppDelegate.swift in Sources */,
+            MYAPP_BUILD_FILE /* AppDelegate.swift in Sources */,
         );
     };
-    ZPS_PHASE /* Sources */ = {
+    MYPS_PHASE /* Sources */ = {
         isa = PBXSourcesBuildPhase;
         files = (
-            ZPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */,
+            MYPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */,
         );
     };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXBuildFile section */
-    ZOOM_BUILD_FILE /* AppDelegate.swift in Sources */ = {
+    MYAPP_BUILD_FILE /* AppDelegate.swift in Sources */ = {
         isa = PBXBuildFile;
-        fileRef = ZOOM_FILE /* AppDelegate.swift */;
+        fileRef = MYAPP_FILE /* AppDelegate.swift */;
     };
-    ZPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */ = {
+    MYPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */ = {
         isa = PBXBuildFile;
-        fileRef = ZPS_FILE /* CPSAudioDeviceRunCtx.cpp */;
+        fileRef = MYPS_FILE /* CPSAudioDeviceRunCtx.cpp */;
     };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-    ZOOM_FILE /* AppDelegate.swift */ = {
+    MYAPP_FILE /* AppDelegate.swift */ = {
         isa = PBXFileReference;
         path = app/AppDelegate.swift;
         sourceTree = SOURCE_ROOT;
     };
-    ZPS_FILE /* CPSAudioDeviceRunCtx.cpp */ = {
+    MYPS_FILE /* CPSAudioDeviceRunCtx.cpp */ = {
         isa = PBXFileReference;
         path = src/Media/Audio/Device/CPSAudioDeviceRunCtx.cpp;
         sourceTree = SOURCE_ROOT;
@@ -377,50 +377,50 @@ def test_resolve_source_roots_for_targets_filters_to_requested_target_sources(tm
         encoding="utf-8",
     )
 
-    roots = resolve_source_roots_for_targets(str(project), ["zPSApp"])
+    roots = resolve_source_roots_for_targets(str(project), ["MyPSApp"])
 
     assert roots == [str(tmp_path / "src")]
 
 
 def test_resolve_source_roots_for_targets_merges_workspace_and_sibling_target_roots(tmp_path):
-    ios_client = tmp_path / "ios-client"
-    workspace = ios_client / "Zoom.xcworkspace"
+    myapp_dir = tmp_path / "myapp"
+    workspace = myapp_dir / "MyApp.xcworkspace"
     workspace.parent.mkdir(parents=True)
     workspace.mkdir()
 
-    zoom_project = ios_client / "Zoom" / "Zoom.xcodeproj"
-    zoom_project.mkdir(parents=True)
-    (zoom_project / "project.pbxproj").write_text(
+    myapp_project = myapp_dir / "MyApp" / "MyApp.xcodeproj"
+    myapp_project.mkdir(parents=True)
+    (myapp_project / "project.pbxproj").write_text(
         """
 /* Begin PBXNativeTarget section */
-    ZOOM_TARGET /* iZipow */ = {
+    MYAPP_TARGET /* MyProduct */ = {
         isa = PBXNativeTarget;
-        name = iZipow;
-        productName = Zoom;
+        name = MyProduct;
+        productName = MyApp;
         buildPhases = (
-            ZOOM_PHASE /* Sources */,
+            MYAPP_PHASE /* Sources */,
         );
     };
 /* End PBXNativeTarget section */
 
 /* Begin PBXSourcesBuildPhase section */
-    ZOOM_PHASE /* Sources */ = {
+    MYAPP_PHASE /* Sources */ = {
         isa = PBXSourcesBuildPhase;
         files = (
-            ZOOM_BUILD_FILE /* MobileRTC.m in Sources */,
+            MYAPP_BUILD_FILE /* MobileRTC.m in Sources */,
         );
     };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXBuildFile section */
-    ZOOM_BUILD_FILE /* MobileRTC.m in Sources */ = {
+    MYAPP_BUILD_FILE /* MobileRTC.m in Sources */ = {
         isa = PBXBuildFile;
-        fileRef = ZOOM_FILE /* MobileRTC.m */;
+        fileRef = MYAPP_FILE /* MobileRTC.m */;
     };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-    ZOOM_FILE /* MobileRTC.m */ = {
+    MYAPP_FILE /* MobileRTC.m */ = {
         isa = PBXFileReference;
         path = sdk/MobileRTC.m;
         sourceTree = GROUP;
@@ -430,38 +430,38 @@ def test_resolve_source_roots_for_targets_merges_workspace_and_sibling_target_ro
         encoding="utf-8",
     )
 
-    zpsapp = tmp_path / "client-app-video" / "zPSApp" / "auto_ios" / "zPSApp.xcodeproj"
-    zpsapp.mkdir(parents=True)
-    (zpsapp / "project.pbxproj").write_text(
+    mypsapp = tmp_path / "client-app-video" / "MyPSApp" / "auto_ios" / "MyPSApp.xcodeproj"
+    mypsapp.mkdir(parents=True)
+    (mypsapp / "project.pbxproj").write_text(
         """
 /* Begin PBXNativeTarget section */
-    ZPS_TARGET /* zPSApp */ = {
+    MYPS_TARGET /* MyPSApp */ = {
         isa = PBXNativeTarget;
-        name = zPSApp;
+        name = MyPSApp;
         buildPhases = (
-            ZPS_PHASE /* Sources */,
+            MYPS_PHASE /* Sources */,
         );
     };
 /* End PBXNativeTarget section */
 
 /* Begin PBXSourcesBuildPhase section */
-    ZPS_PHASE /* Sources */ = {
+    MYPS_PHASE /* Sources */ = {
         isa = PBXSourcesBuildPhase;
         files = (
-            ZPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */,
+            MYPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */,
         );
     };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXBuildFile section */
-    ZPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */ = {
+    MYPS_BUILD_FILE /* CPSAudioDeviceRunCtx.cpp in Sources */ = {
         isa = PBXBuildFile;
-        fileRef = ZPS_FILE /* CPSAudioDeviceRunCtx.cpp */;
+        fileRef = MYPS_FILE /* CPSAudioDeviceRunCtx.cpp */;
     };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-    ZPS_FILE /* CPSAudioDeviceRunCtx.cpp */ = {
+    MYPS_FILE /* CPSAudioDeviceRunCtx.cpp */ = {
         isa = PBXFileReference;
         path = src/Media/Audio/Device/CPSAudioDeviceRunCtx.cpp;
         sourceTree = SOURCE_ROOT;
@@ -512,23 +512,23 @@ def test_resolve_source_roots_for_targets_merges_workspace_and_sibling_target_ro
         encoding="utf-8",
     )
 
-    roots = resolve_source_roots_for_targets(str(workspace), ["Zoom", "zPSApp"])
+    roots = resolve_source_roots_for_targets(str(workspace), ["MyApp", "MyPSApp"])
 
     assert roots == [
-        str(zpsapp.parent.parent / "src"),
-        str(ios_client),
+        str(mypsapp.parent.parent / "src"),
+        str(myapp_dir),
     ]
 
 
 def test_resolve_source_roots_for_targets_supports_inline_pbx_objects(tmp_path):
-    project = tmp_path / "zPSApp.xcodeproj"
+    project = tmp_path / "MyPSApp.xcodeproj"
     project.mkdir()
     (project / "project.pbxproj").write_text(
         """
 /* Begin PBXNativeTarget section */
-    TARGET /* zPSApp */ = {
+    TARGET /* MyPSApp */ = {
         isa = PBXNativeTarget;
-        name = zPSApp;
+        name = MyPSApp;
         buildPhases = (
             SOURCES /* Sources */,
         );
@@ -555,20 +555,20 @@ def test_resolve_source_roots_for_targets_supports_inline_pbx_objects(tmp_path):
         encoding="utf-8",
     )
 
-    roots = resolve_source_roots_for_targets(str(project), ["zPSApp"])
+    roots = resolve_source_roots_for_targets(str(project), ["MyPSApp"])
 
     assert roots == [str(tmp_path / "src")]
 
 
 def test_resolve_source_roots_for_targets_collapses_generated_ios_project_to_repo_src(tmp_path):
-    project = tmp_path / "zPSApp" / "auto_ios" / "zPSApp.xcodeproj"
+    project = tmp_path / "MyPSApp" / "auto_ios" / "MyPSApp.xcodeproj"
     project.mkdir(parents=True)
     (project / "project.pbxproj").write_text(
         """
 /* Begin PBXNativeTarget section */
-    TARGET /* zPSApp */ = {
+    TARGET /* MyPSApp */ = {
         isa = PBXNativeTarget;
-        name = zPSApp;
+        name = MyPSApp;
         buildPhases = (
             SOURCES /* Sources */,
         );
@@ -612,6 +612,6 @@ def test_resolve_source_roots_for_targets_collapses_generated_ios_project_to_rep
         encoding="utf-8",
     )
 
-    roots = resolve_source_roots_for_targets(str(project), ["zPSApp"])
+    roots = resolve_source_roots_for_targets(str(project), ["MyPSApp"])
 
-    assert roots == [str(tmp_path / "zPSApp" / "src")]
+    assert roots == [str(tmp_path / "MyPSApp" / "src")]

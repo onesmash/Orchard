@@ -119,14 +119,14 @@ def test_read_index_store_passes_targets_and_source_roots_to_cli(monkeypatch):
 
     read_index_store(
         "/fake/store",
-        scope_id="Zoom",
-        source_roots=["/repo/ios-client", "/repo/client-app-common"],
-        targets=["Zoom", "zPSApp"],
+        scope_id="MyApp",
+        source_roots=["/repo/myapp", "/repo/myapp-common"],
+        targets=["MyApp", "MyPSApp"],
     )
 
     assert captured["index_store_path"] == "/fake/store"
-    assert captured["source_roots"] == ["/repo/ios-client", "/repo/client-app-common"]
-    assert captured["targets"] == ["Zoom", "zPSApp"]
+    assert captured["source_roots"] == ["/repo/myapp", "/repo/myapp-common"]
+    assert captured["targets"] == ["MyApp", "MyPSApp"]
     assert captured["emit_occurrences"] is False
     assert captured["dump_unit_output_paths"] is False
 
@@ -140,7 +140,7 @@ def test_read_index_store_passes_emit_occurrences_to_cli(monkeypatch):
 
     monkeypatch.setattr("orchard.ingest.indexstore._run_cli", fake_run_cli)
 
-    read_index_store("/fake/store", scope_id="Zoom", emit_occurrences=True)
+    read_index_store("/fake/store", scope_id="MyApp", emit_occurrences=True)
 
     assert captured["emit_occurrences"][0] is True
 
@@ -233,7 +233,7 @@ def test_read_index_store_prefers_indexd_when_socket_is_configured(monkeypatch):
         "/fake/store",
         scope_id="MyTarget",
         source_roots=["/src"],
-        targets=["Zoom"],
+        targets=["MyApp"],
     )
 
     assert captured["index_store_path"] == "/fake/store"
@@ -311,7 +311,7 @@ def test_dump_unit_output_paths_prefers_indexd_when_socket_is_configured(monkeyp
         lambda *a, **kw: pytest.fail("CLI fallback should not run"),
     )
 
-    mappings = dump_unit_output_paths("/fake/store", source_roots=["/src"], targets=["Zoom"])
+    mappings = dump_unit_output_paths("/fake/store", source_roots=["/src"], targets=["MyApp"])
 
     assert mappings == [
         {
@@ -494,12 +494,12 @@ def test_run_indexd_uses_client_warm_and_scan(monkeypatch):
         "/fake/store",
         source_roots=["/src"],
         incremental_since=123.0,
-        targets=["Zoom"],
+        targets=["MyApp"],
         emit_occurrences=False,
     )
 
     assert captured["socket_path"] == "/tmp/indexd.sock"
-    assert captured["warm"] == ("/fake/store", ["/src"], ["Zoom"], None, None)
+    assert captured["warm"] == ("/fake/store", ["/src"], ["MyApp"], None, None)
     assert captured["scan"] == ("session-1", 123.0, False)
     assert len(lines) == 1
     assert '"all":["f"]' in stderr
@@ -528,21 +528,21 @@ def test_run_indexd_passes_registration_context_to_warm(monkeypatch):
         "projectDir": "/repo",
         "indexStorePath": "/fake/store",
         "graphDBPath": "/repo/.orchard/graph.db",
-        "targetArgs": ["Zoom"],
-        "entryTarget": "Zoom",
+        "targetArgs": ["MyApp"],
+        "entryTarget": "MyApp",
         "incremental": True,
     }
     _run_indexd(
         "/fake/store",
         source_roots=["/src"],
-        targets=["Zoom"],
+        targets=["MyApp"],
         registration_context=context,
     )
 
     assert captured["warm"] == (
         "/fake/store",
         ["/src"],
-        ["Zoom"],
+        ["MyApp"],
         "/repo/.orchard/graph.db",
         context,
     )
@@ -561,14 +561,14 @@ def test_indexd_client_register_session_sends_expected_payload(monkeypatch, tmp_
     result = client.register_session(
         store_path=str(tmp_path / ".." / "IndexStore"),
         graph_db_path=str(tmp_path / ".." / "graph.db"),
-        source_roots=["/repo/ios-client"],
-        targets=["Zoom", "zPSApp"],
+        source_roots=["/repo/myapp"],
+        targets=["MyApp", "MyPSApp"],
         context={
             "projectDir": str(tmp_path / ".." / "project"),
             "indexStorePath": str(tmp_path / ".." / "IndexStore"),
             "graphDBPath": str(tmp_path / ".." / "graph.db"),
-            "targetArgs": ["Zoom", "zPSApp"],
-            "entryTarget": "Zoom",
+            "targetArgs": ["MyApp", "MyPSApp"],
+            "entryTarget": "MyApp",
             "incremental": True,
         },
     )
@@ -580,14 +580,14 @@ def test_indexd_client_register_session_sends_expected_payload(monkeypatch, tmp_
         "params": {
             "storePath": str((tmp_path / ".." / "IndexStore").resolve()),
             "graphDBPath": str((tmp_path / ".." / "graph.db").resolve()),
-            "sourceRoots": ["/repo/ios-client"],
-            "targets": ["Zoom", "zPSApp"],
+            "sourceRoots": ["/repo/myapp"],
+            "targets": ["MyApp", "MyPSApp"],
             "context": {
                 "projectDir": str((tmp_path / ".." / "project").resolve()),
                 "indexStorePath": str((tmp_path / ".." / "IndexStore").resolve()),
                 "graphDBPath": str((tmp_path / ".." / "graph.db").resolve()),
-                "targetArgs": ["Zoom", "zPSApp"],
-                "entryTarget": "Zoom",
+                "targetArgs": ["MyApp", "MyPSApp"],
+                "entryTarget": "MyApp",
                 "incremental": True,
             },
         },
@@ -607,14 +607,14 @@ def test_indexd_client_warm_sends_registration_context_when_provided(monkeypatch
     session_id = client.warm(
         index_store_path=str(tmp_path / ".." / "IndexStore"),
         source_roots=["/src"],
-        targets=["Zoom", "zPSApp"],
+        targets=["MyApp", "MyPSApp"],
         graph_db_path=str(tmp_path / ".." / "graph.db"),
         context={
             "projectDir": str(tmp_path / ".." / "project"),
             "indexStorePath": str(tmp_path / ".." / "IndexStore"),
             "graphDBPath": str(tmp_path / ".." / "graph.db"),
-            "targetArgs": ["Zoom", "zPSApp"],
-            "entryTarget": "Zoom",
+            "targetArgs": ["MyApp", "MyPSApp"],
+            "entryTarget": "MyApp",
             "incremental": True,
         },
     )
@@ -626,14 +626,14 @@ def test_indexd_client_warm_sends_registration_context_when_provided(monkeypatch
         "params": {
             "storePath": str((tmp_path / ".." / "IndexStore").resolve()),
             "sourceRoots": ["/src"],
-            "targets": ["Zoom", "zPSApp"],
+            "targets": ["MyApp", "MyPSApp"],
             "graphDBPath": str((tmp_path / ".." / "graph.db").resolve()),
             "context": {
                 "projectDir": str((tmp_path / ".." / "project").resolve()),
                 "indexStorePath": str((tmp_path / ".." / "IndexStore").resolve()),
                 "graphDBPath": str((tmp_path / ".." / "graph.db").resolve()),
-                "targetArgs": ["Zoom", "zPSApp"],
-                "entryTarget": "Zoom",
+                "targetArgs": ["MyApp", "MyPSApp"],
+                "entryTarget": "MyApp",
                 "incremental": True,
             },
         },
@@ -660,8 +660,8 @@ def test_register_indexd_session_returns_none_without_autostart_when_socket_is_u
         project_dir="/repo",
         index_store_path="/repo/DerivedData/IndexStore",
         graph_db_path="/repo/.orchard/graph.db",
-        target_args=["Zoom"],
-        entry_target="Zoom",
+        target_args=["MyApp"],
+        entry_target="MyApp",
         incremental=True,
     )
 
@@ -680,8 +680,8 @@ def test_register_indexd_session_returns_none_when_socket_is_missing(monkeypatch
         project_dir="/repo",
         index_store_path="/repo/DerivedData/IndexStore",
         graph_db_path="/repo/.orchard/graph.db",
-        target_args=["Zoom"],
-        entry_target="Zoom",
+        target_args=["MyApp"],
+        entry_target="MyApp",
         incremental=True,
     )
 
@@ -707,7 +707,7 @@ def test_warm_indexd_session_async_starts_background_thread_without_blocking(mon
         lambda *_args, **_kwargs: pytest.fail("warm should not run synchronously on caller thread"),
     )
 
-    assert warm_indexd_session_async("/fake/store", ["/src"], ["Zoom"]) is True
+    assert warm_indexd_session_async("/fake/store", ["/src"], ["MyApp"]) is True
     assert actions == [("thread_init", "orchard-indexd-warm", True), "thread_start"]
 
 
@@ -739,14 +739,14 @@ def test_warm_indexd_session_async_passes_registration_context(monkeypatch):
         "projectDir": "/repo",
         "indexStorePath": "/fake/store",
         "graphDBPath": "/repo/.orchard/graph.db",
-        "targetArgs": ["Zoom"],
-        "entryTarget": "Zoom",
+        "targetArgs": ["MyApp"],
+        "entryTarget": "MyApp",
         "incremental": True,
     }
     assert warm_indexd_session_async(
         "/fake/store",
         ["/src"],
-        ["Zoom"],
+        ["MyApp"],
         graph_db_path="/repo/.orchard/graph.db",
         context=context,
     ) is True
@@ -755,7 +755,7 @@ def test_warm_indexd_session_async_passes_registration_context(monkeypatch):
     assert captured["warm"] == (
         "/fake/store",
         ["/src"],
-        ["Zoom"],
+        ["MyApp"],
         "/repo/.orchard/graph.db",
         context,
     )
@@ -781,14 +781,14 @@ def test_warm_indexd_session_runs_synchronously(monkeypatch):
         "projectDir": "/repo",
         "indexStorePath": "/fake/store",
         "graphDBPath": "/repo/.orchard/graph.db",
-        "targetArgs": ["Zoom"],
-        "entryTarget": "Zoom",
+        "targetArgs": ["MyApp"],
+        "entryTarget": "MyApp",
         "incremental": True,
     }
     assert warm_indexd_session(
         "/fake/store",
         ["/src"],
-        ["Zoom"],
+        ["MyApp"],
         graph_db_path="/repo/.orchard/graph.db",
         context=context,
     ) is True
@@ -797,7 +797,7 @@ def test_warm_indexd_session_runs_synchronously(monkeypatch):
     assert captured["warm"] == (
         "/fake/store",
         ["/src"],
-        ["Zoom"],
+        ["MyApp"],
         "/repo/.orchard/graph.db",
         context,
     )
@@ -813,7 +813,7 @@ def test_warm_indexd_session_async_logs_warm_success(monkeypatch):
         def warm(self, index_store_path, source_roots, targets, graph_db_path=None, context=None):
             assert index_store_path == "/fake/store"
             assert source_roots == ["/src"]
-            assert targets == ["Zoom", "zPSApp"]
+            assert targets == ["MyApp", "MyPSApp"]
             return "session-1"
 
     class InlineThread:
@@ -830,9 +830,9 @@ def test_warm_indexd_session_async_logs_warm_success(monkeypatch):
     monkeypatch.setattr("orchard.ingest.indexstore._IndexdClient", FakeClient)
     monkeypatch.setattr("orchard.ingest.indexstore._INDEXD_LOGGER.info", lambda msg, *args: events.append(("info", msg % args)))
 
-    assert warm_indexd_session_async("/fake/store", ["/src"], ["Zoom", "zPSApp"]) is True
+    assert warm_indexd_session_async("/fake/store", ["/src"], ["MyApp", "MyPSApp"]) is True
     assert events == [
-        ("info", "indexd warm ready store=/fake/store socket=/tmp/indexd.sock session_id=session-1 targets=Zoom,zPSApp"),
+        ("info", "indexd warm ready store=/fake/store socket=/tmp/indexd.sock session_id=session-1 targets=MyApp,MyPSApp"),
     ]
 
 
@@ -970,17 +970,17 @@ def test_run_cli_expands_repeated_targets_and_source_roots(monkeypatch):
 
     _run_cli(
         "/fake/store",
-        source_roots=["/repo/ios-client", "/repo/client-app-common"],
-        targets=["Zoom", "zPSApp"],
+        source_roots=["/repo/myapp", "/repo/myapp-common"],
+        targets=["MyApp", "MyPSApp"],
     )
 
     assert captured["cmd"] == [
         "/bin/orchard-indexstore-reader",
         "/fake/store",
-        "--source-root", "/repo/ios-client",
-        "--source-root", "/repo/client-app-common",
-        "--target", "Zoom",
-        "--target", "zPSApp",
+        "--source-root", "/repo/myapp",
+        "--source-root", "/repo/myapp-common",
+        "--target", "MyApp",
+        "--target", "MyPSApp",
     ]
 
 

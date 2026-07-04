@@ -20,7 +20,7 @@ def conn_with_mixed_symbols(tmp_db_path):
     for sym_id, name, kind in symbols:
         conn.execute(
             f"CREATE (:Symbol {{id: '{sym_id}', usr: '{sym_id}', precise_id: '', "
-            f"name: '{name}', language: 'objc', kind: '{kind}', module: 'Zoom', "
+            f"name: '{name}', language: 'objc', kind: '{kind}', module: 'MyApp', "
             f"file_path: '/src/meeting.mm', signature: '', "
             f"container_usr: '', access_level: 'internal', origin: 'derived', "
             f"is_generated: false}})"
@@ -111,7 +111,7 @@ def test_search_name_marks_symbols_outside_workspace_root(conn_with_mixed_symbol
 
     conn_with_mixed_symbols.execute(
         "CREATE (:BuildSnapshot {id: 'b1', build_system: 'xcodebuild', "
-        "workspace_root: '/workspace/ios-client', derived_data_path: '', "
+        "workspace_root: '/workspace/myapp', derived_data_path: '', "
         "index_store_path: '', toolchain_id: '', commit_sha: '', "
         "created_at: '2026-06-30T00:00:00Z', build_config_hash: '', sdk: '', "
         "configuration: ''})"
@@ -119,7 +119,7 @@ def test_search_name_marks_symbols_outside_workspace_root(conn_with_mixed_symbol
     conn_with_mixed_symbols.execute(
         "CREATE (:Symbol {id: 's:ExternalRunCtx', usr: 's:ExternalRunCtx', "
         "precise_id: '', name: 'ExternalRunCtx', language: 'cxx', "
-        "kind: 'cxx.class', module: 'Zoom', "
+        "kind: 'cxx.class', module: 'MyApp', "
         "file_path: '/workspace/client-app-video/audio.cpp', signature: '', "
         "container_usr: '', access_level: 'internal', origin: 'derived', "
         "is_generated: false})"

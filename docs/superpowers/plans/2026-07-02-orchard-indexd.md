@@ -258,13 +258,13 @@ func testIndexdSessionManagerReusesSessionForSameStorePath() throws {
   let first = try manager.getOrCreateSession(
     storePath: "/tmp/a/Index.noindex/DataStore",
     sourceRoots: ["/tmp/a/src"],
-    targets: ["Zoom"],
+    targets: ["MyApp"],
     dylibPath: "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/libIndexStore.dylib"
   )
   let second = try manager.getOrCreateSession(
     storePath: "/tmp/a/Index.noindex/DataStore",
     sourceRoots: ["/tmp/a/src"],
-    targets: ["Zoom"],
+    targets: ["MyApp"],
     dylibPath: "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/libIndexStore.dylib"
   )
 
@@ -398,7 +398,7 @@ def test_read_index_store_falls_back_to_cli_when_indexd_unavailable(monkeypatch)
     monkeypatch.setattr(mod, "_run_indexd", lambda *args, **kwargs: (_ for _ in ()).throw(ConnectionError("down")))
     monkeypatch.setattr(mod, "_run_cli", lambda *args, **kwargs: (["{\"kind\":\"symbol\",\"usr\":\"u\",\"name\":\"f\",\"symbol_kind\":\"function\",\"language\":\"swift\",\"module\":\"M\",\"file\":\"/tmp/F.swift\"}"], "{\"changed\": [], \"all\": []}"))
 
-    result, file_status, _ = mod.read_index_store("/tmp/store", "Zoom")
+    result, file_status, _ = mod.read_index_store("/tmp/store", "MyApp")
     assert len(result.symbols) == 1
     assert file_status == {"changed": [], "all": []}
 ```
@@ -477,7 +477,7 @@ git add src/orchard/ingest/indexstore.py src/orchard/cli.py tests/test_docs/test
 git commit -m "feat: add indexd client fallback for ingest"
 ```
 
-### Task 4: Benchmark and Validate Reuse on the Zoom Client Fixture
+### Task 4: Benchmark and Validate Reuse on the Example Client Fixture
 
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-02-orchard-indexd.md`
@@ -505,21 +505,21 @@ cd /Users/hui.xu/SourceCode/orchard2/swift/orchard-indexstore-reader
 
 Expected: process stays alive and prints a ready log line.
 
-- [ ] **Step 3: Measure first and second ingest runs on the Zoom fixture**
+- [ ] **Step 3: Measure first and second ingest runs on the example fixture**
 
 Run:
 
 ```bash
 cd /Users/hui.xu/SourceCode/orchard2
 env PYTHONPATH=src ORCHARD_INDEXD_SOCKET=/tmp/orchard-indexd.sock /usr/bin/time -lp python -m orchard.cli ingest \
-  --project-dir /Users/hui.xu/Work/SourceCode/Zoom_Client/ios-client \
-  --index-store /Users/hui.xu/Work/SourceCode/Xcode/Zoom-aenxrzlrezagxyceipvtgcusrnlu/Index.noindex/DataStore \
-  --target Zoom \
+  --project-dir /path/to/your/xcode-project \
+  --index-store /path/to/DerivedData/YourProject-abc/Index.noindex/DataStore \
+  --target MyApp \
   --full
 env PYTHONPATH=src ORCHARD_INDEXD_SOCKET=/tmp/orchard-indexd.sock /usr/bin/time -lp python -m orchard.cli ingest \
-  --project-dir /Users/hui.xu/Work/SourceCode/Zoom_Client/ios-client \
-  --index-store /Users/hui.xu/Work/SourceCode/Xcode/Zoom-aenxrzlrezagxyceipvtgcusrnlu/Index.noindex/DataStore \
-  --target Zoom \
+  --project-dir /path/to/your/xcode-project \
+  --index-store /path/to/DerivedData/YourProject-abc/Index.noindex/DataStore \
+  --target MyApp \
   --full
 ```
 
@@ -535,9 +535,9 @@ Run:
 ```bash
 cd /Users/hui.xu/SourceCode/orchard2
 env PYTHONPATH=src ORCHARD_INDEXD_SOCKET=/tmp/does-not-exist.sock python -m orchard.cli ingest \
-  --project-dir /Users/hui.xu/Work/SourceCode/Zoom_Client/ios-client \
-  --index-store /Users/hui.xu/Work/SourceCode/Xcode/Zoom-aenxrzlrezagxyceipvtgcusrnlu/Index.noindex/DataStore \
-  --target Zoom \
+  --project-dir /path/to/your/xcode-project \
+  --index-store /path/to/DerivedData/YourProject-abc/Index.noindex/DataStore \
+  --target MyApp \
   --incremental
 ```
 
@@ -574,7 +574,7 @@ git commit -m "docs: record orchard indexd benchmark results"
 
 ## Self-Review
 
-- Spec coverage: this plan covers Swift helper extraction, daemon introduction, Python fallback, and benchmark validation against the profiled Zoom fixture.
+- Spec coverage: this plan covers Swift helper extraction, daemon introduction, Python fallback, and benchmark validation against the profiled example fixture.
 - Placeholder scan: every task names exact files, concrete commands, and concrete signatures or snippets to implement.
 - Type consistency: the plan consistently uses `IndexdSession`, `SessionManager`, `_run_indexd`, `_run_reader`, and `scanCanonicalSymbolsAndRelations`.
 

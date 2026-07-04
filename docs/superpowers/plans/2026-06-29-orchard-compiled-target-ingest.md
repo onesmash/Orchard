@@ -1,445 +1,445 @@
-# Orchard Compiled-Target Ingest Implementation Plan
+#["MyApp", "MyPSApp"]Orchard["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-Target["MyApp", "MyPSApp"]Ingest["MyApp", "MyPSApp"]I["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]le["MyApp", "MyPSApp"]entati["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]lan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>["MyApp", "MyPSApp"]**F["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]agentic["MyApp", "MyPSApp"]w["MyApp", "MyPSApp"]rkers:**["MyApp", "MyPSApp"]REQUIRED["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]UB-["MyApp", "MyPSApp"]KILL:["MyApp", "MyPSApp"]Use["MyApp", "MyPSApp"]su["MyApp", "MyPSApp"]er["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]wers:subagent-driven-devel["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ent["MyApp", "MyPSApp"](rec["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ended)["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]su["MyApp", "MyPSApp"]er["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]wers:executing-["MyApp", "MyPSApp"]lans["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]le["MyApp", "MyPSApp"]ent["MyApp", "MyPSApp"]this["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]lan["MyApp", "MyPSApp"]task-by-task.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]use["MyApp", "MyPSApp"]checkb["MyApp", "MyPSApp"]x["MyApp", "MyPSApp"](`-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]`)["MyApp", "MyPSApp"]syntax["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]tracking.
 
-**Goal:** Make `orchard ingest` index the targets actually compiled in the current Xcode build by deriving scope from `Intermediates.noindex` and filtering IndexStore records by compiled files instead of `source-root`.
+**G["MyApp", "MyPSApp"]al:**["MyApp", "MyPSApp"]Make["MyApp", "MyPSApp"]`["MyApp", "MyPSApp"]rchard["MyApp", "MyPSApp"]ingest`["MyApp", "MyPSApp"]index["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]actually["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]current["MyApp", "MyPSApp"]Xc["MyApp", "MyPSApp"]de["MyApp", "MyPSApp"]build["MyApp", "MyPSApp"]by["MyApp", "MyPSApp"]deriving["MyApp", "MyPSApp"]sc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`Inter["MyApp", "MyPSApp"]ediates.n["MyApp", "MyPSApp"]index`["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]filtering["MyApp", "MyPSApp"]Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]rec["MyApp", "MyPSApp"]rds["MyApp", "MyPSApp"]by["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]files["MyApp", "MyPSApp"]instead["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]`s["MyApp", "MyPSApp"]urce-r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`.
 
-**Architecture:** Keep `IndexStore` as the symbol/relationship source, but derive ingest scope from the matching `DerivedData` root. Add build-discovery helpers that resolve compiled targets and compiled source files from `Intermediates.noindex`, then feed that scope into `cmd_ingest` and `read_index_store(...)` so multi-target ingest is automatic and state/fast-path behavior follows the compiled target set.
+**["MyApp", "MyPSApp"]rchitecture:**["MyApp", "MyPSApp"]Kee["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]re`["MyApp", "MyPSApp"]as["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]sy["MyApp", "MyPSApp"]b["MyApp", "MyPSApp"]l/relati["MyApp", "MyPSApp"]nshi["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]urce["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]but["MyApp", "MyPSApp"]derive["MyApp", "MyPSApp"]ingest["MyApp", "MyPSApp"]sc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]atching["MyApp", "MyPSApp"]`DerivedData`["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]dd["MyApp", "MyPSApp"]build-disc["MyApp", "MyPSApp"]very["MyApp", "MyPSApp"]hel["MyApp", "MyPSApp"]ers["MyApp", "MyPSApp"]that["MyApp", "MyPSApp"]res["MyApp", "MyPSApp"]lve["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]urce["MyApp", "MyPSApp"]files["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`Inter["MyApp", "MyPSApp"]ediates.n["MyApp", "MyPSApp"]index`["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]then["MyApp", "MyPSApp"]feed["MyApp", "MyPSApp"]that["MyApp", "MyPSApp"]sc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]int["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`c["MyApp", "MyPSApp"]d_ingest`["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]`read_index_st["MyApp", "MyPSApp"]re(...)`["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ulti-target["MyApp", "MyPSApp"]ingest["MyApp", "MyPSApp"]is["MyApp", "MyPSApp"]aut["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]atic["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]state/fast-["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]behavi["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]ll["MyApp", "MyPSApp"]ws["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]target["MyApp", "MyPSApp"]set.
 
-**Tech Stack:** Python 3.12, Orchard CLI, Ladybug graph DB, pytest
+**Tech["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]tack:**["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]3.12["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Orchard["MyApp", "MyPSApp"]CLI["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Ladybug["MyApp", "MyPSApp"]gra["MyApp", "MyPSApp"]h["MyApp", "MyPSApp"]DB["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest
 
-## Global Constraints
+##["MyApp", "MyPSApp"]Gl["MyApp", "MyPSApp"]bal["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]nstraints
 
-- Remove `--source-root` from `orchard ingest` CLI parsing and behavior.
-- Do not add any new user-facing CLI flags for this feature.
-- Treat `Intermediates.noindex` as the default Xcode build-scope authority.
-- Keep `IndexStore` as the source of symbols, occurrences, and relationships.
-- Only promote compiled project targets to ingest targets; do not promote SDK / `pcm` / framework internals.
-- Preserve the existing multi-target state merge and placeholder reuse fixes.
-- Keep TDD strict: each task starts red, goes green with minimal code, then commits.
+-["MyApp", "MyPSApp"]Re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ve["MyApp", "MyPSApp"]`--s["MyApp", "MyPSApp"]urce-r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`["MyApp", "MyPSApp"]rchard["MyApp", "MyPSApp"]ingest`["MyApp", "MyPSApp"]CLI["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]arsing["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]behavi["MyApp", "MyPSApp"]r.
+-["MyApp", "MyPSApp"]D["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]add["MyApp", "MyPSApp"]any["MyApp", "MyPSApp"]new["MyApp", "MyPSApp"]user-facing["MyApp", "MyPSApp"]CLI["MyApp", "MyPSApp"]flags["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]this["MyApp", "MyPSApp"]feature.
+-["MyApp", "MyPSApp"]Treat["MyApp", "MyPSApp"]`Inter["MyApp", "MyPSApp"]ediates.n["MyApp", "MyPSApp"]index`["MyApp", "MyPSApp"]as["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]default["MyApp", "MyPSApp"]Xc["MyApp", "MyPSApp"]de["MyApp", "MyPSApp"]build-sc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]auth["MyApp", "MyPSApp"]rity.
+-["MyApp", "MyPSApp"]Kee["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]re`["MyApp", "MyPSApp"]as["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]urce["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]sy["MyApp", "MyPSApp"]b["MyApp", "MyPSApp"]ls["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ccurrences["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]relati["MyApp", "MyPSApp"]nshi["MyApp", "MyPSApp"]s.
+-["MyApp", "MyPSApp"]Only["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ject["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ingest["MyApp", "MyPSApp"]targets;["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]DK["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]`["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]`["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]fra["MyApp", "MyPSApp"]ew["MyApp", "MyPSApp"]rk["MyApp", "MyPSApp"]internals.
+-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]reserve["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]existing["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ulti-target["MyApp", "MyPSApp"]state["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]erge["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]laceh["MyApp", "MyPSApp"]lder["MyApp", "MyPSApp"]reuse["MyApp", "MyPSApp"]fixes.
+-["MyApp", "MyPSApp"]Kee["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]TDD["MyApp", "MyPSApp"]strict:["MyApp", "MyPSApp"]each["MyApp", "MyPSApp"]task["MyApp", "MyPSApp"]starts["MyApp", "MyPSApp"]red["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]g["MyApp", "MyPSApp"]es["MyApp", "MyPSApp"]green["MyApp", "MyPSApp"]with["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ini["MyApp", "MyPSApp"]al["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]de["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]then["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]its.
 
 ---
 
-### Task 1: Add compiled-target and compiled-file discovery helpers
+###["MyApp", "MyPSApp"]Task["MyApp", "MyPSApp"]1:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]dd["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-target["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-file["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]very["MyApp", "MyPSApp"]hel["MyApp", "MyPSApp"]ers
 
 **Files:**
-- Modify: `src/orchard/build/xcode_settings.py`
-- Modify: `tests/test_build/test_discovery.py`
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`src/["MyApp", "MyPSApp"]rchard/build/xc["MyApp", "MyPSApp"]de_settings.["MyApp", "MyPSApp"]y`
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`tests/test_build/test_disc["MyApp", "MyPSApp"]very.["MyApp", "MyPSApp"]y`
 
 **Interfaces:**
-- Consumes: `match_derived_data(project_path: str) -> list[tuple[str, str, str]]`
-- Produces:
-  - `infer_derived_data_root(index_store_path: str) -> str | None`
-  - `discover_compiled_targets(derived_data_root: str) -> list[str]`
-  - `discover_compiled_files(derived_data_root: str, targets: list[str]) -> list[str]`
+-["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]nsu["MyApp", "MyPSApp"]es:["MyApp", "MyPSApp"]`["MyApp", "MyPSApp"]atch_derived_data(["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ject_["MyApp", "MyPSApp"]ath:["MyApp", "MyPSApp"]str)["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]list[tu["MyApp", "MyPSApp"]le[str["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]str]]`
+-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]duces:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]`infer_derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t(index_st["MyApp", "MyPSApp"]re_["MyApp", "MyPSApp"]ath:["MyApp", "MyPSApp"]str)["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]|["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne`
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]`disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets(derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t:["MyApp", "MyPSApp"]str)["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]list[str]`
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]`disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files(derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t:["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]targets:["MyApp", "MyPSApp"]list[str])["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]list[str]`
 
-- [ ] **Step 1: Write the failing tests**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]1:["MyApp", "MyPSApp"]Write["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]failing["MyApp", "MyPSApp"]tests**
 
-```python
-def test_infer_derived_data_root_from_index_store_path(tmp_path):
-    dd = tmp_path / "Zoom-abc"
-    store = dd / "Index.noindex" / "DataStore"
-    store.mkdir(parents=True)
+```["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n
+def["MyApp", "MyPSApp"]test_infer_derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t_fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_index_st["MyApp", "MyPSApp"]re_["MyApp", "MyPSApp"]ath(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]dd["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-abc["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]st["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]dd["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Index.n["MyApp", "MyPSApp"]index["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Data["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]st["MyApp", "MyPSApp"]re.["MyApp", "MyPSApp"]kdir(["MyApp", "MyPSApp"]arents=True)
 
-    from orchard.build.xcode_settings import infer_derived_data_root
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]infer_derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t
 
-    assert infer_derived_data_root(str(store)) == str(dd)
-
-
-def test_discover_compiled_targets_reads_build_dirs(tmp_path):
-    dd = tmp_path / "Zoom-abc"
-    inter = dd / "Build" / "Intermediates.noindex"
-    (inter / "Zoom.build").mkdir(parents=True)
-    (inter / "zPSApp.build").mkdir()
-    (inter / "Debug-iphonesimulator").mkdir()
-
-    from orchard.build.xcode_settings import discover_compiled_targets
-
-    assert discover_compiled_targets(str(dd)) == ["Zoom", "zPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]assert["MyApp", "MyPSApp"]infer_derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t(str(st["MyApp", "MyPSApp"]re))["MyApp", "MyPSApp"]==["MyApp", "MyPSApp"]str(dd)
 
 
-def test_discover_compiled_files_collects_sources_for_selected_targets(tmp_path):
-    dd = tmp_path / "Zoom-abc"
-    inter = dd / "Build" / "Intermediates.noindex"
-    zoom = inter / "Zoom.build" / "Objects-normal" / "arm64"
-    zps = inter / "zPSApp.build" / "Objects-normal" / "arm64"
-    zoom.mkdir(parents=True)
-    zps.mkdir(parents=True)
-    (zoom / "Zoom.d").write_text("/repo/ios-client/Zoom/AppDelegate.m \\\n/repo/ios-client/Zoom/ViewController.m\n")
-    (zps / "CPSContext.d").write_text("/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp\n")
+def["MyApp", "MyPSApp"]test_disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets_reads_build_dirs(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]dd["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-abc["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]inter["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]dd["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Build["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Inter["MyApp", "MyPSApp"]ediates.n["MyApp", "MyPSApp"]index["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"](inter["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].build["MyApp", "MyPSApp"]).["MyApp", "MyPSApp"]kdir(["MyApp", "MyPSApp"]arents=True)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"](inter["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].build["MyApp", "MyPSApp"]).["MyApp", "MyPSApp"]kdir()
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"](inter["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Debug-i["MyApp", "MyPSApp"]h["MyApp", "MyPSApp"]nesi["MyApp", "MyPSApp"]ulat["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]).["MyApp", "MyPSApp"]kdir()
 
-    from orchard.build.xcode_settings import discover_compiled_files
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets
 
-    assert sorted(discover_compiled_files(str(dd), ["Zoom", "zPSApp"])) == [
-        "/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp",
-        "/repo/ios-client/Zoom/AppDelegate.m",
-        "/repo/ios-client/Zoom/ViewController.m",
-    ]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]assert["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets(str(dd))["MyApp", "MyPSApp"]==["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]]
+
+
+def["MyApp", "MyPSApp"]test_disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files_c["MyApp", "MyPSApp"]llects_s["MyApp", "MyPSApp"]urces_f["MyApp", "MyPSApp"]r_selected_targets(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]dd["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-abc["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]inter["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]dd["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Build["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Inter["MyApp", "MyPSApp"]ediates.n["MyApp", "MyPSApp"]index["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]inter["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].build["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Objects-n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]al["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ar["MyApp", "MyPSApp"]64["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]inter["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].build["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Objects-n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]al["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ar["MyApp", "MyPSApp"]64["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].["MyApp", "MyPSApp"]kdir(["MyApp", "MyPSApp"]arents=True)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]s.["MyApp", "MyPSApp"]kdir(["MyApp", "MyPSApp"]arents=True)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"](["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].d["MyApp", "MyPSApp"]).write_text(["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Delegate.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]\\\n/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/ViewC["MyApp", "MyPSApp"]ntr["MyApp", "MyPSApp"]ller.["MyApp", "MyPSApp"]\n["MyApp", "MyPSApp"])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"](["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]ntext.d["MyApp", "MyPSApp"]).write_text(["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/src/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/C["MyApp", "MyPSApp"]ntext/MyC["MyApp", "MyPSApp"]ntext.c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]\n["MyApp", "MyPSApp"])
+
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files
+
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]assert["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]rted(disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files(str(dd)["MyApp", "MyPSApp"]["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]]))["MyApp", "MyPSApp"]==["MyApp", "MyPSApp"][
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/src/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/C["MyApp", "MyPSApp"]ntext/MyC["MyApp", "MyPSApp"]ntext.c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Delegate.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/ViewC["MyApp", "MyPSApp"]ntr["MyApp", "MyPSApp"]ller.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]]
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]2:["MyApp", "MyPSApp"]Run["MyApp", "MyPSApp"]tests["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]verify["MyApp", "MyPSApp"]they["MyApp", "MyPSApp"]fail**
 
-Run: `uv run pytest -q tests/test_build/test_discovery.py -k "derived_data_root or discover_compiled_targets or discover_compiled_files"`
+Run:["MyApp", "MyPSApp"]`uv["MyApp", "MyPSApp"]run["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest["MyApp", "MyPSApp"]-q["MyApp", "MyPSApp"]tests/test_build/test_disc["MyApp", "MyPSApp"]very.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]-k["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files["MyApp", "MyPSApp"]`
 
-Expected: FAIL with import or attribute errors for the new helper functions.
+Ex["MyApp", "MyPSApp"]ected:["MyApp", "MyPSApp"]F["MyApp", "MyPSApp"]IL["MyApp", "MyPSApp"]with["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]attribute["MyApp", "MyPSApp"]err["MyApp", "MyPSApp"]rs["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]new["MyApp", "MyPSApp"]hel["MyApp", "MyPSApp"]er["MyApp", "MyPSApp"]functi["MyApp", "MyPSApp"]ns.
 
-- [ ] **Step 3: Write minimal implementation**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]3:["MyApp", "MyPSApp"]Write["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ini["MyApp", "MyPSApp"]al["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]le["MyApp", "MyPSApp"]entati["MyApp", "MyPSApp"]n**
 
-```python
-def infer_derived_data_root(index_store_path: str) -> str | None:
-    p = Path(index_store_path).resolve()
-    parts = p.parts
-    try:
-        idx = parts.index("Index.noindex")
-    except ValueError:
-        return None
-    return str(Path(*parts[:idx]))
-
-
-def discover_compiled_targets(derived_data_root: str) -> list[str]:
-    inter = Path(derived_data_root) / "Build" / "Intermediates.noindex"
-    if not inter.is_dir():
-        return []
-    names = []
-    for entry in inter.iterdir():
-        if entry.is_dir() and entry.name.endswith(".build"):
-            names.append(entry.name[:-6])
-    return sorted(dict.fromkeys(names))
+```["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n
+def["MyApp", "MyPSApp"]infer_derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t(index_st["MyApp", "MyPSApp"]re_["MyApp", "MyPSApp"]ath:["MyApp", "MyPSApp"]str)["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]|["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ath(index_st["MyApp", "MyPSApp"]re_["MyApp", "MyPSApp"]ath).res["MyApp", "MyPSApp"]lve()
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]arts["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].["MyApp", "MyPSApp"]arts
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]try:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]idx["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]arts.index(["MyApp", "MyPSApp"]Index.n["MyApp", "MyPSApp"]index["MyApp", "MyPSApp"])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]exce["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]ValueErr["MyApp", "MyPSApp"]r:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]return["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]return["MyApp", "MyPSApp"]str(["MyApp", "MyPSApp"]ath(*["MyApp", "MyPSApp"]arts[:idx]))
 
 
-def discover_compiled_files(derived_data_root: str, targets: list[str]) -> list[str]:
-    inter = Path(derived_data_root) / "Build" / "Intermediates.noindex"
-    files: set[str] = set()
-    for target in targets:
-        for depfile in inter.rglob(f"{target}.build/**/*.d"):
-            for line in depfile.read_text(encoding="utf-8", errors="ignore").splitlines():
-                normalized = line.replace("\\", " ").strip()
-                for token in normalized.split():
-                    if token.startswith("/") and "." in Path(token).name:
-                        files.add(token)
-    return sorted(files)
+def["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets(derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t:["MyApp", "MyPSApp"]str)["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]list[str]:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]inter["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ath(derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t)["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Build["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Inter["MyApp", "MyPSApp"]ediates.n["MyApp", "MyPSApp"]index["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]if["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]inter.is_dir():
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]return["MyApp", "MyPSApp"][]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]na["MyApp", "MyPSApp"]es["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"][]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]entry["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]inter.iterdir():
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]if["MyApp", "MyPSApp"]entry.is_dir()["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]entry.na["MyApp", "MyPSApp"]e.endswith(["MyApp", "MyPSApp"].build["MyApp", "MyPSApp"]):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]na["MyApp", "MyPSApp"]es.a["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]end(entry.na["MyApp", "MyPSApp"]e[:-6])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]return["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]rted(dict.fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]keys(na["MyApp", "MyPSApp"]es))
+
+
+def["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files(derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t:["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]targets:["MyApp", "MyPSApp"]list[str])["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]list[str]:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]inter["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ath(derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t)["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Build["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Inter["MyApp", "MyPSApp"]ediates.n["MyApp", "MyPSApp"]index["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]files:["MyApp", "MyPSApp"]set[str]["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]set()
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]target["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]targets:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]de["MyApp", "MyPSApp"]file["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]inter.rgl["MyApp", "MyPSApp"]b(f["MyApp", "MyPSApp"]{target}.build/**/*.d["MyApp", "MyPSApp"]):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]line["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]de["MyApp", "MyPSApp"]file.read_text(enc["MyApp", "MyPSApp"]ding=["MyApp", "MyPSApp"]utf-8["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]err["MyApp", "MyPSApp"]rs=["MyApp", "MyPSApp"]ign["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]).s["MyApp", "MyPSApp"]litlines():
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ali["MyApp", "MyPSApp"]ed["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]line.re["MyApp", "MyPSApp"]lace(["MyApp", "MyPSApp"]\\["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]).stri["MyApp", "MyPSApp"]()
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]ken["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ali["MyApp", "MyPSApp"]ed.s["MyApp", "MyPSApp"]lit():
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]if["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]ken.startswith(["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"])["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ath(t["MyApp", "MyPSApp"]ken).na["MyApp", "MyPSApp"]e:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]files.add(t["MyApp", "MyPSApp"]ken)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]return["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]rted(files)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]4:["MyApp", "MyPSApp"]Run["MyApp", "MyPSApp"]tests["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]verify["MyApp", "MyPSApp"]they["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ass**
 
-Run: `uv run pytest -q tests/test_build/test_discovery.py -k "derived_data_root or discover_compiled_targets or discover_compiled_files"`
+Run:["MyApp", "MyPSApp"]`uv["MyApp", "MyPSApp"]run["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest["MyApp", "MyPSApp"]-q["MyApp", "MyPSApp"]tests/test_build/test_disc["MyApp", "MyPSApp"]very.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]-k["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files["MyApp", "MyPSApp"]`
 
-Expected: PASS
+Ex["MyApp", "MyPSApp"]ected:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
 
-- [ ] **Step 5: Commit**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]5:["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]it**
 
 ```bash
-git add src/orchard/build/xcode_settings.py tests/test_build/test_discovery.py
-git commit -m "feat: discover compiled targets from DerivedData"
+git["MyApp", "MyPSApp"]add["MyApp", "MyPSApp"]src/["MyApp", "MyPSApp"]rchard/build/xc["MyApp", "MyPSApp"]de_settings.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]tests/test_build/test_disc["MyApp", "MyPSApp"]very.["MyApp", "MyPSApp"]y
+git["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]it["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]feat:["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]DerivedData["MyApp", "MyPSApp"]
 ```
 
-### Task 2: Replace `source-root` filtering with compiled-file filtering in IndexStore ingest
+###["MyApp", "MyPSApp"]Task["MyApp", "MyPSApp"]2:["MyApp", "MyPSApp"]Re["MyApp", "MyPSApp"]lace["MyApp", "MyPSApp"]`s["MyApp", "MyPSApp"]urce-r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`["MyApp", "MyPSApp"]filtering["MyApp", "MyPSApp"]with["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-file["MyApp", "MyPSApp"]filtering["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]ingest
 
 **Files:**
-- Modify: `src/orchard/ingest/indexstore.py`
-- Modify: `tests/test_ingest/test_indexstore_real_cli.py`
-- Modify: `tests/test_acceptance.py`
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`src/["MyApp", "MyPSApp"]rchard/ingest/indexst["MyApp", "MyPSApp"]re.["MyApp", "MyPSApp"]y`
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`tests/test_ingest/test_indexst["MyApp", "MyPSApp"]re_real_cli.["MyApp", "MyPSApp"]y`
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y`
 
 **Interfaces:**
-- Consumes:
-  - `discover_compiled_files(derived_data_root: str, targets: list[str]) -> list[str]`
-  - `read_index_store(index_store_path: str, target_id: str, incremental_since: float | None = None)`
-- Produces:
-  - `read_index_store(..., allowed_files: set[str] | None = None) -> tuple[IndexStoreResult, dict | None]`
-  - filtering semantics based on exact compiled-file membership
+-["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]nsu["MyApp", "MyPSApp"]es:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]`disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files(derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t:["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]targets:["MyApp", "MyPSApp"]list[str])["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]list[str]`
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]`read_index_st["MyApp", "MyPSApp"]re(index_st["MyApp", "MyPSApp"]re_["MyApp", "MyPSApp"]ath:["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]target_id:["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]incre["MyApp", "MyPSApp"]ental_since:["MyApp", "MyPSApp"]fl["MyApp", "MyPSApp"]at["MyApp", "MyPSApp"]|["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne)`
+-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]duces:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]`read_index_st["MyApp", "MyPSApp"]re(...["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files:["MyApp", "MyPSApp"]set[str]["MyApp", "MyPSApp"]|["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne)["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]tu["MyApp", "MyPSApp"]le[Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]reResult["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]dict["MyApp", "MyPSApp"]|["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne]`
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]filtering["MyApp", "MyPSApp"]se["MyApp", "MyPSApp"]antics["MyApp", "MyPSApp"]based["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]exact["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-file["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]bershi["MyApp", "MyPSApp"]
 
-- [ ] **Step 1: Write the failing tests**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]1:["MyApp", "MyPSApp"]Write["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]failing["MyApp", "MyPSApp"]tests**
 
-```python
-def test_read_index_store_filters_by_allowed_files(monkeypatch):
-    from orchard.ingest.indexstore import read_index_store
+```["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n
+def["MyApp", "MyPSApp"]test_read_index_st["MyApp", "MyPSApp"]re_filters_by_all["MyApp", "MyPSApp"]wed_files(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.ingest.indexst["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]read_index_st["MyApp", "MyPSApp"]re
 
-    def fake_run_cli(*_args, **_kwargs):
-        lines = [
-            '{"kind":"symbol","usr":"s:zoom","name":"Zoom","symbol_kind":"function","language":"objc","module":"Zoom","file":"/repo/ios-client/Zoom/AppDelegate.m"}',
-            '{"kind":"symbol","usr":"s:zps","name":"CPSContext","symbol_kind":"function","language":"cxx","module":"zPSApp","file":"/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp"}',
-        ]
-        return lines, ""
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]def["MyApp", "MyPSApp"]fake_run_cli(*_args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**_kwargs):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]lines["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"][
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]'{["MyApp", "MyPSApp"]kind["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]sy["MyApp", "MyPSApp"]b["MyApp", "MyPSApp"]l["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]usr["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]s:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]na["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]sy["MyApp", "MyPSApp"]b["MyApp", "MyPSApp"]l_kind["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]functi["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]language["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]bjc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]dule["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]file["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Delegate.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]}'["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]'{["MyApp", "MyPSApp"]kind["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]sy["MyApp", "MyPSApp"]b["MyApp", "MyPSApp"]l["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]usr["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]s:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]na["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]ntext["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]sy["MyApp", "MyPSApp"]b["MyApp", "MyPSApp"]l_kind["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]functi["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]language["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]cxx["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]dule["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]file["MyApp", "MyPSApp"]:["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/src/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/C["MyApp", "MyPSApp"]ntext/MyC["MyApp", "MyPSApp"]ntext.c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]}'["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]return["MyApp", "MyPSApp"]lines["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
 
-    monkeypatch.setattr("orchard.ingest.indexstore._run_cli", fake_run_cli)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.ingest.indexst["MyApp", "MyPSApp"]re._run_cli["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fake_run_cli)
 
-    result, _ = read_index_store(
-        "/fake/store",
-        target_id="Zoom",
-        allowed_files={"/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp"},
-    )
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]result["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]read_index_st["MyApp", "MyPSApp"]re(
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/fake/st["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]target_id=["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files={["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/src/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/C["MyApp", "MyPSApp"]ntext/MyC["MyApp", "MyPSApp"]ntext.c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]}["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"])
 
-    assert [s.usr for s in result.symbols] == ["s:zps"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]assert["MyApp", "MyPSApp"][s.usr["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]result.sy["MyApp", "MyPSApp"]b["MyApp", "MyPSApp"]ls]["MyApp", "MyPSApp"]==["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]s:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]]
 
 
-def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatch):
-    from orchard.cli import cmd_ingest
-    from orchard.ingest.indexstore import IndexStoreResult
+def["MyApp", "MyPSApp"]test_c["MyApp", "MyPSApp"]d_ingest_uses_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets_fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_derived_data(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.cli["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]d_ingest
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.ingest.indexst["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]reResult
 
-    captured = {}
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ca["MyApp", "MyPSApp"]tured["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]{}
 
-    class DummyConn:
-        def close(self):
-            return None
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]class["MyApp", "MyPSApp"]Du["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]yC["MyApp", "MyPSApp"]nn:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]def["MyApp", "MyPSApp"]cl["MyApp", "MyPSApp"]se(self):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]return["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne
 
-    def fake_read_index_store(index_store_path, target_id, incremental_since=None, allowed_files=None):
-        captured["target_id"] = target_id
-        captured["allowed_files"] = allowed_files
-        return IndexStoreResult(), None
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]def["MyApp", "MyPSApp"]fake_read_index_st["MyApp", "MyPSApp"]re(index_st["MyApp", "MyPSApp"]re_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]target_id["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]incre["MyApp", "MyPSApp"]ental_since=N["MyApp", "MyPSApp"]ne["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files=N["MyApp", "MyPSApp"]ne):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ca["MyApp", "MyPSApp"]tured[["MyApp", "MyPSApp"]target_id["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]target_id
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ca["MyApp", "MyPSApp"]tured[["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]return["MyApp", "MyPSApp"]Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]reResult()["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne
 
-    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
-    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(tmp_path / "Zoom.xcodeproj"))
-    monkeypatch.setattr("orchard.build.xcode_settings.match_derived_data", lambda _: [(str(tmp_path / "Zoom-abc"), str(tmp_path / "Zoom-abc/Index.noindex/DataStore"), "2026-06-29T00:00:00Z")])
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_files", lambda *_args: ["/repo/ios-client/Zoom/AppDelegate.m", "/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp"])
-    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
-    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
-    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
-    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.cli._c["MyApp", "MyPSApp"]nn["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*_args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**_kwargs:["MyApp", "MyPSApp"]Du["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]yC["MyApp", "MyPSApp"]nn())
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.find_xc["MyApp", "MyPSApp"]de_["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ject["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]_:["MyApp", "MyPSApp"]str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].xc["MyApp", "MyPSApp"]de["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]j["MyApp", "MyPSApp"]))
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.["MyApp", "MyPSApp"]atch_derived_data["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]_:["MyApp", "MyPSApp"][(str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-abc["MyApp", "MyPSApp"])["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-abc/Index.n["MyApp", "MyPSApp"]index/Data["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"])["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]2026-06-29T00:00:00["MyApp", "MyPSApp"]["MyApp", "MyPSApp"])])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]_:["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*_args:["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Delegate.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/src/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/C["MyApp", "MyPSApp"]ntext/MyC["MyApp", "MyPSApp"]ntext.c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.ingest.indexst["MyApp", "MyPSApp"]re.read_index_st["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fake_read_index_st["MyApp", "MyPSApp"]re)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ali["MyApp", "MyPSApp"]e.identity.u["MyApp", "MyPSApp"]sert_sy["MyApp", "MyPSApp"]b["MyApp", "MyPSApp"]ls["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**kwargs:["MyApp", "MyPSApp"]0)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ali["MyApp", "MyPSApp"]e.identity.u["MyApp", "MyPSApp"]sert_calls["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**kwargs:["MyApp", "MyPSApp"]0)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ali["MyApp", "MyPSApp"]e.identity.u["MyApp", "MyPSApp"]sert_indexst["MyApp", "MyPSApp"]re_rels["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**kwargs:["MyApp", "MyPSApp"]0)
 
-    cmd_ingest(["--project-dir", str(tmp_path), "--target", "Zoom"])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]d_ingest([["MyApp", "MyPSApp"]--["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ject-dir["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath)["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]--target["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]])
 
-    assert captured["target_id"] == "Zoom"
-    assert captured["allowed_files"] == {
-        "/repo/ios-client/Zoom/AppDelegate.m",
-        "/repo/client-app-video/zPSApp/src/App/Context/CPSContext.cpp",
-    }
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]assert["MyApp", "MyPSApp"]ca["MyApp", "MyPSApp"]tured[["MyApp", "MyPSApp"]target_id["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]==["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]assert["MyApp", "MyPSApp"]ca["MyApp", "MyPSApp"]tured[["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]==["MyApp", "MyPSApp"]{
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Delegate.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/src/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/C["MyApp", "MyPSApp"]ntext/MyC["MyApp", "MyPSApp"]ntext.c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]}
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]2:["MyApp", "MyPSApp"]Run["MyApp", "MyPSApp"]tests["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]verify["MyApp", "MyPSApp"]they["MyApp", "MyPSApp"]fail**
 
-Run: `uv run pytest -q tests/test_acceptance.py -k "compiled_targets_from_derived_data" tests/test_ingest/test_indexstore_real_cli.py -k "allowed_files"`
+Run:["MyApp", "MyPSApp"]`uv["MyApp", "MyPSApp"]run["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest["MyApp", "MyPSApp"]-q["MyApp", "MyPSApp"]tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]-k["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets_fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_derived_data["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]tests/test_ingest/test_indexst["MyApp", "MyPSApp"]re_real_cli.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]-k["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files["MyApp", "MyPSApp"]`
 
-Expected: FAIL because `read_index_store` does not accept `allowed_files` and `cmd_ingest` still passes `source_root`.
+Ex["MyApp", "MyPSApp"]ected:["MyApp", "MyPSApp"]F["MyApp", "MyPSApp"]IL["MyApp", "MyPSApp"]because["MyApp", "MyPSApp"]`read_index_st["MyApp", "MyPSApp"]re`["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]es["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]acce["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]`all["MyApp", "MyPSApp"]wed_files`["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]`c["MyApp", "MyPSApp"]d_ingest`["MyApp", "MyPSApp"]still["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]asses["MyApp", "MyPSApp"]`s["MyApp", "MyPSApp"]urce_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`.
 
-- [ ] **Step 3: Write minimal implementation**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]3:["MyApp", "MyPSApp"]Write["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ini["MyApp", "MyPSApp"]al["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]le["MyApp", "MyPSApp"]entati["MyApp", "MyPSApp"]n**
 
-```python
-def read_index_store(
-    index_store_path: str,
-    target_id: str,
-    incremental_since: float | None = None,
-    allowed_files: set[str] | None = None,
-) -> tuple[IndexStoreResult, dict | None]:
-    ...
-    for raw in lines:
-        ...
-        file_path = obj.get("file", "")
-        if allowed_files is not None and file_path and file_path not in allowed_files:
-            continue
+```["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n
+def["MyApp", "MyPSApp"]read_index_st["MyApp", "MyPSApp"]re(
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]index_st["MyApp", "MyPSApp"]re_["MyApp", "MyPSApp"]ath:["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]target_id:["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]incre["MyApp", "MyPSApp"]ental_since:["MyApp", "MyPSApp"]fl["MyApp", "MyPSApp"]at["MyApp", "MyPSApp"]|["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files:["MyApp", "MyPSApp"]set[str]["MyApp", "MyPSApp"]|["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne["MyApp", "MyPSApp"]
+)["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]tu["MyApp", "MyPSApp"]le[Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]reResult["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]dict["MyApp", "MyPSApp"]|["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne]:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]...
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]f["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]raw["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]lines:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]...
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]file_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]bj.get(["MyApp", "MyPSApp"]file["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]if["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files["MyApp", "MyPSApp"]is["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]file_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]file_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]ntinue
 ```
 
-```python
-compiled_targets = discover_compiled_targets(dd_dir)
-if ns.target and ns.target not in compiled_targets:
-    print(f"error: target '{ns.target}' was not compiled in DerivedData '{dd_dir}'.", file=sys.stderr)
-    print(f"  compiled targets: {', '.join(compiled_targets)}", file=sys.stderr)
-    sys.exit(2)
-targets = compiled_targets
-allowed_files = set(discover_compiled_files(dd_dir, targets))
-r, file_status = read_index_store(
-    index_store,
-    ns.target or targets[0],
-    incremental_since=incremental_since,
-    allowed_files=allowed_files,
+```["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n
+c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets(dd_dir)
+if["MyApp", "MyPSApp"]ns.target["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]ns.target["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rint(f["MyApp", "MyPSApp"]err["MyApp", "MyPSApp"]r:["MyApp", "MyPSApp"]target["MyApp", "MyPSApp"]'{ns.target}'["MyApp", "MyPSApp"]was["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]DerivedData["MyApp", "MyPSApp"]'{dd_dir}'.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]file=sys.stderr)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rint(f["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]targets:["MyApp", "MyPSApp"]{'["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]'.j["MyApp", "MyPSApp"]in(c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets)}["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]file=sys.stderr)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]sys.exit(2)
+targets["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets
+all["MyApp", "MyPSApp"]wed_files["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]set(disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files(dd_dir["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]targets))
+r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]file_status["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]read_index_st["MyApp", "MyPSApp"]re(
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]index_st["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ns.target["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]targets[0]["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]incre["MyApp", "MyPSApp"]ental_since=incre["MyApp", "MyPSApp"]ental_since["MyApp", "MyPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files=all["MyApp", "MyPSApp"]wed_files["MyApp", "MyPSApp"]
 )
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]4:["MyApp", "MyPSApp"]Run["MyApp", "MyPSApp"]tests["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]verify["MyApp", "MyPSApp"]they["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ass**
 
-Run: `uv run pytest -q tests/test_acceptance.py -k "compiled_targets_from_derived_data" tests/test_ingest/test_indexstore_real_cli.py -k "allowed_files"`
+Run:["MyApp", "MyPSApp"]`uv["MyApp", "MyPSApp"]run["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest["MyApp", "MyPSApp"]-q["MyApp", "MyPSApp"]tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]-k["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets_fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_derived_data["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]tests/test_ingest/test_indexst["MyApp", "MyPSApp"]re_real_cli.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]-k["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files["MyApp", "MyPSApp"]`
 
-Expected: PASS
+Ex["MyApp", "MyPSApp"]ected:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
 
-- [ ] **Step 5: Commit**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]5:["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]it**
 
 ```bash
-git add src/orchard/ingest/indexstore.py src/orchard/cli.py tests/test_acceptance.py tests/test_ingest/test_indexstore_real_cli.py
-git commit -m "feat: ingest compiled targets from IndexStore build scope"
+git["MyApp", "MyPSApp"]add["MyApp", "MyPSApp"]src/["MyApp", "MyPSApp"]rchard/ingest/indexst["MyApp", "MyPSApp"]re.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]src/["MyApp", "MyPSApp"]rchard/cli.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]tests/test_ingest/test_indexst["MyApp", "MyPSApp"]re_real_cli.["MyApp", "MyPSApp"]y
+git["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]it["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]feat:["MyApp", "MyPSApp"]ingest["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]build["MyApp", "MyPSApp"]sc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]
 ```
 
-### Task 3: Remove `--source-root`, harden errors, and align state / fast-path behavior
+###["MyApp", "MyPSApp"]Task["MyApp", "MyPSApp"]3:["MyApp", "MyPSApp"]Re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ve["MyApp", "MyPSApp"]`--s["MyApp", "MyPSApp"]urce-r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]harden["MyApp", "MyPSApp"]err["MyApp", "MyPSApp"]rs["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]align["MyApp", "MyPSApp"]state["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]fast-["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]behavi["MyApp", "MyPSApp"]r
 
 **Files:**
-- Modify: `src/orchard/cli.py`
-- Modify: `src/orchard/ingest/state.py`
-- Modify: `tests/test_acceptance.py`
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`src/["MyApp", "MyPSApp"]rchard/cli.["MyApp", "MyPSApp"]y`
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`src/["MyApp", "MyPSApp"]rchard/ingest/state.["MyApp", "MyPSApp"]y`
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y`
 
 **Interfaces:**
-- Consumes:
-  - `discover_compiled_targets(derived_data_root: str) -> list[str]`
-  - `infer_derived_data_root(index_store_path: str) -> str | None`
-- Produces:
-  - `orchard ingest` CLI without `--source-root`
-  - state entries keyed by compiled target set
-  - fast-path guard keyed by compiled target set
+-["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]nsu["MyApp", "MyPSApp"]es:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]`disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets(derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t:["MyApp", "MyPSApp"]str)["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]list[str]`
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]`infer_derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t(index_st["MyApp", "MyPSApp"]re_["MyApp", "MyPSApp"]ath:["MyApp", "MyPSApp"]str)["MyApp", "MyPSApp"]->["MyApp", "MyPSApp"]str["MyApp", "MyPSApp"]|["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne`
+-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]duces:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]`["MyApp", "MyPSApp"]rchard["MyApp", "MyPSApp"]ingest`["MyApp", "MyPSApp"]CLI["MyApp", "MyPSApp"]with["MyApp", "MyPSApp"]ut["MyApp", "MyPSApp"]`--s["MyApp", "MyPSApp"]urce-r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]state["MyApp", "MyPSApp"]entries["MyApp", "MyPSApp"]keyed["MyApp", "MyPSApp"]by["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]target["MyApp", "MyPSApp"]set
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]fast-["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]guard["MyApp", "MyPSApp"]keyed["MyApp", "MyPSApp"]by["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]target["MyApp", "MyPSApp"]set
 
-- [ ] **Step 1: Write the failing tests**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]1:["MyApp", "MyPSApp"]Write["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]failing["MyApp", "MyPSApp"]tests**
 
-```python
-def test_cmd_ingest_rejects_unknown_target_for_compiled_scope(tmp_path, monkeypatch, capsys):
-    from orchard.cli import cmd_ingest
+```["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n
+def["MyApp", "MyPSApp"]test_c["MyApp", "MyPSApp"]d_ingest_rejects_unkn["MyApp", "MyPSApp"]wn_target_f["MyApp", "MyPSApp"]r_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_sc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ca["MyApp", "MyPSApp"]sys):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.cli["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]d_ingest
 
-    class DummyConn:
-        def close(self):
-            return None
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]class["MyApp", "MyPSApp"]Du["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]yC["MyApp", "MyPSApp"]nn:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]def["MyApp", "MyPSApp"]cl["MyApp", "MyPSApp"]se(self):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]return["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne
 
-    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
-    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(tmp_path / "Zoom.xcodeproj"))
-    monkeypatch.setattr("orchard.build.xcode_settings.match_derived_data", lambda _: [(str(tmp_path / "Zoom-abc"), str(tmp_path / "Zoom-abc/Index.noindex/DataStore"), "2026-06-29T00:00:00Z")])
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["zPSApp"])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.cli._c["MyApp", "MyPSApp"]nn["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*_args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**_kwargs:["MyApp", "MyPSApp"]Du["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]yC["MyApp", "MyPSApp"]nn())
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.find_xc["MyApp", "MyPSApp"]de_["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ject["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]_:["MyApp", "MyPSApp"]str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].xc["MyApp", "MyPSApp"]de["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]j["MyApp", "MyPSApp"]))
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.["MyApp", "MyPSApp"]atch_derived_data["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]_:["MyApp", "MyPSApp"][(str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-abc["MyApp", "MyPSApp"])["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-abc/Index.n["MyApp", "MyPSApp"]index/Data["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"])["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]2026-06-29T00:00:00["MyApp", "MyPSApp"]["MyApp", "MyPSApp"])])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]_:["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]])
 
-    with pytest.raises(SystemExit):
-        cmd_ingest(["--project-dir", str(tmp_path), "--target", "Zoom"])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]with["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest.raises(["MyApp", "MyPSApp"]yste["MyApp", "MyPSApp"]Exit):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]d_ingest([["MyApp", "MyPSApp"]--["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ject-dir["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath)["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]--target["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]])
 
-    err = capsys.readouterr().err
-    assert "compiled targets" in err
-    assert "zPSApp" in err
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]err["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]ca["MyApp", "MyPSApp"]sys.read["MyApp", "MyPSApp"]uterr().err
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]assert["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]err
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]assert["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]err
 
 
-def test_cmd_ingest_stores_compiled_targets_in_state(tmp_path, monkeypatch):
-    from orchard.cli import cmd_ingest
-    from orchard.ingest.indexstore import IndexStoreResult
+def["MyApp", "MyPSApp"]test_c["MyApp", "MyPSApp"]d_ingest_st["MyApp", "MyPSApp"]res_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets_in_state(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.cli["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]d_ingest
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.ingest.indexst["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]reResult
 
-    class DummyConn:
-        def close(self):
-            return None
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]class["MyApp", "MyPSApp"]Du["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]yC["MyApp", "MyPSApp"]nn:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]def["MyApp", "MyPSApp"]cl["MyApp", "MyPSApp"]se(self):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]return["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne
 
-    monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
-    monkeypatch.setattr("orchard.build.xcode_settings.find_xcode_project", lambda _: str(tmp_path / "Zoom.xcodeproj"))
-    monkeypatch.setattr("orchard.build.xcode_settings.match_derived_data", lambda _: [(str(tmp_path / "Zoom-abc"), str(tmp_path / "Zoom-abc/Index.noindex/DataStore"), "2026-06-29T00:00:00Z")])
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_files", lambda *_args: ["/repo/ios-client/Zoom/AppDelegate.m"])
-    monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", lambda *args, **kwargs: (IndexStoreResult(), None))
-    monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
-    monkeypatch.setattr("orchard.normalize.identity.upsert_calls", lambda *args, **kwargs: 0)
-    monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.cli._c["MyApp", "MyPSApp"]nn["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*_args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**_kwargs:["MyApp", "MyPSApp"]Du["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]yC["MyApp", "MyPSApp"]nn())
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.find_xc["MyApp", "MyPSApp"]de_["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ject["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]_:["MyApp", "MyPSApp"]str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].xc["MyApp", "MyPSApp"]de["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]j["MyApp", "MyPSApp"]))
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.["MyApp", "MyPSApp"]atch_derived_data["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]_:["MyApp", "MyPSApp"][(str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-abc["MyApp", "MyPSApp"])["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-abc/Index.n["MyApp", "MyPSApp"]index/Data["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"])["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]2026-06-29T00:00:00["MyApp", "MyPSApp"]["MyApp", "MyPSApp"])])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]_:["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.build.xc["MyApp", "MyPSApp"]de_settings.disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*_args:["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]/re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]ya["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Delegate.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.ingest.indexst["MyApp", "MyPSApp"]re.read_index_st["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**kwargs:["MyApp", "MyPSApp"](Index["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]reResult()["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne))
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ali["MyApp", "MyPSApp"]e.identity.u["MyApp", "MyPSApp"]sert_sy["MyApp", "MyPSApp"]b["MyApp", "MyPSApp"]ls["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**kwargs:["MyApp", "MyPSApp"]0)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ali["MyApp", "MyPSApp"]e.identity.u["MyApp", "MyPSApp"]sert_calls["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**kwargs:["MyApp", "MyPSApp"]0)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nkey["MyApp", "MyPSApp"]atch.setattr(["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ali["MyApp", "MyPSApp"]e.identity.u["MyApp", "MyPSApp"]sert_indexst["MyApp", "MyPSApp"]re_rels["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]la["MyApp", "MyPSApp"]bda["MyApp", "MyPSApp"]*args["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]**kwargs:["MyApp", "MyPSApp"]0)
 
-    cmd_ingest(["--project-dir", str(tmp_path), "--target", "Zoom"])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]d_ingest([["MyApp", "MyPSApp"]--["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ject-dir["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]str(t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath)["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]--target["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]])
 
-    data = json.loads((tmp_path / ".orchard" / "ingest-state.json").read_text())
-    assert data["targets"] == ["Zoom", "zPSApp"]
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]data["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]js["MyApp", "MyPSApp"]n.l["MyApp", "MyPSApp"]ads((t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]_["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"].["MyApp", "MyPSApp"]rchard["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ingest-state.js["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]).read_text())
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]assert["MyApp", "MyPSApp"]data[["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]==["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]My["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]]
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]2:["MyApp", "MyPSApp"]Run["MyApp", "MyPSApp"]tests["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]verify["MyApp", "MyPSApp"]they["MyApp", "MyPSApp"]fail**
 
-Run: `uv run pytest -q tests/test_acceptance.py -k "unknown_target_for_compiled_scope or stores_compiled_targets_in_state"`
+Run:["MyApp", "MyPSApp"]`uv["MyApp", "MyPSApp"]run["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest["MyApp", "MyPSApp"]-q["MyApp", "MyPSApp"]tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]-k["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]unkn["MyApp", "MyPSApp"]wn_target_f["MyApp", "MyPSApp"]r_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_sc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]st["MyApp", "MyPSApp"]res_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets_in_state["MyApp", "MyPSApp"]`
 
-Expected: FAIL because `cmd_ingest` still accepts `--source-root` semantics and does not validate or persist compiled target scope.
+Ex["MyApp", "MyPSApp"]ected:["MyApp", "MyPSApp"]F["MyApp", "MyPSApp"]IL["MyApp", "MyPSApp"]because["MyApp", "MyPSApp"]`c["MyApp", "MyPSApp"]d_ingest`["MyApp", "MyPSApp"]still["MyApp", "MyPSApp"]acce["MyApp", "MyPSApp"]ts["MyApp", "MyPSApp"]`--s["MyApp", "MyPSApp"]urce-r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`["MyApp", "MyPSApp"]se["MyApp", "MyPSApp"]antics["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]es["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]validate["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ersist["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]target["MyApp", "MyPSApp"]sc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e.
 
-- [ ] **Step 3: Write minimal implementation**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]3:["MyApp", "MyPSApp"]Write["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ini["MyApp", "MyPSApp"]al["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]le["MyApp", "MyPSApp"]entati["MyApp", "MyPSApp"]n**
 
-```python
-ap = argparse.ArgumentParser(prog="orchard ingest")
-ap.add_argument("--index-store", default="")
-ap.add_argument("--project-dir", default=os.getcwd())
-ap.add_argument("--target", default="")
-ap.add_argument("--db", default="")
+```["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n
+a["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]arg["MyApp", "MyPSApp"]arse.["MyApp", "MyPSApp"]rgu["MyApp", "MyPSApp"]ent["MyApp", "MyPSApp"]arser(["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]g=["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard["MyApp", "MyPSApp"]ingest["MyApp", "MyPSApp"])
+a["MyApp", "MyPSApp"].add_argu["MyApp", "MyPSApp"]ent(["MyApp", "MyPSApp"]--index-st["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]default=["MyApp", "MyPSApp"]["MyApp", "MyPSApp"])
+a["MyApp", "MyPSApp"].add_argu["MyApp", "MyPSApp"]ent(["MyApp", "MyPSApp"]--["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ject-dir["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]default=["MyApp", "MyPSApp"]s.getcwd())
+a["MyApp", "MyPSApp"].add_argu["MyApp", "MyPSApp"]ent(["MyApp", "MyPSApp"]--target["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]default=["MyApp", "MyPSApp"]["MyApp", "MyPSApp"])
+a["MyApp", "MyPSApp"].add_argu["MyApp", "MyPSApp"]ent(["MyApp", "MyPSApp"]--db["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]default=["MyApp", "MyPSApp"]["MyApp", "MyPSApp"])
 ```
 
-```python
-derived_data_root = dd_dir if not ns.index_store else infer_derived_data_root(index_store)
-if derived_data_root is None:
-    print("error: could not derive DerivedData root from the supplied --index-store path.", file=sys.stderr)
-    sys.exit(2)
-compiled_targets = discover_compiled_targets(derived_data_root)
-if not compiled_targets:
-    print("error: no compiled targets discovered under Intermediates.noindex.", file=sys.stderr)
-    sys.exit(2)
+```["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n
+derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]dd_dir["MyApp", "MyPSApp"]if["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]ns.index_st["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]else["MyApp", "MyPSApp"]infer_derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t(index_st["MyApp", "MyPSApp"]re)
+if["MyApp", "MyPSApp"]derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]is["MyApp", "MyPSApp"]N["MyApp", "MyPSApp"]ne:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rint(["MyApp", "MyPSApp"]err["MyApp", "MyPSApp"]r:["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]uld["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]derive["MyApp", "MyPSApp"]DerivedData["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]su["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]lied["MyApp", "MyPSApp"]--index-st["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ath.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]file=sys.stderr)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]sys.exit(2)
+c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets(derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t)
+if["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rint(["MyApp", "MyPSApp"]err["MyApp", "MyPSApp"]r:["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]vered["MyApp", "MyPSApp"]under["MyApp", "MyPSApp"]Inter["MyApp", "MyPSApp"]ediates.n["MyApp", "MyPSApp"]index.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]file=sys.stderr)
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]sys.exit(2)
 ```
 
-```python
-requested_targets = set(compiled_targets)
-prev_targets = set(old_state.get("targets", []) if old_state else [])
-if unit_ts <= incremental_since and requested_targets.issubset(prev_targets):
-    ...
+```["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n
+requested_targets["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]set(c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets)
+["MyApp", "MyPSApp"]rev_targets["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]set(["MyApp", "MyPSApp"]ld_state.get(["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"][])["MyApp", "MyPSApp"]if["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ld_state["MyApp", "MyPSApp"]else["MyApp", "MyPSApp"][])
+if["MyApp", "MyPSApp"]unit_ts["MyApp", "MyPSApp"]<=["MyApp", "MyPSApp"]incre["MyApp", "MyPSApp"]ental_since["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]requested_targets.issubset(["MyApp", "MyPSApp"]rev_targets):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]...
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]4:["MyApp", "MyPSApp"]Run["MyApp", "MyPSApp"]tests["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]verify["MyApp", "MyPSApp"]they["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ass**
 
-Run: `uv run pytest -q tests/test_acceptance.py -k "unknown_target_for_compiled_scope or stores_compiled_targets_in_state"`
+Run:["MyApp", "MyPSApp"]`uv["MyApp", "MyPSApp"]run["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest["MyApp", "MyPSApp"]-q["MyApp", "MyPSApp"]tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]-k["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]unkn["MyApp", "MyPSApp"]wn_target_f["MyApp", "MyPSApp"]r_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_sc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]st["MyApp", "MyPSApp"]res_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets_in_state["MyApp", "MyPSApp"]`
 
-Expected: PASS
+Ex["MyApp", "MyPSApp"]ected:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
 
-- [ ] **Step 5: Commit**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]5:["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]it**
 
 ```bash
-git add src/orchard/cli.py src/orchard/ingest/state.py tests/test_acceptance.py
-git commit -m "refactor: make compiled targets the default ingest scope"
+git["MyApp", "MyPSApp"]add["MyApp", "MyPSApp"]src/["MyApp", "MyPSApp"]rchard/cli.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]src/["MyApp", "MyPSApp"]rchard/ingest/state.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y
+git["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]it["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]refact["MyApp", "MyPSApp"]r:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ake["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]default["MyApp", "MyPSApp"]ingest["MyApp", "MyPSApp"]sc["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]
 ```
 
-### Task 4: Run the integrated regression suite and update docs
+###["MyApp", "MyPSApp"]Task["MyApp", "MyPSApp"]4:["MyApp", "MyPSApp"]Run["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]integrated["MyApp", "MyPSApp"]regressi["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]suite["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]u["MyApp", "MyPSApp"]date["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]cs
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-06-29-orchard-compiled-target-ingest-design.md`
-- Modify: `AGENTS.md`
-- Modify: `src/orchard/cli.py` (help text only if needed)
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`d["MyApp", "MyPSApp"]cs/su["MyApp", "MyPSApp"]er["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]wers/s["MyApp", "MyPSApp"]ecs/2026-06-29-["MyApp", "MyPSApp"]rchard-c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-target-ingest-design.["MyApp", "MyPSApp"]d`
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`["MyApp", "MyPSApp"]GENT["MyApp", "MyPSApp"].["MyApp", "MyPSApp"]d`
+-["MyApp", "MyPSApp"]M["MyApp", "MyPSApp"]dify:["MyApp", "MyPSApp"]`src/["MyApp", "MyPSApp"]rchard/cli.["MyApp", "MyPSApp"]y`["MyApp", "MyPSApp"](hel["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]text["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]nly["MyApp", "MyPSApp"]if["MyApp", "MyPSApp"]needed)
 
 **Interfaces:**
-- Consumes: completed implementation from Tasks 1-3
-- Produces: updated user-facing documentation and a verified regression pass
+-["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]nsu["MyApp", "MyPSApp"]es:["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]leted["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]le["MyApp", "MyPSApp"]entati["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]Tasks["MyApp", "MyPSApp"]1-3
+-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]duces:["MyApp", "MyPSApp"]u["MyApp", "MyPSApp"]dated["MyApp", "MyPSApp"]user-facing["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]cu["MyApp", "MyPSApp"]entati["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]a["MyApp", "MyPSApp"]verified["MyApp", "MyPSApp"]regressi["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ass
 
-- [ ] **Step 1: Write the failing doc/behavior check**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]1:["MyApp", "MyPSApp"]Write["MyApp", "MyPSApp"]the["MyApp", "MyPSApp"]failing["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]c/behavi["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]check**
 
-```python
-def test_cmd_ingest_help_no_longer_mentions_source_root(capsys):
-    from orchard.cli import cmd_ingest
+```["MyApp", "MyPSApp"]yth["MyApp", "MyPSApp"]n
+def["MyApp", "MyPSApp"]test_c["MyApp", "MyPSApp"]d_ingest_hel["MyApp", "MyPSApp"]_n["MyApp", "MyPSApp"]_l["MyApp", "MyPSApp"]nger_["MyApp", "MyPSApp"]enti["MyApp", "MyPSApp"]ns_s["MyApp", "MyPSApp"]urce_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t(ca["MyApp", "MyPSApp"]sys):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rchard.cli["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]rt["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]d_ingest
 
-    with pytest.raises(SystemExit):
-        cmd_ingest(["--help"])
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]with["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest.raises(["MyApp", "MyPSApp"]yste["MyApp", "MyPSApp"]Exit):
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]d_ingest([["MyApp", "MyPSApp"]--hel["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]])
 
-    out = capsys.readouterr().out
-    assert "--source-root" not in out
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ut["MyApp", "MyPSApp"]=["MyApp", "MyPSApp"]ca["MyApp", "MyPSApp"]sys.read["MyApp", "MyPSApp"]uterr().["MyApp", "MyPSApp"]ut
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]assert["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]--s["MyApp", "MyPSApp"]urce-r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ut
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]2:["MyApp", "MyPSApp"]Run["MyApp", "MyPSApp"]test["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]verify["MyApp", "MyPSApp"]it["MyApp", "MyPSApp"]fails**
 
-Run: `uv run pytest -q tests/test_acceptance.py -k "no_longer_mentions_source_root"`
+Run:["MyApp", "MyPSApp"]`uv["MyApp", "MyPSApp"]run["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest["MyApp", "MyPSApp"]-q["MyApp", "MyPSApp"]tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]-k["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]_l["MyApp", "MyPSApp"]nger_["MyApp", "MyPSApp"]enti["MyApp", "MyPSApp"]ns_s["MyApp", "MyPSApp"]urce_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]`
 
-Expected: FAIL because CLI help still advertises `--source-root`.
+Ex["MyApp", "MyPSApp"]ected:["MyApp", "MyPSApp"]F["MyApp", "MyPSApp"]IL["MyApp", "MyPSApp"]because["MyApp", "MyPSApp"]CLI["MyApp", "MyPSApp"]hel["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]still["MyApp", "MyPSApp"]advertises["MyApp", "MyPSApp"]`--s["MyApp", "MyPSApp"]urce-r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`.
 
-- [ ] **Step 3: Write minimal implementation**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]3:["MyApp", "MyPSApp"]Write["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ini["MyApp", "MyPSApp"]al["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]le["MyApp", "MyPSApp"]entati["MyApp", "MyPSApp"]n**
 
-```markdown
-- Update Orchard ingest docs to describe compiled-target default behavior.
-- Remove `--source-root` from CLI help text and usage examples.
-- Add one concise note explaining that compiled targets are derived from `Intermediates.noindex`.
+```["MyApp", "MyPSApp"]arkd["MyApp", "MyPSApp"]wn
+-["MyApp", "MyPSApp"]U["MyApp", "MyPSApp"]date["MyApp", "MyPSApp"]Orchard["MyApp", "MyPSApp"]ingest["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]cs["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]describe["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-target["MyApp", "MyPSApp"]default["MyApp", "MyPSApp"]behavi["MyApp", "MyPSApp"]r.
+-["MyApp", "MyPSApp"]Re["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ve["MyApp", "MyPSApp"]`--s["MyApp", "MyPSApp"]urce-r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]CLI["MyApp", "MyPSApp"]hel["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]text["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]usage["MyApp", "MyPSApp"]exa["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]les.
+-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]dd["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ne["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]ncise["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]ex["MyApp", "MyPSApp"]laining["MyApp", "MyPSApp"]that["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]targets["MyApp", "MyPSApp"]are["MyApp", "MyPSApp"]derived["MyApp", "MyPSApp"]fr["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`Inter["MyApp", "MyPSApp"]ediates.n["MyApp", "MyPSApp"]index`.
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]4:["MyApp", "MyPSApp"]Run["MyApp", "MyPSApp"]tests["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]verify["MyApp", "MyPSApp"]they["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ass**
 
-Run: `uv run pytest -q tests/test_acceptance.py -k "no_longer_mentions_source_root" && uv run pytest -q tests/test_build/test_discovery.py tests/test_normalize/test_identity.py tests/test_acceptance.py tests/test_pipeline/test_runner.py`
+Run:["MyApp", "MyPSApp"]`uv["MyApp", "MyPSApp"]run["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest["MyApp", "MyPSApp"]-q["MyApp", "MyPSApp"]tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]-k["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]_l["MyApp", "MyPSApp"]nger_["MyApp", "MyPSApp"]enti["MyApp", "MyPSApp"]ns_s["MyApp", "MyPSApp"]urce_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]&&["MyApp", "MyPSApp"]uv["MyApp", "MyPSApp"]run["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ytest["MyApp", "MyPSApp"]-q["MyApp", "MyPSApp"]tests/test_build/test_disc["MyApp", "MyPSApp"]very.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]tests/test_n["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ali["MyApp", "MyPSApp"]e/test_identity.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]tests/test_["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]eline/test_runner.["MyApp", "MyPSApp"]y`
 
-Expected: PASS
+Ex["MyApp", "MyPSApp"]ected:["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]
 
-- [ ] **Step 5: Commit**
+-["MyApp", "MyPSApp"][["MyApp", "MyPSApp"]]["MyApp", "MyPSApp"]**["MyApp", "MyPSApp"]te["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]5:["MyApp", "MyPSApp"]C["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]it**
 
 ```bash
-git add AGENTS.md docs/superpowers/specs/2026-06-29-orchard-compiled-target-ingest-design.md src/orchard/cli.py tests/test_acceptance.py
-git commit -m "docs: describe compiled-target ingest defaults"
+git["MyApp", "MyPSApp"]add["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]GENT["MyApp", "MyPSApp"].["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]cs/su["MyApp", "MyPSApp"]er["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]wers/s["MyApp", "MyPSApp"]ecs/2026-06-29-["MyApp", "MyPSApp"]rchard-c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-target-ingest-design.["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]src/["MyApp", "MyPSApp"]rchard/cli.["MyApp", "MyPSApp"]y["MyApp", "MyPSApp"]tests/test_acce["MyApp", "MyPSApp"]tance.["MyApp", "MyPSApp"]y
+git["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]it["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]d["MyApp", "MyPSApp"]cs:["MyApp", "MyPSApp"]describe["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-target["MyApp", "MyPSApp"]ingest["MyApp", "MyPSApp"]defaults["MyApp", "MyPSApp"]
 ```
 
-## Self-Review
+##["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]elf-Review
 
-- Spec coverage:
-  - compiled-target discovery: Task 1
-  - replace `source-root` with compiled-file filtering: Task 2
-  - manual `--index-store` DerivedData resolution: Tasks 1 and 3
-  - state and fast-path behavior tied to compiled target set: Task 3
-  - errors and migration/docs: Tasks 3 and 4
-- Placeholder scan:
-  - no `TBD` / `TODO` / "implement later" placeholders remain
-  - all code-changing steps include concrete code snippets
-- Type consistency:
-  - helper names are consistent across tasks: `infer_derived_data_root`, `discover_compiled_targets`, `discover_compiled_files`
-  - `read_index_store(..., allowed_files=...)` naming is used consistently in plan steps
+-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ec["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]verage:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-target["MyApp", "MyPSApp"]disc["MyApp", "MyPSApp"]very:["MyApp", "MyPSApp"]Task["MyApp", "MyPSApp"]1
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]lace["MyApp", "MyPSApp"]`s["MyApp", "MyPSApp"]urce-r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`["MyApp", "MyPSApp"]with["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-file["MyApp", "MyPSApp"]filtering:["MyApp", "MyPSApp"]Task["MyApp", "MyPSApp"]2
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]anual["MyApp", "MyPSApp"]`--index-st["MyApp", "MyPSApp"]re`["MyApp", "MyPSApp"]DerivedData["MyApp", "MyPSApp"]res["MyApp", "MyPSApp"]luti["MyApp", "MyPSApp"]n:["MyApp", "MyPSApp"]Tasks["MyApp", "MyPSApp"]1["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]3
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]state["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]fast-["MyApp", "MyPSApp"]ath["MyApp", "MyPSApp"]behavi["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]tied["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled["MyApp", "MyPSApp"]target["MyApp", "MyPSApp"]set:["MyApp", "MyPSApp"]Task["MyApp", "MyPSApp"]3
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]err["MyApp", "MyPSApp"]rs["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]igrati["MyApp", "MyPSApp"]n/d["MyApp", "MyPSApp"]cs:["MyApp", "MyPSApp"]Tasks["MyApp", "MyPSApp"]3["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]4
+-["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]laceh["MyApp", "MyPSApp"]lder["MyApp", "MyPSApp"]scan:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`TBD`["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]`TODO`["MyApp", "MyPSApp"]/["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]i["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]le["MyApp", "MyPSApp"]ent["MyApp", "MyPSApp"]later["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]laceh["MyApp", "MyPSApp"]lders["MyApp", "MyPSApp"]re["MyApp", "MyPSApp"]ain
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]de-changing["MyApp", "MyPSApp"]ste["MyApp", "MyPSApp"]s["MyApp", "MyPSApp"]include["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]ncrete["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]de["MyApp", "MyPSApp"]sni["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ets
+-["MyApp", "MyPSApp"]Ty["MyApp", "MyPSApp"]e["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]nsistency:
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]hel["MyApp", "MyPSApp"]er["MyApp", "MyPSApp"]na["MyApp", "MyPSApp"]es["MyApp", "MyPSApp"]are["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]nsistent["MyApp", "MyPSApp"]acr["MyApp", "MyPSApp"]ss["MyApp", "MyPSApp"]tasks:["MyApp", "MyPSApp"]`infer_derived_data_r["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]t`["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_targets`["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`disc["MyApp", "MyPSApp"]ver_c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled_files`
+["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]`read_index_st["MyApp", "MyPSApp"]re(...["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]all["MyApp", "MyPSApp"]wed_files=...)`["MyApp", "MyPSApp"]na["MyApp", "MyPSApp"]ing["MyApp", "MyPSApp"]is["MyApp", "MyPSApp"]used["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]nsistently["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]lan["MyApp", "MyPSApp"]ste["MyApp", "MyPSApp"]s
 
-## Execution Handoff
+##["MyApp", "MyPSApp"]Executi["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]Hand["MyApp", "MyPSApp"]ff
 
-Plan complete and saved to `docs/superpowers/plans/2026-06-29-orchard-compiled-target-ingest.md`. Two execution options:
+["MyApp", "MyPSApp"]lan["MyApp", "MyPSApp"]c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]lete["MyApp", "MyPSApp"]and["MyApp", "MyPSApp"]saved["MyApp", "MyPSApp"]t["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]`d["MyApp", "MyPSApp"]cs/su["MyApp", "MyPSApp"]er["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]wers/["MyApp", "MyPSApp"]lans/2026-06-29-["MyApp", "MyPSApp"]rchard-c["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]iled-target-ingest.["MyApp", "MyPSApp"]d`.["MyApp", "MyPSApp"]Tw["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]executi["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ti["MyApp", "MyPSApp"]ns:
 
-**1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
+**1.["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ubagent-Driven["MyApp", "MyPSApp"](rec["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ended)**["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]I["MyApp", "MyPSApp"]dis["MyApp", "MyPSApp"]atch["MyApp", "MyPSApp"]a["MyApp", "MyPSApp"]fresh["MyApp", "MyPSApp"]subagent["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]er["MyApp", "MyPSApp"]task["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]review["MyApp", "MyPSApp"]between["MyApp", "MyPSApp"]tasks["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]fast["MyApp", "MyPSApp"]iterati["MyApp", "MyPSApp"]n
 
-**2. Inline Execution** - Execute tasks in this session using executing-plans, batch execution with checkpoints
+**2.["MyApp", "MyPSApp"]Inline["MyApp", "MyPSApp"]Executi["MyApp", "MyPSApp"]n**["MyApp", "MyPSApp"]-["MyApp", "MyPSApp"]Execute["MyApp", "MyPSApp"]tasks["MyApp", "MyPSApp"]in["MyApp", "MyPSApp"]this["MyApp", "MyPSApp"]sessi["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]using["MyApp", "MyPSApp"]executing-["MyApp", "MyPSApp"]lans["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]batch["MyApp", "MyPSApp"]executi["MyApp", "MyPSApp"]n["MyApp", "MyPSApp"]with["MyApp", "MyPSApp"]check["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]ints
 
-Which approach?
+Which["MyApp", "MyPSApp"]a["MyApp", "MyPSApp"]["MyApp", "MyPSApp"]r["MyApp", "MyPSApp"]ach?

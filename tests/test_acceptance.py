@@ -356,9 +356,9 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
         captured["targets"] = targets
         return IndexStoreResult(), None
 
-    project = tmp_path / "Zoom.xcodeproj"
+    project = tmp_path / "MyApp.xcodeproj"
     project.mkdir()
-    derived_data = tmp_path / "Zoom-abc"
+    derived_data = tmp_path / "MyApp-abc"
 
     monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
     monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
@@ -367,10 +367,10 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
         "orchard.build.xcode_settings.match_derived_data",
         lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
     )
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["MyApp", "MyPSApp"])
     monkeypatch.setattr(
         "orchard.build.xcode_settings.resolve_source_roots_for_targets",
-        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        lambda project_path, targets: ["/repo/myapp", "/repo/myapp/MyPSApp"],
         raising=False,
     )
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
@@ -380,11 +380,11 @@ def test_cmd_ingest_uses_compiled_targets_from_derived_data(tmp_path, monkeypatc
 
     cmd_ingest([
         "--project-dir", str(tmp_path),
-        "--target", "Zoom",
+        "--target", "MyApp",
     ])
 
-    assert captured["scope_id"] == "Zoom"
-    assert captured["targets"] == ["Zoom", "zPSApp"]
+    assert captured["scope_id"] == "MyApp"
+    assert captured["targets"] == ["MyApp", "MyPSApp"]
 
 
 def test_cmd_ingest_passes_project_config_source_roots_for_compiled_targets(tmp_path, monkeypatch):
@@ -410,9 +410,9 @@ def test_cmd_ingest_passes_project_config_source_roots_for_compiled_targets(tmp_
         captured["source_roots"] = source_roots
         return IndexStoreResult(), None
 
-    project = tmp_path / "Zoom.xcodeproj"
+    project = tmp_path / "MyApp.xcodeproj"
     project.mkdir()
-    derived_data = tmp_path / "Zoom-abc"
+    derived_data = tmp_path / "MyApp-abc"
 
     monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
     monkeypatch.setattr("orchard.ingest.indexstore.read_index_store", fake_read_index_store)
@@ -421,10 +421,10 @@ def test_cmd_ingest_passes_project_config_source_roots_for_compiled_targets(tmp_
         "orchard.build.xcode_settings.match_derived_data",
         lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
     )
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["MyApp", "MyPSApp"])
     monkeypatch.setattr(
         "orchard.build.xcode_settings.resolve_source_roots_for_targets",
-        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        lambda project_path, targets: ["/repo/myapp", "/repo/myapp/MyPSApp"],
         raising=False,
     )
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
@@ -434,12 +434,12 @@ def test_cmd_ingest_passes_project_config_source_roots_for_compiled_targets(tmp_
 
     cmd_ingest([
         "--project-dir", str(tmp_path),
-        "--target", "Zoom",
+        "--target", "MyApp",
     ])
 
-    assert captured["scope_id"] == "Zoom"
-    assert captured["targets"] == ["Zoom", "zPSApp"]
-    assert captured["source_roots"] == ["/repo/ios-client", "/repo/client-app-video/zPSApp"]
+    assert captured["scope_id"] == "MyApp"
+    assert captured["targets"] == ["MyApp", "MyPSApp"]
+    assert captured["source_roots"] == ["/repo/myapp", "/repo/myapp/MyPSApp"]
 
 
 def test_cmd_ingest_runs_global_community_and_process_derivation_once(tmp_path, monkeypatch, capsys):
@@ -455,9 +455,9 @@ def test_cmd_ingest_runs_global_community_and_process_derivation_once(tmp_path, 
         def close(self):
             return None
 
-    project = tmp_path / "Zoom.xcodeproj"
+    project = tmp_path / "MyApp.xcodeproj"
     project.mkdir()
-    derived_data = tmp_path / "Zoom-abc"
+    derived_data = tmp_path / "MyApp-abc"
 
     monkeypatch.setattr("orchard.cli._conn", lambda *_args, **_kwargs: DummyConn())
     monkeypatch.setattr(
@@ -469,10 +469,10 @@ def test_cmd_ingest_runs_global_community_and_process_derivation_once(tmp_path, 
         "orchard.build.xcode_settings.match_derived_data",
         lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
     )
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["MyApp", "MyPSApp"])
     monkeypatch.setattr(
         "orchard.build.xcode_settings.resolve_source_roots_for_targets",
-        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        lambda project_path, targets: ["/repo/myapp", "/repo/myapp/MyPSApp"],
         raising=False,
     )
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
@@ -502,7 +502,7 @@ def test_cmd_ingest_runs_global_community_and_process_derivation_once(tmp_path, 
 
     cmd_ingest([
         "--project-dir", str(tmp_path),
-        "--target", "Zoom",
+        "--target", "MyApp",
     ])
 
     out = capsys.readouterr().out
@@ -511,11 +511,11 @@ def test_cmd_ingest_runs_global_community_and_process_derivation_once(tmp_path, 
     assert captured["community_scope_ids"][0].startswith("build-")
     assert captured["process_scope_ids"] == captured["community_scope_ids"]
     assert "communities: 2 communities, 4 members" in out
-    assert "communities (Zoom):" not in out
-    assert "communities (zPSApp):" not in out
+    assert "communities (MyApp):" not in out
+    assert "communities (MyPSApp):" not in out
     assert "processes: 1 detected (1 cross-community)" in out
-    assert "processes (Zoom):" not in out
-    assert "processes (zPSApp):" not in out
+    assert "processes (MyApp):" not in out
+    assert "processes (MyPSApp):" not in out
 
 
 def test_cmd_ingest_full_notification_graph_reuses_full_file_list(tmp_path, monkeypatch):
@@ -533,7 +533,7 @@ def test_cmd_ingest_full_notification_graph_reuses_full_file_list(tmp_path, monk
         "orchard.ingest.indexstore.read_index_store",
         lambda *args, **kwargs: (
             IndexStoreResult(),
-            {"changed": [], "all": ["/repo/ios-client/Observer.m", "/repo/ios-client/Poster.m"]},
+            {"changed": [], "all": ["/repo/myapp/Observer.m", "/repo/myapp/Poster.m"]},
         ),
     )
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
@@ -556,7 +556,7 @@ def test_cmd_ingest_full_notification_graph_reuses_full_file_list(tmp_path, monk
         "--full",
     ])
 
-    assert captured["changed_files"] == ["/repo/ios-client/Observer.m", "/repo/ios-client/Poster.m"]
+    assert captured["changed_files"] == ["/repo/myapp/Observer.m", "/repo/myapp/Poster.m"]
 
 
 def test_graph_db_lock_path_hashes_graph_db(tmp_path):
@@ -604,7 +604,7 @@ def test_cmd_ingest_returns_lock_busy_when_lock_held(tmp_path, monkeypatch, caps
             cli_mod.cmd_ingest([
                 "--index-store", "/tmp/IndexStore",
                 "--project-dir", str(tmp_path),
-                "--target", "Zoom",
+                "--target", "MyApp",
                 "--db", str(graph_db),
             ])
 
@@ -619,9 +619,9 @@ def test_cmd_ingest_fails_closed_when_project_config_roots_missing_for_compiled_
         def close(self):
             return None
 
-    project = tmp_path / "Zoom.xcodeproj"
+    project = tmp_path / "MyApp.xcodeproj"
     project.mkdir()
-    derived_data = tmp_path / "Zoom-abc"
+    derived_data = tmp_path / "MyApp-abc"
     called = {"read_index_store": False}
 
     def fake_read_index_store(*_args, **_kwargs):
@@ -635,7 +635,7 @@ def test_cmd_ingest_fails_closed_when_project_config_roots_missing_for_compiled_
         "orchard.build.xcode_settings.match_derived_data",
         lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
     )
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["MyApp", "MyPSApp"])
     monkeypatch.setattr(
         "orchard.build.xcode_settings.resolve_source_roots_for_targets",
         lambda project_path, targets: [],
@@ -646,7 +646,7 @@ def test_cmd_ingest_fails_closed_when_project_config_roots_missing_for_compiled_
     with pytest.raises(SystemExit) as excinfo:
         cmd_ingest([
             "--project-dir", str(tmp_path),
-            "--target", "Zoom",
+            "--target", "MyApp",
         ])
 
     assert excinfo.value.code == 2
@@ -794,8 +794,8 @@ def test_cmd_ingest_full_persists_file_list_in_state(tmp_path, monkeypatch):
             {
                 "changed": [],
                 "all": [
-                    "/repo/ios-client/Zoom/AppDelegate.swift",
-                    "/repo/ios-client/Zoom/LoginViewController.m",
+                    "/repo/myapp/MyApp/AppDelegate.swift",
+                    "/repo/myapp/MyApp/LoginViewController.m",
                 ],
             },
         ),
@@ -822,8 +822,8 @@ def test_cmd_ingest_full_persists_file_list_in_state(tmp_path, monkeypatch):
     state_path = tmp_path / ".orchard" / "ingest-state.json"
     data = json.loads(state_path.read_text(encoding="utf-8"))
     assert data["files"] == [
-        "/repo/ios-client/Zoom/AppDelegate.swift",
-        "/repo/ios-client/Zoom/LoginViewController.m",
+        "/repo/myapp/MyApp/AppDelegate.swift",
+        "/repo/myapp/MyApp/LoginViewController.m",
     ]
 
 
@@ -840,10 +840,10 @@ def test_cmd_ingest_full_writes_candidate_output_paths_manifest(tmp_path, monkey
         "orchard.ingest.indexstore.read_index_store",
         lambda *args, **kwargs: (
             IndexStoreResult(),
-            {"changed": [], "all": ["/repo/ios-client/Zoom/AppDelegate.swift"]},
+            {"changed": [], "all": ["/repo/myapp/MyApp/AppDelegate.swift"]},
             [
                 {
-                    "main_file": "/repo/ios-client/Zoom/AppDelegate.swift",
+                    "main_file": "/repo/myapp/MyApp/AppDelegate.swift",
                     "output_file": "/tmp/opaque/AppDelegate-1.o",
                     "unit_name": "AppDelegate-1.o-opaque",
                 }
@@ -870,7 +870,7 @@ def test_cmd_ingest_full_writes_candidate_output_paths_manifest(tmp_path, monkey
     assert data["output_paths"] == ["/tmp/opaque/AppDelegate-1.o"]
     assert data["mappings"] == [
         {
-            "main_file": "/repo/ios-client/Zoom/AppDelegate.swift",
+            "main_file": "/repo/myapp/MyApp/AppDelegate.swift",
             "output_file": "/tmp/opaque/AppDelegate-1.o",
             "unit_name": "AppDelegate-1.o-opaque",
         }
@@ -1005,7 +1005,7 @@ def test_cmd_ingest_replaces_state_with_latest_compiled_scope(tmp_path, monkeypa
         "orchard.ingest.state.load_state",
         lambda _project_dir: {
             "last_ingest_ts": 123.0,
-            "compiled_targets": ["Zoom"],
+            "compiled_targets": ["MyApp"],
             "index_store_path": "/old/store",
         },
     )
@@ -1021,14 +1021,14 @@ def test_cmd_ingest_replaces_state_with_latest_compiled_scope(tmp_path, monkeypa
     cmd_ingest([
         "--index-store", "/new/store",
         "--project-dir", str(tmp_path),
-        "--target", "zPSApp",
+        "--target", "MyPSApp",
         "--db", str(tmp_path / "graph.db"),
         "--full",
     ])
 
     state_path = tmp_path / ".orchard" / "ingest-state.json"
     data = json.loads(state_path.read_text(encoding="utf-8"))
-    assert data["compiled_targets"] == ["zPSApp"]
+    assert data["compiled_targets"] == ["MyPSApp"]
     assert data["index_store_path"] == "/new/store"
 
 
@@ -1036,9 +1036,9 @@ def test_cmd_ingest_persists_compiled_scope_state(tmp_path, monkeypatch):
     from orchard.cli import cmd_ingest
     from orchard.ingest.indexstore import IndexStoreResult
 
-    project = tmp_path / "Zoom.xcodeproj"
+    project = tmp_path / "MyApp.xcodeproj"
     project.mkdir()
-    derived_data = tmp_path / "Zoom-abc"
+    derived_data = tmp_path / "MyApp-abc"
 
     class DummyConn:
         def close(self):
@@ -1054,10 +1054,10 @@ def test_cmd_ingest_persists_compiled_scope_state(tmp_path, monkeypatch):
         "orchard.build.xcode_settings.match_derived_data",
         lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
     )
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["MyApp", "MyPSApp"])
     monkeypatch.setattr(
         "orchard.build.xcode_settings.resolve_source_roots_for_targets",
-        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        lambda project_path, targets: ["/repo/myapp", "/repo/myapp/MyPSApp"],
         raising=False,
     )
     monkeypatch.setattr("orchard.normalize.identity.upsert_symbols", lambda *args, **kwargs: 0)
@@ -1067,12 +1067,12 @@ def test_cmd_ingest_persists_compiled_scope_state(tmp_path, monkeypatch):
 
     cmd_ingest([
         "--project-dir", str(tmp_path),
-        "--target", "Zoom",
+        "--target", "MyApp",
     ])
 
     state_path = tmp_path / ".orchard" / "ingest-state.json"
     data = json.loads(state_path.read_text(encoding="utf-8"))
-    assert data["compiled_targets"] == ["Zoom", "zPSApp"]
+    assert data["compiled_targets"] == ["MyApp", "MyPSApp"]
     assert data["index_store_path"] == str(derived_data / "Index.noindex" / "DataStore")
     assert "targets" not in data
     assert "index_store_paths" not in data
@@ -1082,9 +1082,9 @@ def test_cmd_ingest_registers_indexd_session_with_normalized_context(tmp_path, m
     from orchard.cli import cmd_ingest
     from orchard.ingest.indexstore import IndexStoreResult
 
-    project = tmp_path / "Zoom.xcodeproj"
+    project = tmp_path / "MyApp.xcodeproj"
     project.mkdir()
-    derived_data = tmp_path / "Zoom-abc"
+    derived_data = tmp_path / "MyApp-abc"
     captured: dict[str, object] = {}
     events: list[str] = []
 
@@ -1098,10 +1098,10 @@ def test_cmd_ingest_registers_indexd_session_with_normalized_context(tmp_path, m
         "orchard.build.xcode_settings.match_derived_data",
         lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
     )
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["MyApp", "MyPSApp"])
     monkeypatch.setattr(
         "orchard.build.xcode_settings.resolve_source_roots_for_targets",
-        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        lambda project_path, targets: ["/repo/myapp", "/repo/myapp/MyPSApp"],
         raising=False,
     )
     monkeypatch.setattr(
@@ -1119,7 +1119,7 @@ def test_cmd_ingest_registers_indexd_session_with_normalized_context(tmp_path, m
 
     cmd_ingest([
         "--project-dir", str(tmp_path),
-        "--target", "Zoom",
+        "--target", "MyApp",
     ])
 
     assert events[:2] == ["register", "read"]
@@ -1127,10 +1127,10 @@ def test_cmd_ingest_registers_indexd_session_with_normalized_context(tmp_path, m
         "project_dir": str(tmp_path.resolve()),
         "index_store_path": str((derived_data / "Index.noindex" / "DataStore").resolve()),
         "graph_db_path": str((tmp_path / ".orchard" / "graph.db").resolve()),
-        "target_args": ["Zoom", "zPSApp"],
-        "entry_target": "Zoom",
+        "target_args": ["MyApp", "MyPSApp"],
+        "entry_target": "MyApp",
         "incremental": True,
-        "source_roots": ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        "source_roots": ["/repo/myapp", "/repo/myapp/MyPSApp"],
     }
 
 
@@ -1138,9 +1138,9 @@ def test_cmd_ingest_logs_and_upserts_compiled_scope_once(tmp_path, monkeypatch, 
     from orchard.cli import cmd_ingest
     from orchard.ingest.indexstore import IndexStoreResult, SymbolLineRecord
 
-    project = tmp_path / "Zoom.xcodeproj"
+    project = tmp_path / "MyApp.xcodeproj"
     project.mkdir()
-    derived_data = tmp_path / "Zoom-abc"
+    derived_data = tmp_path / "MyApp-abc"
     calls: dict[str, int] = {"symbols": 0, "calls": 0, "struct": 0}
 
     class DummyConn:
@@ -1158,7 +1158,7 @@ def test_cmd_ingest_logs_and_upserts_compiled_scope_once(tmp_path, monkeypatch, 
                         name="Shared",
                         symbol_kind="function",
                         language="swift",
-                        module="Zoom",
+                        module="MyApp",
                         file_path="/src/Shared.swift",
                     )
                 ]
@@ -1171,10 +1171,10 @@ def test_cmd_ingest_logs_and_upserts_compiled_scope_once(tmp_path, monkeypatch, 
         "orchard.build.xcode_settings.match_derived_data",
         lambda _: [(str(derived_data), str(derived_data / "Index.noindex" / "DataStore"), "2026-06-29T00:00:00Z")],
     )
-    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["Zoom", "zPSApp"])
+    monkeypatch.setattr("orchard.build.xcode_settings.discover_compiled_targets", lambda _: ["MyApp", "MyPSApp"])
     monkeypatch.setattr(
         "orchard.build.xcode_settings.resolve_source_roots_for_targets",
-        lambda project_path, targets: ["/repo/ios-client", "/repo/client-app-video/zPSApp"],
+        lambda project_path, targets: ["/repo/myapp", "/repo/myapp/MyPSApp"],
         raising=False,
     )
     monkeypatch.setattr(
@@ -1194,12 +1194,12 @@ def test_cmd_ingest_logs_and_upserts_compiled_scope_once(tmp_path, monkeypatch, 
 
     cmd_ingest([
         "--project-dir", str(tmp_path),
-        "--target", "Zoom",
+        "--target", "MyApp",
     ])
 
     out = capsys.readouterr().out
     assert "ingest: reading index store..." in out
-    assert "scope: Zoom,zPSApp" in out
+    assert "scope: MyApp,MyPSApp" in out
     assert "communities: import took" in out
     assert "notification-graph: scanning source files..." in out
     assert "processes: detecting execution flows..." in out
@@ -1241,13 +1241,13 @@ def test_cmd_ingest_persists_build_snapshot_for_freshness(tmp_path, monkeypatch)
     cmd_ingest([
         "--index-store", "/fake/store",
         "--project-dir", str(tmp_path),
-        "--target", "Zoom",
+        "--target", "MyApp",
         "--db", str(tmp_path / "graph.db"),
         "--full",
     ])
 
     assert captured["build_id"]
-    assert captured["target"] == "Zoom"
+    assert captured["target"] == "MyApp"
     assert captured["workspace_root"] == str(tmp_path.resolve())
     assert captured["index_store_path"] == "/fake/store"
 
@@ -1265,13 +1265,13 @@ def test_cmd_ingest_writes_build_snapshot_to_db(tmp_path, monkeypatch):
     cmd_ingest([
         "--index-store", "/fake/store",
         "--project-dir", str(tmp_path),
-        "--target", "Zoom",
+        "--target", "MyApp",
         "--db", str(db_path),
         "--full",
     ])
 
     conn = get_connection(str(db_path))
-    build_id = _default_build_id(conn, "Zoom")
+    build_id = _default_build_id(conn, "MyApp")
     rows = conn.execute(
         "MATCH (b:BuildSnapshot) RETURN b.id, b.index_store_path, b.workspace_root"
     ).get_all()
@@ -1309,7 +1309,7 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
         "orchard.ingest.state.load_state",
         lambda _project_dir: {
             "last_ingest_ts": 123.0,
-            "compiled_targets": ["Zoom"],
+            "compiled_targets": ["MyApp"],
             "index_store_path": "/fake/store",
         },
     )
@@ -1323,12 +1323,12 @@ def test_cmd_ingest_incremental_does_not_fast_path_new_target(tmp_path, monkeypa
     cmd_ingest([
         "--index-store", "/fake/store",
         "--project-dir", str(tmp_path),
-        "--target", "zPSApp",
+        "--target", "MyPSApp",
         "--db", str(tmp_path / "graph.db"),
         "--incremental",
     ])
 
-    assert captured["scope_id"] == "zPSApp"
+    assert captured["scope_id"] == "MyPSApp"
     assert captured["incremental_since"] == 123.0
 
 
@@ -1486,9 +1486,9 @@ def test_cmd_ingest_defaults_db_to_real_project_directory(tmp_path, monkeypatch)
     from orchard.cli import cmd_ingest
     from orchard.ingest.indexstore import IndexStoreResult
 
-    project_dir = tmp_path / "ios-client"
+    project_dir = tmp_path / "myapp"
     project_dir.mkdir()
-    project = project_dir / "Zoom.xcworkspace"
+    project = project_dir / "MyApp.xcworkspace"
     project.mkdir()
     cwd_parent = tmp_path / "workspace-root"
     cwd_parent.mkdir()
@@ -1517,6 +1517,6 @@ def test_cmd_ingest_defaults_db_to_real_project_directory(tmp_path, monkeypatch)
     monkeypatch.setattr("orchard.normalize.identity.upsert_indexstore_rels", lambda *args, **kwargs: 0)
     monkeypatch.setattr("orchard.normalize.identity.upsert_build_snapshot", lambda *args, **kwargs: None)
 
-    cmd_ingest(["--project-dir", str(cwd_parent), "--target", "Zoom"])
+    cmd_ingest(["--project-dir", str(cwd_parent), "--target", "MyApp"])
 
     assert captured["db_path"] == str(project_dir / ".orchard" / "graph.db")

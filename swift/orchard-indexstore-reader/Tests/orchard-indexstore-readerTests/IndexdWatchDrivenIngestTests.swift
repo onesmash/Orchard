@@ -62,8 +62,8 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       "projectDir": "/tmp/project",
       "indexStorePath": storePath,
       "graphDBPath": graphDBPath,
-      "targetArgs": ["Zoom"],
-      "entryTarget": "Zoom",
+      "targetArgs": ["MyApp"],
+      "entryTarget": "MyApp",
       "incremental": true,
     ]
     for (key, value) in contextOverrides {
@@ -118,8 +118,8 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       projectDir: tmp.path,
       indexStorePath: storePath.path,
       graphDBPath: "/tmp/graph.db",
-      targetArgs: ["Zoom"],
-      entryTarget: "Zoom",
+      targetArgs: ["MyApp"],
+      entryTarget: "MyApp",
       incremental: true
     )
 
@@ -127,7 +127,7 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       sessionId: UUID().uuidString,
       storePath: storePath.path,
       sourceRoots: [tmp.path],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: nil,
       ingestContext: context
     )
@@ -144,16 +144,16 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       projectDir: tmp.path,
       indexStorePath: storePath.path,
       graphDBPath: "/tmp/graph.db",
-      targetArgs: ["Zoom"],
-      entryTarget: "Zoom",
+      targetArgs: ["MyApp"],
+      entryTarget: "MyApp",
       incremental: true
     )
     let secondContext = IngestContext(
       projectDir: tmp.path,
       indexStorePath: storePath.path,
       graphDBPath: "/tmp/graph.db",
-      targetArgs: ["Zoom", "zPSApp"],
-      entryTarget: "Zoom",
+      targetArgs: ["MyApp", "MyPSApp"],
+      entryTarget: "MyApp",
       incremental: true
     )
 
@@ -162,7 +162,7 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       graphDBPath: "/tmp/graph.db",
       ingestContext: firstContext,
       sourceRoots: [tmp.path],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: nil
     )
     let second = try manager.registerOrRefreshSession(
@@ -170,7 +170,7 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       graphDBPath: "/tmp/graph.db",
       ingestContext: secondContext,
       sourceRoots: [tmp.path],
-      targets: ["Zoom", "zPSApp"],
+      targets: ["MyApp", "MyPSApp"],
       dylibPath: nil
     )
 
@@ -190,16 +190,16 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       projectDir: tmp.path,
       indexStorePath: storePath.path,
       graphDBPath: "/tmp/graph.db",
-      targetArgs: ["Zoom"],
-      entryTarget: "Zoom",
+      targetArgs: ["MyApp"],
+      entryTarget: "MyApp",
       incremental: true
     )
     let secondContext = IngestContext(
       projectDir: tmp.path,
       indexStorePath: storePath.path,
       graphDBPath: "/tmp/graph.db",
-      targetArgs: ["Zoom", "zPSApp"],
-      entryTarget: "zPSApp",
+      targetArgs: ["MyApp", "MyPSApp"],
+      entryTarget: "MyPSApp",
       incremental: false
     )
 
@@ -208,7 +208,7 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       graphDBPath: "/tmp/graph.db",
       ingestContext: firstContext,
       sourceRoots: [tmp.path],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: nil
     )
     let refreshed = try manager.registerOrRefreshSession(
@@ -216,14 +216,14 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       graphDBPath: "/tmp/graph.db",
       ingestContext: secondContext,
       sourceRoots: [tmp.path],
-      targets: ["Zoom", "zPSApp"],
+      targets: ["MyApp", "MyPSApp"],
       dylibPath: nil
     )
 
     let snapshot = refreshed.session.snapshot()
     XCTAssertEqual(snapshot.ingestContext, secondContext)
     XCTAssertEqual(snapshot.sourceRoots, [tmp.path])
-    XCTAssertEqual(snapshot.targets, ["Zoom", "zPSApp"])
+    XCTAssertEqual(snapshot.targets, ["MyApp", "MyPSApp"])
     XCTAssertEqual(snapshot.seenGeneration, 0)
     XCTAssertEqual(snapshot.ackedGeneration, 0)
     XCTAssertFalse(snapshot.ingestRunning)
@@ -235,16 +235,16 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       projectDir: "/tmp/project",
       indexStorePath: "/tmp/store",
       graphDBPath: "/tmp/graph.db",
-      targetArgs: ["Zoom"],
-      entryTarget: "Zoom",
+      targetArgs: ["MyApp"],
+      entryTarget: "MyApp",
       incremental: true
     )
     let secondContext = IngestContext(
       projectDir: "/tmp/project",
       indexStorePath: "/tmp/store",
       graphDBPath: "/tmp/graph.db",
-      targetArgs: ["Zoom", "zPSApp"],
-      entryTarget: "zPSApp",
+      targetArgs: ["MyApp", "MyPSApp"],
+      entryTarget: "MyPSApp",
       incremental: false
     )
 
@@ -253,7 +253,7 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       graphDBPath: "/tmp/graph.db",
       ingestContext: firstContext,
       sourceRoots: ["/tmp/project"],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: nil
     )
     let refreshed = try manager.registerOrRefreshSession(
@@ -261,16 +261,16 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       graphDBPath: "/tmp/graph.db",
       ingestContext: secondContext,
       sourceRoots: ["/tmp/project/next"],
-      targets: ["Zoom", "zPSApp"],
+      targets: ["MyApp", "MyPSApp"],
       dylibPath: nil
     )
 
     XCTAssertEqual(first.session.sessionId, refreshed.session.sessionId)
     let snapshot = refreshed.session.snapshot()
     XCTAssertEqual(snapshot.ingestContext, secondContext)
-    XCTAssertEqual(snapshot.ingestContext?.targetArgs, ["Zoom", "zPSApp"])
+    XCTAssertEqual(snapshot.ingestContext?.targetArgs, ["MyApp", "MyPSApp"])
     XCTAssertEqual(snapshot.sourceRoots, ["/tmp/project/next"])
-    XCTAssertEqual(snapshot.targets, ["Zoom", "zPSApp"])
+    XCTAssertEqual(snapshot.targets, ["MyApp", "MyPSApp"])
   }
 
   func testWarmAndRegisterSessionReuseSameSessionForSameStorePath() throws {
@@ -284,15 +284,15 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       projectDir: tmp.path,
       indexStorePath: storePath.path,
       graphDBPath: "/tmp/graph.db",
-      targetArgs: ["Zoom", "zPSApp"],
-      entryTarget: "Zoom",
+      targetArgs: ["MyApp", "MyPSApp"],
+      entryTarget: "MyApp",
       incremental: true
     )
 
     let warmed = try manager.getOrCreateSession(
       storePath: storePath.path,
       sourceRoots: [tmp.path],
-      targets: ["Zoom"],
+      targets: ["MyApp"],
       dylibPath: nil
     )
     let registered = try manager.registerOrRefreshSession(
@@ -300,7 +300,7 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       graphDBPath: "/tmp/graph.db",
       ingestContext: context,
       sourceRoots: [tmp.path],
-      targets: ["Zoom", "zPSApp"],
+      targets: ["MyApp", "MyPSApp"],
       dylibPath: nil
     )
 
@@ -308,7 +308,7 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
     XCTAssertFalse(warmed.reused)
     XCTAssertTrue(registered.reused)
     XCTAssertEqual(registered.session.snapshot().ingestContext, context)
-    XCTAssertEqual(registered.session.snapshot().targets, ["Zoom", "zPSApp"])
+    XCTAssertEqual(registered.session.snapshot().targets, ["MyApp", "MyPSApp"])
   }
 
   func testSingleFlightIsScopedPerGraphDBPath() {
@@ -570,8 +570,8 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       "context": [
         "projectDir": "/tmp/project",
         "indexStorePath": "/tmp/store",
-        "targetArgs": ["Zoom"],
-        "entryTarget": "Zoom",
+        "targetArgs": ["MyApp"],
+        "entryTarget": "MyApp",
         "incremental": true,
       ],
     ]
