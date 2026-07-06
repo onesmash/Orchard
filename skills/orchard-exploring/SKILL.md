@@ -26,14 +26,17 @@ jumping straight to grep.
 1. orchard_search / `orchard search --name "<concept or symbol>"`
    → resolve likely symbols, inspect status / diag / next
 
-2. orchard_symbol / `orchard symbol --usr "<USR>"`
-   → confirm identity, file path, kind, language, module
+2. orchard_context / `orchard context --usr "<USR>"`
+   → one-shot 360° view: metadata + categorized incoming/outgoing
+     references + type hierarchy + dynamic binding hints
+   → prefer this over individual orchard_symbol + orchard_find_callers +
+     orchard_find_callees + orchard_hierarchy calls
 
-3. orchard_find_callers / orchard_find_callees
-   → build the local graph neighborhood around the symbol
+3. orchard_find_callers / orchard_find_callees (when context pagination
+   shows truncated results, or multi-hop tracing is needed)
 
-4. orchard_find_references or orchard_hierarchy when needed
-   → combine incoming/outgoing edges or inspect type relationships
+4. orchard_find_references (when only bidirectional edges are needed
+   without metadata or hierarchy)
 
 5. Read the source files that Orchard surfaced
    → explain real implementation details, not just graph structure
@@ -47,8 +50,9 @@ jumping straight to grep.
 ```text
 - [ ] Resolve the symbol or concept with orchard_search
 - [ ] Read status / diag / next instead of stopping at "0 results"
-- [ ] Confirm the chosen USR with orchard_symbol
-- [ ] Inspect callers, callees, references, or hierarchy as needed
+- [ ] Get the full 360° view with orchard_context({usr})
+- [ ] Inspect callers, callees, hierarchy, or dynamic binding hints from context
+- [ ] If pagination.truncated, drill into individual tools for full results
 - [ ] Read the source files Orchard surfaced
 - [ ] Summarize both graph structure and implementation behavior
 ```
@@ -89,12 +93,30 @@ Full crashlogs or full crashed-thread blocks are handled outside Orchard. First
 extract one concrete frame, symbol name, qualified name, or USR, then continue
 with Orchard.
 
+### 360° context (preferred after search)
+
+Use `orchard_context` as the **default next step** after `orchard_search`
+returns a USR.  It returns everything in one call:
+
+- symbol metadata (name, kind, language, module, file_path, signature)
+- categorized incoming references: calls, inherits, implements, overrides
+- categorized outgoing references: calls (with semantic_role), inherits, overrides
+- type hierarchy: superclasses, protocols, subclasses
+- process participation: execution flows with step index and step count
+- dynamic binding hints: notification/target-action registrations
+- pagination info: if truncated, drill into dedicated tools for full results
+
+Supports both `usr` (zero-ambiguity) and `name` (with disambiguation hints like
+`file_path`, `kind`, `module`).  Returns `not_found` / `ambiguous` / `found`
+tristate.
+
 ### Local relationship exploration
 
-Use these tools after you have a concrete USR:
+Use these individual tools when `orchard_context` pagination shows truncated
+results, or when you only need one specific dimension:
 
-- `orchard_find_callers`: who calls this symbol
-- `orchard_find_callees`: what this symbol calls
+- `orchard_find_callers`: who calls this symbol (supports multi-hop)
+- `orchard_find_callees`: what this symbol calls (supports multi-hop)
 - `orchard_find_references`: incoming + outgoing relationships in one call
 - `orchard_hierarchy`: parents, protocols, subclasses
 

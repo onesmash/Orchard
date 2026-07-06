@@ -4,8 +4,8 @@ description: >
   Query the Orchard Apple Semantic Graph to analyze code relationships in
   indexed Xcode projects. Use this skill whenever the user asks about
   function callers or callees, impact / blast-radius analysis, type
-  hierarchies, symbol lookups, guided miss-path debugging, single crash-frame
-  lookup,
+  hierarchies, symbol lookups, 360-degree symbol context, guided miss-path
+  debugging, single crash-frame lookup,
   code dependencies, "who calls X", "what does Y depend on",
   "I only have this stack frame", ObjC notification/delegate wiring,
   lifecycle / async callback boundaries, safe renaming, or wants to understand how iOS / macOS components
@@ -16,6 +16,9 @@ description: >
   the next debugging step, not just a raw symbol search. Every edge is
   compiler-verified via Xcode IndexStore — "confidence" labels tell you
   whether a call edge is source-level evidence or compiler-inferred.
+  New in this version: orchard_context provides a one-shot 360° symbol
+  view — use it as the default step after orchard_search instead of
+  chaining multiple individual tool calls.
 ---
 
 # Orchard — Semantic Graph CLI
@@ -196,6 +199,35 @@ Returns `incoming` (callers) and `outgoing` (callees) with the same
 also carry `semantic_role`** — notification_observer, delegate_setter,
 framework_callback, etc.  Target-action callees also carry
 `target_action_bridges` when available.
+
+### context — 360° symbol view
+
+```
+orchard_context({usr: "<USR>"})
+```
+
+The default next step after `orchard_search` returns a USR.  Returns
+**everything in one call**:
+
+- **symbol** — name, kind, language, module, file_path, signature, access_level
+- **incoming** — categorized references (calls, inherits, implements, overrides)
+  with confidence and provenance
+- **outgoing** — categorized references (with semantic_role for ObjC,
+  notification_bridges when available)
+- **hierarchy** — superclasses, protocols, subclasses
+- **processes** — execution flows the symbol participates in, with step index
+- **dynamic_binding_hints** — notification/target-action registrations
+- **pagination** — truncated flag + total counts for each direction
+
+Supports both `usr` (zero-ambiguity) and `name` (with `file_path`, `kind`,
+`module` hints for disambiguation).  Returns `not_found` / `ambiguous` /
+`found` tristate in `data.status`.
+
+Prefer `orchard_context` over running `orchard_symbol` + `orchard_find_callers`
++ `orchard_find_callees` + `orchard_hierarchy` separately.  When
+`pagination.incoming_truncated` or `pagination.outgoing_truncated` is true, use
+the dedicated tools (`orchard_find_callers`, `orchard_find_callees`) to get
+full results.
 
 ### impact — Blast-radius analysis
 

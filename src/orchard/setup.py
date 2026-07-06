@@ -317,8 +317,9 @@ This project is indexed by orchard as **{project_name}**. Use Orchard MCP tools 
 ## Always Do
 
 - Before editing a function, class, or method, run `orchard_impact` and report direct callers, affected surfaces, and risk.
-- Use `orchard_find_callers` / `orchard_find_callees` before grep when exploring unfamiliar code; Orchard edges come from IndexStore.
+- After `orchard_search` returns a USR, use `orchard_context({{usr}})` for the full 360° view (metadata + callers + callees + hierarchy + processes) instead of chaining `orchard_symbol` + `orchard_find_callers` + `orchard_find_callees` individually.
 - When `orchard_search` misses, read `status`, `diag`, `candidates`, and `next`; a miss may be stale, uncovered, or only partially resolved.
+- Use `orchard_find_callers` / `orchard_find_callees` for multi-hop tracing or when `orchard_context` pagination is truncated.
 - Warn the user before proceeding if impact returns HIGH or CRITICAL risk.
 
 ## Debugging Flow
@@ -326,9 +327,10 @@ This project is indexed by orchard as **{project_name}**. Use Orchard MCP tools 
 1. `orchard_search({{name: "<symbol>"}})` — guided symbol lookup with `status`, `diag`, `candidates`, and `next`
 2. If the user has a single stack frame, use `orchard_lookup_frame({{frame: "<stack line>"}})` to resolve owner/method candidates and graph context
 3. If the user pasted a full crashlog or crash thread block, extract a concrete frame, symbol name, qualified name, or USR outside Orchard first. full crashlogs are handled outside Orchard.
-4. `orchard_find_callers({{usr: "<USR>"}})` — see who calls it; each entry has `confidence` (compiler-verified / inferred), `call_style`, optional `execution_boundary`, and `source_scope`; if `data` is empty, inspect `dynamic_binding_hints` before concluding the callback is unreachable
-5. `orchard_find_callees({{usr: "<USR>"}})` — see what it calls; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges / target_action_bridges when Orchard can recover the wiring
-6. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups plus compact `summary`
+4. `orchard_context({{usr: "<USR>"}})` — one-shot 360° view: metadata + categorized incoming/outgoing references + type hierarchy + process participation + dynamic binding hints; prefer this over individual `orchard_symbol` + `orchard_find_callers` + `orchard_find_callees` calls
+5. `orchard_find_callers({{usr: "<USR>"}})` — multi-hop caller tracing when needed; each entry has `confidence` (compiler-verified / inferred), `call_style`, optional `execution_boundary`, and `source_scope`; if `data` is empty, inspect `dynamic_binding_hints` before concluding the callback is unreachable
+6. `orchard_find_callees({{usr: "<USR>"}})` — multi-hop callee tracing; ObjC callees carry `semantic_role` (notification_observer, delegate_setter, framework_callback...) and notification_bridges / target_action_bridges when Orchard can recover the wiring
+7. `orchard_impact({{usr: "<USR>"}})` — assess blast radius with depth groups plus compact `summary`
 
 ## Frame Lookup Boundary
 
@@ -365,6 +367,7 @@ This project is indexed by orchard as **{project_name}**. Use Orchard MCP tools 
 | Tool | When to use | Command |
 |------|-------------|---------|
 | `search` | Guided symbol lookup by name or qualified name | `orchard_search({{name: "viewDidLoad"}})` |
+| `context` | 360° view: metadata + callers + callees + hierarchy + processes | `orchard_context({{usr: "<USR>"}})` |
 | `lookup_frame` | Resolve a single stack frame to owner/method candidates and graph context | `orchard_lookup_frame({{frame: "ssb::thread_wrapper_t::process_msg(unsigned int)"}})` |
 | `find_callers` | Who calls this symbol | `orchard_find_callers({{usr: "<USR>"}})` |
 | `find_callees` | What this symbol calls; ObjC callees include semantic roles / notification bridges | `orchard_find_callees({{usr: "<USR>"}})` |

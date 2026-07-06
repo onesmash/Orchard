@@ -237,6 +237,30 @@ def cmd_hierarchy(args: list[str]):
     conn.close()
 
 
+def cmd_context(args: list[str]):
+    """orchard context — 360-degree symbol view."""
+    import argparse
+    ap = argparse.ArgumentParser(prog="orchard context")
+    ap.add_argument("--usr", default="", help="USR of the symbol (zero-ambiguity)")
+    ap.add_argument("--name", default="", help="Symbol name (fuzzy, with disambiguation)")
+    ap.add_argument("--file-path", default="", dest="file_path", help="File path hint for disambiguation")
+    ap.add_argument("--kind", default="", help="Kind hint for disambiguation")
+    ap.add_argument("--module", default="", help="Module hint for disambiguation")
+    ap.add_argument("--target", default="")
+    ap.add_argument("--db", default="")
+    ns = ap.parse_args(args)
+    from orchard.handlers.context import ContextRequest, get_context
+    conn = _conn(ns.db, read_only=True)
+    build_id = _default_build_id(conn, ns.target)
+    r = get_context(conn, ContextRequest(
+        usr=ns.usr, name=ns.name,
+        file_path=ns.file_path, kind=ns.kind, module=ns.module,
+        build_id=build_id,
+    ))
+    _print_json(r.__dict__)
+    conn.close()
+
+
 def cmd_ingest(args: list[str]):
     import argparse
     ap = argparse.ArgumentParser(prog="orchard ingest")
@@ -1548,6 +1572,7 @@ COMMANDS: dict[str, tuple] = {
     "symbol":        (cmd_symbol,        "Show metadata for a single symbol"),
     "find_references": (cmd_find_references, "Find incoming and outgoing references for a symbol"),
     "hierarchy":     (cmd_hierarchy,     "Show type hierarchy (supertypes/subtypes)"),
+    "context":       (cmd_context,       "360-degree view: metadata + references + hierarchy"),
     "ingest":        (cmd_ingest,        "Build the graph from Xcode IndexStore data"),
     "update":        (cmd_update,        "Upgrade the installed Orchard CLI via uv"),
     "indexd":        (cmd_indexd,        "Manage local orchard-indexd daemon state"),

@@ -28,8 +28,10 @@ test plan.
 2. Review d1 first
    → direct callers, subclasses, protocol conformers that will break first
 
-3. Use orchard_symbol / orchard_find_callers / orchard_find_references as needed
-   → confirm identity and investigate sensitive dependents
+3. Use orchard_context / orchard_find_callers / orchard_find_references as needed
+   → orchard_context for full view of high-risk dependents (metadata +
+     callers + callees + hierarchy + processes)
+   → individual tools when pagination is truncated or multi-hop is needed
 
 4. Assess risk, affected surfaces, and likely tests
    → tell the user what must be updated and what should be tested

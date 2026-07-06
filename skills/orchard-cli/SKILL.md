@@ -144,6 +144,21 @@ orchard hierarchy --usr "<USR>"
 
 Use these after a search has resolved the exact symbol identity.
 
+### Context (360° view)
+
+```bash
+# Preferred: USR-based zero-ambiguity lookup
+orchard context --usr "<USR>"
+
+# Alternative: name-based with disambiguation hints
+orchard context --name "viewDidLoad" --file-path "MyVC.m" --kind "method"
+```
+
+Returns metadata + categorized incoming/outgoing references + type hierarchy +
+process participation + dynamic binding hints in one call.
+Prefer this over running `orchard symbol` + `orchard find_callers` +
+`orchard find_callees` + `orchard hierarchy` separately.
+
 ### Impact
 
 ```bash

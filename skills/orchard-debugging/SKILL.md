@@ -29,11 +29,14 @@ root-cause hypotheses.
    orchard_lookup_frame({frame: "<stack line>"})
    → resolve owner/method candidates and graph context
 
-3. orchard_symbol({usr: "<USR>"})
-   → confirm identity, file path, module, language
+3. orchard_context({usr: "<USR>"})
+   → one-shot 360° view: metadata + callers + callees + hierarchy
+     + process participation
+   → prefer this over individual orchard_symbol + orchard_find_callers
+     + orchard_find_callees calls
 
-4. orchard_find_callers / orchard_find_callees / orchard_find_references
-   → trace incoming and outgoing graph relationships
+4. orchard_find_callers / orchard_find_callees (multi-hop, or when
+   context pagination is truncated)
 
 5. Read source files and compare them with Orchard's boundaries / freshness
    hints to confirm the actual root cause
@@ -49,7 +52,7 @@ root-cause hypotheses.
 - [ ] Understand the symptom: error, crash frame, wrong behavior, missing callback
 - [ ] Use orchard_search or orchard_lookup_frame as the entry point
 - [ ] Read status / freshness / coverage / diag / next before trusting a miss
-- [ ] Confirm the suspect symbol with orchard_symbol
+- [ ] Get the full 360° view with orchard_context({usr})
 - [ ] Trace callers, callees, or references around the suspect
 - [ ] Pay attention to async boundaries, notification wiring, and source_scope
 - [ ] Read the actual source files to confirm root cause

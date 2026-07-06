@@ -364,7 +364,7 @@ def _conn_for_args(args: dict | None = None):
 TOOLS = [
     Tool(
         name="orchard_search",
-        description="Search for symbols by name or qualified name. Returns compact status, diagnostics, candidates, and next actions. If the input looks like a stack frame, use orchard_lookup_frame.",
+        description="Search for symbols by name or qualified name. Returns compact status, diagnostics, candidates, and next actions.\n\nWHEN TO USE: Discovering symbols when you don't know the exact USR. This is the entry point for fuzzy symbol discovery — prefer this over orchard_context when you only have a name or partial name. If the input looks like a stack frame, use orchard_lookup_frame instead.\n\nAFTER THIS: Use orchard_context({usr}) with the returned USR for a 360-degree view, or orchard_impact({usr}) for blast-radius analysis.\n\nTIPS: Use class_name mode to list all methods of a class/struct/enum/protocol. The response includes diag (warnings), candidates (suggestions), and next_actions (guided next steps).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -381,7 +381,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_find_references",
-        description="Find incoming and outgoing references for a symbol. Returns both callers (incoming) and callees (outgoing). Each edge includes confidence (compiler-verified/inferred) and provenance labels. ObjC callees carry semantic_role (notification_observer, delegate_setter, framework_callback...) inline — no separate tool needed.",
+        description="Find incoming and outgoing references for a symbol. Returns both callers (incoming) and callees (outgoing). Each edge includes confidence (compiler-verified/inferred) and provenance labels. ObjC callees carry semantic_role (notification_observer, delegate_setter, framework_callback...) inline — no separate tool needed.\n\nWHEN TO USE: When you need bidirectional reference information but don't need type hierarchy or full metadata. More focused than orchard_context — returns only reference edges without hierarchy or symbol metadata.\n\nAFTER THIS: Use orchard_hierarchy({usr}) for type relationships, or orchard_context({usr}) for the complete 360-degree view including metadata and hierarchy.\n\nTIPS: ObjC callees carry semantic_role inline. For notification wiring details, use orchard_notification_graph. For target-action debugging, use orchard_target_action_graph.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -393,7 +393,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_find_callers",
-        description="Find all callers of a symbol. Each entry includes confidence (compiler-verified/inferred) and provenance labels so you can distinguish source-level evidence from compiler-inferred edges.",
+        description="Find all callers of a symbol. Each entry includes confidence (compiler-verified/inferred) and provenance labels so you can distinguish source-level evidence from compiler-inferred edges.\n\nWHEN TO USE: When you only need the incoming direction (who calls this). Supports multi-hop traversal via depth parameter for tracing call chains upward.\n\nAFTER THIS: Use orchard_impact({usr}) before editing to assess blast radius. Use orchard_find_callees({usr}) to see what this symbol calls. Use orchard_context({usr}) for complete context including hierarchy.\n\nTIPS: Set depth > 1 for multi-hop traversal. Use relation_types to include Inherits/Implements edges. Set include_inferred=true to see compiler-inferred call edges (may include framework callbacks). When no static callers are found, dynamic_binding_hints may reveal notification/target-action registrations.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -409,7 +409,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_find_callees",
-        description="Find all callees (symbols called by) a given symbol. Each entry includes confidence (compiler-verified/inferred). ObjC callees carry semantic_role (notification_observer, delegate_setter, framework_callback...) inline — no separate tool needed. Set include_notification_bridges=true to annotate notification_observer callees with matching notification name, selector, and callback.",
+        description="Find all callees (symbols called by) a given symbol. Each entry includes confidence (compiler-verified/inferred). ObjC callees carry semantic_role (notification_observer, delegate_setter, framework_callback...) inline — no separate tool needed.\n\nWHEN TO USE: Tracing what a function depends on. Use include_notification_bridges=true to see notification wiring annotations on observer callees.\n\nAFTER THIS: Use orchard_context({usr}) on interesting callees for deeper analysis. Use orchard_impact({usr}) to see the downstream dependency chain.\n\nTIPS: Multi-hop via depth parameter. Set include_inferred=true to see compiler-inferred callees. Set include_notification_bridges=true to annotate notification_observer callees with notification name, selector, and callback symbol.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -426,7 +426,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_impact",
-        description="Blast-radius analysis: finds all dependents grouped by depth (d1=direct, d2=indirect, ...). Returns risk level (low/medium/high/critical) and per-depth symbol lists.",
+        description="Blast-radius analysis: finds all dependents grouped by depth (d1=direct, d2=indirect, ...). Returns risk level (low/medium/high/critical) and per-depth symbol lists.\n\nWHEN TO USE: BEFORE modifying any function, class, or method. Understand what will break if you change the target symbol.\n\nAFTER THIS: Review d1 (WILL BREAK) items — these MUST be updated. Use orchard_context({usr}) on high-risk dependents for details. Test d2 items (LIKELY AFFECTED) and d3 items if on critical path.\n\nTIPS: Risk levels — LOW (0-3 direct callers), MEDIUM (4-9), HIGH (10+), CRITICAL (hub symbols like base classes). max_depth controls traversal depth (default 5).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -439,7 +439,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_symbol",
-        description="Get metadata for a single symbol: name, kind, language, module, file_path, signature, access_level.",
+        description="Get metadata for a single symbol: name, kind, language, module, file_path, signature, access_level.\n\nWHEN TO USE: When you only need metadata, not references or hierarchy. Lighter than orchard_context — single query, no aggregation.\n\nAFTER THIS: Use orchard_context({usr}) for the full 360-degree view including references and hierarchy.\n\nTIPS: This is the fastest metadata lookup. If you also need callers/callees, skip this and use orchard_context directly.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -451,7 +451,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_hierarchy",
-        description="Type hierarchy for a symbol: superclasses, protocols, and subclasses/conformers.",
+        description="Type hierarchy for a symbol: superclasses, protocols, and subclasses/conformers.\n\nWHEN TO USE: Understanding inheritance chains and protocol conformance. Useful for finding all implementations of a protocol or all subclasses of a base class.\n\nAFTER THIS: Use orchard_find_references({usr}) on subclass/protocol members for their callers. Use orchard_context({usr}) for complete context on any hierarchy member.\n\nTIPS: Subclass list may be large for base types like NSObject — consider filtering by module if you only need project-specific subclasses.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -463,7 +463,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_notification_graph",
-        description="Query the NSNotificationCenter publisher-observer graph. Returns notifications grouped by name (default), each with posters and observers. Observers now carry identity (who registered), selector, and callback. Use group_by='observer' to pivot by observer — see each observer's registrations at a glance.",
+        description="Query the NSNotificationCenter publisher-observer graph. Returns notifications grouped by name (default), each with posters and observers. Observers carry identity (who registered), selector, and callback.\n\nWHEN TO USE: Debugging notification wiring — find who posts a notification and who observes it. Use group_by='observer' to pivot by observer and see all their registrations at a glance.\n\nAFTER THIS: Use orchard_context({usr}) on observer/poster symbols for deeper analysis.\n\nTIPS: Default group_by='notification' shows publisher-observer flow. group_by='observer' pivots to show each observer's registrations. Filter by notification_name for targeted queries.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -475,7 +475,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_target_action_graph",
-        description="Query the UIKit target-action graph. Returns bindings grouped by callback (default) or registrar, including selector, source file, line, and raw control event token.",
+        description="Query the UIKit target-action graph. Returns bindings grouped by callback (default) or registrar, including selector, source file, line, and raw control event token.\n\nWHEN TO USE: Debugging UIControl event wiring — find which controls trigger which selectors. Use group_by='registrar' to see all bindings registered from a specific file.\n\nAFTER THIS: Use orchard_context({usr}) or orchard_find_callers({usr}) on callback symbols for deeper analysis.\n\nTIPS: Default group_by='callback' shows selector-to-control mapping. group_by='registrar' shows per-file bindings. Filter by selector name (e.g. 'onToggle:') or callback_usr for targeted queries.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -489,7 +489,7 @@ TOOLS = [
     ),
     Tool(
         name="orchard_lookup_frame",
-        description="Resolve a single frame-like symbol text into indexed graph context. Does not parse full crashlogs or crashed-thread blocks.",
+        description="Resolve a single frame-like symbol text into indexed graph context. Does not parse full crashlogs or crashed-thread blocks.\n\nWHEN TO USE: When you have a single stack frame from a crash report, debugger, or profiler and need to find the corresponding indexed symbol. Accepts one frame at a time — extract individual frames from crashlogs before calling.\n\nAFTER THIS: Use orchard_context({usr}) on resolved symbols for full 360-degree view. Use orchard_find_callers({usr}) to trace the call chain leading to the crash.\n\nTIPS: This tool is for single frames only — do not paste full crashlog blocks. The frame format is flexible; common debugger/backtrace formats are accepted. If this returns no match, try orchard_search with the symbol name extracted from the frame.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -499,6 +499,22 @@ TOOLS = [
                 "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
             },
             "required": ["frame"],
+        },
+    ),
+    Tool(
+        name="orchard_context",
+        description="360-degree view of a single code symbol: metadata, categorized incoming/outgoing references (calls, inherits, implements, overrides), type hierarchy, process participation, and dynamic binding hints — all in one call.\n\nWHEN TO USE: After orchard_search returns a USR — when you need to understand a symbol in depth. Use usr for zero-ambiguity lookup. For fuzzy discovery by name, use orchard_search first, then pass the returned USR to orchard_context. Supports name-based lookup with disambiguation hints (file_path, kind, module) as a secondary path.\n\nAFTER THIS: Use orchard_impact({usr}) if planning changes to assess blast radius. Use orchard_find_callers({usr, depth: 2}) for multi-hop caller tracing. Use orchard_hierarchy({usr}) if you only need type hierarchy.\n\nTIPS: Returns not_found/ambiguous/found tristate in data.status. Pass file_path or kind hints to disambiguate common names. For large symbol sets, incoming/outgoing are capped at 30 each — check data.pagination.truncated and use orchard_find_callers / orchard_find_callees for full results. Process participation is included when the index has detected execution flows. Dynamic binding hints (notification/target-action) are included when available.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "usr": {"type": "string", "description": "USR of the symbol (preferred — zero-ambiguity lookup)."},
+                "name": {"type": "string", "description": "Symbol name for fuzzy lookup. Prefer obtaining the USR via orchard_search first."},
+                "file_path": {"type": "string", "description": "File path hint to disambiguate common names."},
+                "kind": {"type": "string", "description": "Kind hint to disambiguate common names (e.g. 'class', 'method', 'function')."},
+                "module": {"type": "string", "description": "Module hint to disambiguate common names."},
+                "include_notification_bridges": {"type": "boolean", "description": "When true, annotate notification_observer callees with notification name, selector, and callback."},
+                "project_dir": {"type": "string", "description": "Optional project root directory. When provided, Orchard resolves <project_dir>/.orchard/graph.db directly instead of relying on MCP roots."},
+            },
         },
     ),
 ]
@@ -801,6 +817,27 @@ def _do_target_action_graph(args: dict) -> str:
     return json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=str)
 
 
+def _do_context(args: dict) -> str:
+    """Dispatch orchard_context tool."""
+    import importlib
+    mod = importlib.import_module("orchard.handlers.context")
+    fn = getattr(mod, "get_context")
+    cls = getattr(mod, "ContextRequest")
+    conn = _conn_for_args(args)
+    build_id = args.get("build_id") or _default_build_id_safe(conn, "")
+    req = cls(
+        usr=args.get("usr", ""),
+        name=args.get("name", ""),
+        file_path=args.get("file_path", ""),
+        kind=args.get("kind", ""),
+        module=args.get("module", ""),
+        build_id=build_id,
+        include_notification_bridges=args.get("include_notification_bridges", False),
+    )
+    result = fn(conn, req)
+    return json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=str)
+
+
 HANDLERS: dict[str, callable] = {
     "orchard_search": _do_search,
     "orchard_lookup_frame": _do_lookup_frame,
@@ -812,6 +849,7 @@ HANDLERS: dict[str, callable] = {
     "orchard_hierarchy": lambda a: _do_handler("type_hierarchy", "get_type_hierarchy", "TypeHierarchyRequest", a),
     "orchard_notification_graph": _do_notification_graph,
     "orchard_target_action_graph": _do_target_action_graph,
+    "orchard_context": _do_context,
 }
 
 
