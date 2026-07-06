@@ -27,7 +27,13 @@ private struct DaemonCanonicalSlot {
 
 private let ingestLockBusyExitCode: Int32 = 23
 private let ingestRetryDelay: DispatchTimeInterval = .seconds(1)
-private let ingestDebounceDelay: DispatchTimeInterval = .milliseconds(200)
+private var ingestDebounceDelay: DispatchTimeInterval {
+    if let raw = ProcessInfo.processInfo.environment["ORCHARD_INDEXD_DEBOUNCE_SECONDS"],
+       let seconds = Double(raw), seconds >= 0 {
+        return .milliseconds(Int(seconds * 1000))
+    }
+    return .seconds(10)
+}
 let indexdBootID = ISO8601DateFormatter().string(from: Date())
 
 enum IndexdLogLevel: Int, Comparable {
