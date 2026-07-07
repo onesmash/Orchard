@@ -26,7 +26,36 @@ private struct DaemonCanonicalSlot {
 }
 
 private let ingestLockBusyExitCode: Int32 = 23
-private let ingestRetryDelay: DispatchTimeInterval = .seconds(1)
+
+/// Maximum number of consecutive lock-busy (exit code 23) retries before giving up.
+/// Configurable via ORCHARD_INDEXD_MAX_LOCK_BUSY_RETRIES environment variable.
+private var ingestLockBusyMaxRetries: Int {
+    if let raw = ProcessInfo.processInfo.environment["ORCHARD_INDEXD_MAX_LOCK_BUSY_RETRIES"],
+       let value = Int(raw), value >= 0 {
+        return value
+    }
+    return 10
+}
+
+/// Maximum backoff cap in seconds for lock-busy retries.
+/// Configurable via ORCHARD_INDEXD_MAX_BACKOFF_SECONDS environment variable.
+private var ingestLockBusyMaxBackoff: Double {
+    if let raw = ProcessInfo.processInfo.environment["ORCHARD_INDEXD_MAX_BACKOFF_SECONDS"],
+       let seconds = Double(raw), seconds >= 1.0 {
+        return seconds
+    }
+    return 120.0
+}
+
+/// Compute the exponential-backoff delay for the n-th lock-busy retry
+/// (retryCount is zero-based: 0 = first retry after first code-23 exit).
+/// With default settings: 1s → 2s → 4s → 8s → 16s → 32s → 64s → 120s → 120s → 120s.
+/// Jitter: ±50% to prevent thundering-herd when multiple sessions contend.
+internal func ingestLockBusyDelay(retryCount: Int) -> DispatchTimeInterval {
+    let base = min(pow(2.0, Double(retryCount)), ingestLockBusyMaxBackoff)
+    let jittered = Double.random(in: 0.5...1.0) * base
+    return .milliseconds(Int(jittered * 1000))
+}
 private var ingestDebounceDelay: DispatchTimeInterval {
     if let raw = ProcessInfo.processInfo.environment["ORCHARD_INDEXD_DEBOUNCE_SECONDS"],
        let seconds = Double(raw), seconds >= 0 {
@@ -254,6 +283,7 @@ struct IndexdSessionSnapshot {
   let ingestRunning: Bool
   let retryScheduled: Bool
   let retryScheduledForLastExit: Bool
+  let consecutiveLockBusyRetries: Int
   let debounceScheduled: Bool
   let hasIngestContext: Bool
   let hasPolled: Bool
@@ -273,6 +303,10 @@ final class IndexdSession {
   private(set) var ingestTargetGeneration: UInt64?
   private(set) var retryScheduled = false
   private(set) var retryScheduledForLastExit = false
+  /// Number of consecutive lock-busy (exit code 23) retries attempted
+  /// in the current cycle.  Reset to 0 on success (code 0) or when
+  /// a fresh debounce cycle starts.  Used to compute backoff delay.
+  private(set) var consecutiveLockBusyRetries: Int = 0
   private(set) var debounceScheduled = false
   let library: IndexStoreLibrary
   let db: IndexStoreDB
@@ -426,6 +460,7 @@ final class IndexdSession {
         ingestRunning: ingestRunning,
         retryScheduled: retryScheduled,
         retryScheduledForLastExit: retryScheduledForLastExit,
+        consecutiveLockBusyRetries: consecutiveLockBusyRetries,
         debounceScheduled: debounceScheduled,
         hasIngestContext: ingestContext != nil,
         hasPolled: hasPolled
@@ -699,6 +734,7 @@ final class IndexdSession {
       ingestTargetGeneration = nil
       retryScheduled = false
       retryScheduledForLastExit = false
+      consecutiveLockBusyRetries = 0
       logSink(
         "session=\(sessionId) auto-ingest succeeded acked=\(ackedGeneration) pending=\(seenGeneration > ackedGeneration)"
       )
@@ -709,13 +745,23 @@ final class IndexdSession {
     ingestTargetGeneration = nil
     if code == ingestLockBusyExitCode {
       retryScheduledForLastExit = true
-      logSink("session=\(sessionId) auto-ingest lock busy; scheduling retry")
-      scheduleRetryLocked()
+      let delay = ingestLockBusyDelay(retryCount: consecutiveLockBusyRetries)
+      if consecutiveLockBusyRetries < ingestLockBusyMaxRetries {
+        consecutiveLockBusyRetries += 1
+        logSink("session=\(sessionId) auto-ingest lock busy; scheduling retry attempt=\(consecutiveLockBusyRetries) delay=\(intervalDescription(delay))")
+        scheduleRetryLocked(delay: delay)
+        return
+      }
+      logSink("session=\(sessionId) auto-ingest lock busy; retry limit (\(ingestLockBusyMaxRetries)) exceeded — giving up")
+      retryScheduled = false
+      retryScheduledForLastExit = false
+      logSink("session=\(sessionId) auto-ingest failed without retry")
       return
     }
 
     retryScheduled = false
     retryScheduledForLastExit = false
+    consecutiveLockBusyRetries = 0
     logSink("session=\(sessionId) auto-ingest failed without retry")
   }
 
@@ -739,7 +785,9 @@ final class IndexdSession {
     let targetGeneration = seenGeneration
     guard beginGraphDBIngest() else {
       logSink("session=\(sessionId) auto-ingest deferred; reason=graph_db_single_flight_busy generation=\(targetGeneration) seen=\(seenGeneration) acked=\(ackedGeneration)")
-      scheduleRetryLocked()
+      // SingleFlight-busy: use fixed 1s delay (not lock-busy backoff).
+      // In-process conflicts resolve in milliseconds; no contention pattern.
+      scheduleRetryLocked(delay: .seconds(1))
       return
     }
     guard beginIngestLocked(targetGeneration: targetGeneration) else {
@@ -751,21 +799,46 @@ final class IndexdSession {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: orchardCLIPath)
     process.arguments = makeIngestArguments(context: context)
+
+    // Synchronous stderr capture: avoid async readabilityHandler races.
+    // readDataToEndOfFile() blocks until the pipe write-end is closed
+    // (process exit), guaranteeing all data is captured before logging.
+    let stderrCapture = Pipe()
+    process.standardError = stderrCapture
+
     let mode = context.incremental ? "incremental" : "full"
     let targetArgs = context.targetArgs.joined(separator: ",")
     logSink(
       "session=\(sessionId) launching auto-ingest generation=\(targetGeneration) mode=\(mode) entry=\(context.entryTarget) targets=\(targetArgs) db=\(context.graphDBPath)"
     )
+
     process.terminationHandler = { [weak self] proc in
+      var stderrTail: String = ""
+      do {
+        let data = try stderrCapture.fileHandleForReading.readToEnd() ?? Data()
+        if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+          let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+          stderrTail = lines.suffix(5).joined(separator: " | ")
+        }
+      } catch {
+        stderrTail = "(stderr read error: \(error))"
+      }
+      try? stderrCapture.fileHandleForReading.close()
+
+      let code = proc.terminationStatus
       self?.queue.async {
         endGraphDBIngest()
-        self?.handleIngestExitLocked(code: proc.terminationStatus)
+        if code != 0 && !stderrTail.isEmpty {
+          self?.logSink("session=\(self?.sessionId ?? "?") auto-ingest stderr tail: \(stderrTail)")
+        }
+        self?.handleIngestExitLocked(code: code)
       }
     }
 
     do {
       try process.run()
     } catch {
+      try? stderrCapture.fileHandleForReading.close()
       endGraphDBIngest()
       ingestRunning = false
       ingestTargetGeneration = nil
@@ -776,12 +849,13 @@ final class IndexdSession {
     }
   }
 
-  private func scheduleRetryLocked() {
+  private func scheduleRetryLocked(delay: DispatchTimeInterval? = nil) {
+    let resolvedDelay = delay ?? ingestLockBusyDelay(retryCount: 0)
     let replacingExisting = retryWorkItem != nil
     retryWorkItem?.cancel()
     retryScheduled = true
     emitLog(
-      "session=\(sessionId) scheduled auto-ingest retry delay=\(intervalDescription(ingestRetryDelay)) replacing_existing=\(replacingExisting)"
+      "session=\(sessionId) scheduled auto-ingest retry delay=\(intervalDescription(resolvedDelay)) replacing_existing=\(replacingExisting)"
     , level: .debug)
     let workItem = DispatchWorkItem { [weak self] in
       guard let self else {
@@ -793,7 +867,7 @@ final class IndexdSession {
       self.maybeStartBackgroundIngestLocked()
     }
     retryWorkItem = workItem
-    queue.asyncAfter(deadline: .now() + ingestRetryDelay, execute: workItem)
+    queue.asyncAfter(deadline: .now() + resolvedDelay, execute: workItem)
   }
 
   private func scheduleDebouncedIngestIfNeededLocked() {
@@ -801,6 +875,10 @@ final class IndexdSession {
       debounceScheduled = false
       emitLog("session=\(sessionId) debounce cleared; no pending work", level: .debug)
       return
+    }
+    // Reset retry counter for fresh debounce cycles (not retry-triggered).
+    if !retryScheduledForLastExit {
+      consecutiveLockBusyRetries = 0
     }
     let replacingExisting = debounceWorkItem != nil
     debounceWorkItem?.cancel()

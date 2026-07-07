@@ -324,6 +324,8 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
   }
 
   func testRegisterSessionBackfillsPendingWorkAfterBackgroundIngestConfiguration() throws {
+    setenv("ORCHARD_INDEXD_DEBOUNCE_SECONDS", "0.2", 1)
+    defer { unsetenv("ORCHARD_INDEXD_DEBOUNCE_SECONDS") }
     let session = try makeTestSession()
     let beginInFlightCalls = SynchronizedCounter()
 
@@ -417,8 +419,12 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
   }
 
   func testGraphDBSingleFlightConflictPreservesPendingWorkAndRetries() throws {
+    setenv("ORCHARD_INDEXD_DEBOUNCE_SECONDS", "0.2", 1)
     setenv("ORCHARD_LOG_LEVEL", "trace", 1)
-    defer { unsetenv("ORCHARD_LOG_LEVEL") }
+    defer {
+      unsetenv("ORCHARD_INDEXD_DEBOUNCE_SECONDS")
+      unsetenv("ORCHARD_LOG_LEVEL")
+    }
     let session = try makeTestSession()
     let beginInFlightCalls = SynchronizedCounter()
     let logs = SynchronizedLogBuffer()
@@ -448,8 +454,12 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
   }
 
   func testGraphDBSingleFlightConflictHidesSchedulingNoiseAtDefaultLevel() throws {
+    setenv("ORCHARD_INDEXD_DEBOUNCE_SECONDS", "0.2", 1)
     unsetenv("ORCHARD_LOG_LEVEL")
-    defer { unsetenv("ORCHARD_LOG_LEVEL") }
+    defer {
+      unsetenv("ORCHARD_INDEXD_DEBOUNCE_SECONDS")
+      unsetenv("ORCHARD_LOG_LEVEL")
+    }
     let session = try makeTestSession()
     let beginInFlightCalls = SynchronizedCounter()
     let logs = SynchronizedLogBuffer()
