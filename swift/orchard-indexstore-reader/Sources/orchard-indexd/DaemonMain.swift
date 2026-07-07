@@ -313,7 +313,13 @@ struct OrchardIndexdMain {
           daemonLog(
             "rpc scan session=\(sessionID) incremental_since=\(incrementalSinceDescription) emit_occurrences=\(emitOccurrences)"
           )
+          // Suppress auto-ingest during this poll — the scan RPC is driven
+          // by a manual `orchard ingest` which already performs a full
+          // scan+upsert; a follow-up auto-ingest would only redundantly
+          // hit the incremental fast path.
+          session.suppressAutoIngest = true
           session.poll()
+          session.suppressAutoIngest = false
           let scanned = session.scan(
             incrementalSince: incrementalSince,
             emitOccurrences: emitOccurrences

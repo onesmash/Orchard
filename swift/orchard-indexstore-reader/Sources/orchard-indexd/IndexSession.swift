@@ -320,6 +320,11 @@ final class IndexdSession {
   private var beginGraphDBIngest: (() -> Bool)?
   private var endGraphDBIngest: (() -> Void)?
   private var backgroundWarmCompleted = false
+  /// When true, observed unit activity (from IndexStoreDB polling) is
+  /// suppressed — no auto-ingest debounce is scheduled.  Set by the scan RPC
+  /// handler around `session.poll()` to prevent redundant auto-ingest cycles
+  /// after a manual `orchard ingest`.
+  var suppressAutoIngest = false
   var logSink: (String) -> Void = defaultIndexdLogSink
 
   private func emitLog(_ message: String, level: IndexdLogLevel = .info) {
@@ -388,7 +393,21 @@ final class IndexdSession {
   }
 
   func handleObservedUnitActivity() {
+    // Capture suppressAutoIngest on the calling thread (IndexStoreDB
+    // callback thread) — NOT inside queue.async.  The caller (scan RPC
+    // handler) sets suppressAutoIngest = true before poll() and clears it
+    // after poll() returns.  Since handleObservedUnitActivity dispatches
+    // asynchronously to the queue, reading suppressAutoIngest inside the
+    // async block would see the already-cleared value.  Capturing it here
+    // preserves the suppress state at the moment unit activity was observed.
+    let capturedSuppress = suppressAutoIngest
     queue.async {
+      if capturedSuppress {
+        self.emitLog(
+          "session=\(self.sessionId) suppress auto-ingest; unit activity observed during suppress window",
+          level: .trace)
+        return
+      }
       self.seenGeneration &+= 1
       self.emitLog(
         "session=\(self.sessionId) observed unit activity seen=\(self.seenGeneration) acked=\(self.ackedGeneration) running=\(self.ingestRunning) pending=\(self.seenGeneration > self.ackedGeneration)"
@@ -796,15 +815,8 @@ final class IndexdSession {
       return
     }
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: orchardCLIPath)
-    process.arguments = makeIngestArguments(context: context)
-
-    // Synchronous stderr capture: avoid async readabilityHandler races.
-    // readDataToEndOfFile() blocks until the pipe write-end is closed
-    // (process exit), guaranteeing all data is captured before logging.
-    let stderrCapture = Pipe()
-    process.standardError = stderrCapture
+    let (process, stderrCapture) = makeIngestProcess(
+      orchardCLIPath: orchardCLIPath, context: context)
 
     let mode = context.incremental ? "incremental" : "full"
     let targetArgs = context.targetArgs.joined(separator: ",")
@@ -897,6 +909,24 @@ final class IndexdSession {
     }
     debounceWorkItem = workItem
     queue.asyncAfter(deadline: .now() + ingestDebounceDelay, execute: workItem)
+  }
+
+  /// Create and configure a Process for launching the orchard CLI ingest
+  /// subprocess.  Extracted as an internal method so tests can verify process
+  /// configuration (stdout redirection, stderr capture) without launching.
+  internal func makeIngestProcess(orchardCLIPath: String, context: IngestContext) -> (Process, Pipe) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: orchardCLIPath)
+    process.arguments = makeIngestArguments(context: context)
+    // Redirect stdout to /dev/null so auto-ingest output does not leak into
+    // the daemon's inherited terminal (daemon → child fd inheritance).
+    process.standardOutput = FileHandle.nullDevice
+    // Synchronous stderr capture: avoid async readabilityHandler races.
+    // readDataToEndOfFile() blocks until the pipe write-end is closed
+    // (process exit), guaranteeing all data is captured before logging.
+    let stderrCapture = Pipe()
+    process.standardError = stderrCapture
+    return (process, stderrCapture)
   }
 
   private func makeIngestArguments(context: IngestContext) -> [String] {

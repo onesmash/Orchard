@@ -593,4 +593,36 @@ final class IndexdWatchDrivenIngestTests: XCTestCase {
       XCTAssertEqual(error.code, "invalid_context")
     }
   }
+
+  // MARK: - Process configuration
+
+  func testMakeIngestProcessRedirectsStdoutAndCapturesStderr() throws {
+    let session = try makeTestSession()
+    let context = IngestContext(
+      projectDir: "/tmp/project",
+      indexStorePath: "/tmp/store",
+      graphDBPath: "/tmp/graph.db",
+      targetArgs: ["MyApp"],
+      entryTarget: "MyApp",
+      incremental: true
+    )
+    let (process, stderrCapture) = session.makeIngestProcess(
+      orchardCLIPath: "/bin/echo", context: context)
+
+    // stdout must be nullDevice (fd=-1).  Default is _NSStdIOFileHandle (fd=1)
+    // which inherits the daemon's terminal — auto-ingest output would leak.
+    guard let stdoutFH = process.standardOutput as? FileHandle else {
+      XCTFail("standardOutput must be a FileHandle")
+      return
+    }
+    XCTAssertEqual(
+      stdoutFH.fileDescriptor, FileHandle.nullDevice.fileDescriptor,
+      "auto-ingest stdout must be nullDevice (fd=-1), not inherited terminal (fd=1)")
+
+    // stderr must be captured via Pipe for diagnostics
+    XCTAssertTrue(
+      process.standardError is Pipe,
+      "auto-ingest stderr must use Pipe for synchronous capture")
+    _ = stderrCapture  // silence unused warning
+  }
 }
