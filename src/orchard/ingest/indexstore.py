@@ -626,6 +626,10 @@ def _make_ingest_context(
         "targetArgs": list(target_args or []),
         "entryTarget": entry_target,
         "incremental": incremental,
+        # Manual orchard ingest already performs a full scan+upsert in-process.
+        # Disable the daemon's background auto-ingest so we don't schedule a
+        # redundant debounce→orchard ingest --incremental→fast-path-hit cycle.
+        "triggerAutoIngest": False,
     }
 
 

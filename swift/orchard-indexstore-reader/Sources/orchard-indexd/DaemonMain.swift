@@ -158,15 +158,17 @@ struct OrchardIndexdMain {
               targets: registerParams.targets,
               dylibPath: nil
             )
-            result.session.maybeScheduleBackgroundIngest(
-              orchardCLIPath: orchardCLIPath,
-              beginInFlight: {
-                manager.beginGraphDBIngest(graphDBPath: registerParams.graphDBPath)
-              },
-              endInFlight: {
-                manager.endGraphDBIngest(graphDBPath: registerParams.graphDBPath)
-              }
-            )
+            if registerParams.context.triggerAutoIngest {
+              result.session.maybeScheduleBackgroundIngest(
+                orchardCLIPath: orchardCLIPath,
+                beginInFlight: {
+                  manager.beginGraphDBIngest(graphDBPath: registerParams.graphDBPath)
+                },
+                endInFlight: {
+                  manager.endGraphDBIngest(graphDBPath: registerParams.graphDBPath)
+                }
+              )
+            }
             try writeLine(DaemonResponse(
               id: id,
               ok: true,
