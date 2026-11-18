@@ -5,14 +5,14 @@
 >
 > 状态：`[ ]` 待办 · `[~]` 进行中 · `[x]` 完成 · `[!]` 阻塞
 > 优先级：**P0** 会产生错误答案或丢数据 · **P1** 答案精度/可信度 · **P2** 未知与能力缺口
-> 规模：P0 4 条 · P1 10 条 · P2 5 条
+> 规模：P0 4 条（1 已完成）· P1 10 条 · P2 5 条
 
 ## 概览
 
 | ID | 主题 | 优先级 | 状态 | 锚点 |
 | --- | --- | --- | --- | --- |
 | T-01 | 方向语义已确认，但模块注释写反、无回归测试 | P1 | [ ] | `identity.py:149`、`b13ec2b` |
-| T-02 | `Declares` 是死表，`memberOf` 端点类型不匹配 | P0 | [ ] | `schema.py:90`、`identity.py:140` |
+| T-02 | `memberOf` 曾映射到死表 `Declares`，端点类型不匹配 | P0 | [x] | `7309d7e` |
 | T-03 | `References` 无占位节点，静默丢边 | P0 | [ ] | `identity.py:414` |
 | T-04 | `kind` 双轨：`swift.method` vs `method` | P0 | [ ] | `runner.py:37`、`symbolgraph.py:49` |
 | T-05 | 派生阶段分裂在 runner 与 cli 两个入口 | P0 | [ ] | `runner.py:230`、`cli.py:588` |
@@ -36,6 +36,8 @@
 ## P0 — 正确性
 
 ### T-02 `Declares` 死表 + `memberOf` 端点不匹配
+
+**状态**：[x] 已修复（`7309d7e`）。`memberOf` 改映射到 `Contains` 并翻转端点（成员→容器 写成 owner→member）；`Declares` 保留但标注 deprecated。残留：SymbolGraph 与 IndexStore 同时为同一对符号产出 `Contains` 时会各写一条边（与 `Inherits` 现状一致），去重另立待办。
 
 **现状**
 - `schema.py:90` 定义 `Declares(FROM File TO Symbol)`。
