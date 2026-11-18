@@ -15,6 +15,7 @@ superpowers/
 .agents/
 .durable-workflow-runtime/
 .superpowers/
+.research-nex/
 AGENTS.md
 CLAUDE.md
 
