@@ -212,6 +212,59 @@ def test_upsert_references_writes_edge(conn):
     assert [tuple(r) for r in rows] == [("c:caller()", "c:callee()")]
 
 
+def test_upsert_symbol_rels_maps_member_of_to_contains(conn):
+    """SymbolGraph memberOf points member → container; graph stores owner → member."""
+    scope_id = "MyLib"
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:Owner", precise_id="", name="Owner", kind="class",
+                     module="M", language="swift", file_path="/src/a.swift",
+                     signature="", access_level="public", container_usr=None),
+        SymbolRecord(usr="s:Owner.member", precise_id="", name="member", kind="method",
+                     module="M", language="swift", file_path="/src/a.swift",
+                     signature="", access_level="public", container_usr=None),
+    ], scope_id)
+
+    written = upsert_symbol_rels(
+        conn,
+        [SymbolRelRecord(source_usr="s:Owner.member", target_usr="s:Owner",
+                         rel_kind="memberOf")],
+        scope_id, source="swift_symbolgraph",
+    )
+
+    assert written == 1
+    rows = conn.execute(
+        "MATCH (a:Symbol)-[:Contains]->(b:Symbol) RETURN a.id, b.id"
+    ).get_all()
+    assert [tuple(r) for r in rows] == [("s:Owner", "s:Owner.member")]
+    declares = conn.execute("MATCH ()-[:Declares]->() RETURN count(*)").get_all()
+    assert declares[0][0] == 0
+
+
+def test_upsert_symbol_rels_keeps_inheritance_direction(conn):
+    """inheritsFrom is already child → parent; it must not be flipped."""
+    scope_id = "MyLib"
+    upsert_symbols(conn, [
+        SymbolRecord(usr="s:Base", precise_id="", name="Base", kind="class",
+                     module="M", language="swift", file_path="/src/a.swift",
+                     signature="", access_level="public", container_usr=None),
+        SymbolRecord(usr="s:Sub", precise_id="", name="Sub", kind="class",
+                     module="M", language="swift", file_path="/src/a.swift",
+                     signature="", access_level="public", container_usr=None),
+    ], scope_id)
+
+    upsert_symbol_rels(
+        conn,
+        [SymbolRelRecord(source_usr="s:Sub", target_usr="s:Base",
+                         rel_kind="inheritsFrom")],
+        scope_id, source="swift_symbolgraph",
+    )
+
+    rows = conn.execute(
+        "MATCH (a:Symbol)-[:Inherits]->(b:Symbol) RETURN a.id, b.id"
+    ).get_all()
+    assert [tuple(r) for r in rows] == [("s:Sub", "s:Base")]
+
+
 def test_prune_missing_symbols_removes_symbols_not_in_current_build(conn):
     upsert_symbols(conn, [
         SymbolRecord(usr="s:old", precise_id="s:old", name="old", kind="swift.func",

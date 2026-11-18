@@ -136,12 +136,15 @@ def prune_missing_symbols(conn, scope_id: str, active_usrs: set[str]) -> int:
     return len(stale_usrs)
 
 
-# Mapping from symbolgraph relationship kinds to Ladybug rel table names.
-_REL_KIND_TO_TABLE: dict[str, str] = {
-    "memberOf": "Declares",
-    "conformsTo": "ConformsTo",
-    "inheritsFrom": "Inherits",
-    "overrides": "Implements",
+# Mapping from symbolgraph relationship kinds to Ladybug rel tables.
+# Values are (table, flip_direction).  SymbolGraph spells relationships from the
+# member/subtype side (source=member, target=container), while the graph stores
+# owner→member, so ``memberOf`` needs its endpoints swapped.
+_REL_KIND_TO_TABLE: dict[str, tuple[str, bool]] = {
+    "memberOf": ("Contains", True),
+    "conformsTo": ("ConformsTo", False),
+    "inheritsFrom": ("Inherits", False),
+    "overrides": ("Implements", False),
 }
 
 # Mapping from IndexStore relation roles to Ladybug rel table names.
@@ -186,11 +189,14 @@ def upsert_symbol_rels(
     """
     count = 0
     for rel in rels:
-        table = _REL_KIND_TO_TABLE.get(rel.rel_kind)
-        if table is None:
+        mapped = _REL_KIND_TO_TABLE.get(rel.rel_kind)
+        if mapped is None:
             continue
+        table, flip_direction = mapped
         src_id = make_symbol_id(rel.source_usr)
         tgt_id = make_symbol_id(rel.target_usr)
+        if flip_direction:
+            src_id, tgt_id = tgt_id, src_id
         conn.execute(
             f"MATCH (a:Symbol {{id: $src}}), (b:Symbol {{id: $tgt}}) "
             f"MERGE (a)-[:{table} {{source: $source}}]->(b)",

@@ -87,6 +87,7 @@ REL_TABLES: list[str] = [
     "CREATE REL TABLE IF NOT EXISTS ContainsTarget(FROM Module TO Target)",
     "CREATE REL TABLE IF NOT EXISTS BuiltTarget(FROM BuildSnapshot TO Target)",
     "CREATE REL TABLE IF NOT EXISTS ObservedFile(FROM BuildSnapshot TO File)",
+    # Deprecated: never written. Membership is modelled by Contains(owner → member).
     "CREATE REL TABLE IF NOT EXISTS Declares(FROM File TO Symbol)",
     "CREATE REL TABLE IF NOT EXISTS ContainsChunk(FROM Symbol TO Chunk)",
     """CREATE REL TABLE IF NOT EXISTS Calls(
